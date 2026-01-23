@@ -1,0 +1,4 @@
+pypdf
+pdfplumber
+reportlab
+pdf2image
