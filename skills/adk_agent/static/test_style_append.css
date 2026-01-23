@@ -1,0 +1,76 @@
+/* Tool Spinner */
+.tool-spinner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    color: #666;
+    font-size: 0.9em;
+    font-style: italic;
+    border-top: 1px dashed #eee;
+    margin-top: 8px;
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+    font-size: 1.2em;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/* Typing Indicator (Initial Loading) */
+.typing-indicator::after {
+    content: 'Thinking...';
+    animation: typing 1.5s infinite;
+    color: #888;
+    font-style: italic;
+}
+
+@keyframes typing {
+    0% {
+        content: 'Thinking';
+    }
+
+    33% {
+        content: 'Thinking.';
+    }
+
+    66% {
+        content: 'Thinking..';
+    }
+
+    100% {
+        content: 'Thinking...';
+    }
+}
+
+/* Streaming Cursor */
+.streaming-cursor {
+    display: inline-block;
+    width: 6px;
+    height: 1.2em;
+    background-color: #007bff;
+    margin-left: 2px;
+    vertical-align: middle;
+    animation: blink 0.8s infinite;
+}
+
+@keyframes blink {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0;
+    }
+}

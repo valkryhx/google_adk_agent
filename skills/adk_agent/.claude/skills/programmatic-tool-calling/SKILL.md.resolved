@@ -1,0 +1,52 @@
+---
+name: programmatic-tool-calling
+description: Guide and reference for using Programmatic Tool Calling with Claude, enabling the model to write Python code that invokes other tools.
+---
+
+# Programmatic Tool Calling
+
+This skill provides documentation and patterns for "Programmatic Tool Calling", a feature where Claude writes Python code to invoke tools instead of the user (or orchestration layer) calling them directly.
+
+## Overview
+
+Programmatic tool calling allows Claude to:
+1.  Write Python code (running in a sandboxed environment).
+2.  Call other tools *from within* that Python code.
+3.  Process the results programmatically (loops, conditionals, filtering) before returning the final answer.
+
+## Key Concepts
+
+### 1. `allowed_callers`
+When defining a tool, you can specify who is allowed to call it via the `allowed_callers` field in the tool definition.
+
+-   `["direct"]`: Only Claude can call this tool directly (standard tool use).
+-   `["code_execution_20250825"]`: Only callable from within the code execution sandbox.
+-   `["direct", "code_execution_20250825"]`: Callable by both.
+
+**Best Practice**: Choose one or the other to provide clear guidance to the model.
+
+### 2. The `caller` field
+When a tool is called, the API response includes a `caller` field:
+-   `{"type": "direct"}`: Traditional invocation.
+-   `{"type": "code_execution_20250825", "tool_id": "srvtoolu_..."}`: Programmatic invocation from a specific code execution block.
+
+## Workflow
+
+1.  **Orchestrator** sends a message to Claude with tools defined (some with `allowed_callers=["code_execution_20250825"]`).
+2.  **Claude** decides to use a tool but realizes it must be called via code.
+3.  **Claude** generates a `tool_use` block for `code_execution` (e.g., writing a Python script).
+4.  **Orchestrator** executes the Python code.
+5.  **Python Code** hits a function call (e.g., `await query_database(...)`).
+6.  **Orchestrator** pauses code execution, sends a `tool_use` for `query_database` to the API (or handles it locally if possible).
+7.  **System** executes `query_database` and returns the result to the *Python environment*.
+8.  **Python Code** resumes with the result.
+9.  **Claude** receives the final output from the code execution.
+
+## Example Use Cases
+
+-   **Batch Processing**: Query a database for 100 records and filter them in Python before showing them to the user.
+-   **Multi-step Logic**: "If API A returns X, call API B; else call API C."
+-   **Data Aggregation**: Call a search tool 5 times in parallel (using async) and summarize the results.
+
+## Reference
+See `https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling` for full documentation.
