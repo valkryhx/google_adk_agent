@@ -17,18 +17,23 @@ from contextvars import ContextVar
 from typing import Dict, Tuple, Optional, Any
 
 # 将当前目录添加到路径
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+#sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core.manager import SkillManager
-from core.executor import execute_python_code
-from core.logger import AgentLogger, logger
-from config import AgentConfig, build_system_prompt
+from skills.adk_agent.core.manager import SkillManager
+from skills.adk_agent.core.executor import execute_python_code
+from skills.adk_agent.core.logger import AgentLogger, logger
+from skills.adk_agent.config import AgentConfig, build_system_prompt
 from google.genai import types
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import uvicorn
+
+from google.adk.agents import LlmAgent
+from src.core.custom_table_db_service import FullyCustomDbService
+from google.adk.models.lite_llm import LiteLlm
+from skills.adk_agent.auto_compact_agent import AutoCompactAgent
 
 # ==========================================
 # [AOP 基础设施] 多维度会话中断控制
@@ -168,18 +173,32 @@ def _load_skill_tools(skill_id: str):
         logger.error(f"加载工具失败: {skill_id}", error=str(e))
         return []
 
-def create_agent(custom_config: AgentConfig = None):
+async def create_agent(custom_config: AgentConfig = None):
     """创建 Agent 并注入 Callbacks"""
     global my_agent, session_service, sm, config, compactor_agent
     if custom_config: config = custom_config
     
-    from google.adk.agents import LlmAgent
-    from google.adk.sessions import InMemorySessionService
-    from google.adk.models.lite_llm import LiteLlm
-    from auto_compact_agent import AutoCompactAgent
-
     sm = SkillManager(base_path=config.skills_path)
-    session_service = InMemorySessionService()
+    
+    # 计算项目根目录 (假设当前文件在 skills/adk_agent/ 下，根目录在 ../../)
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    db_folder = os.path.join(base_dir, "sqlite_db")
+    if not os.path.exists(db_folder):
+        os.makedirs(db_folder, exist_ok=True)
+    
+    db_path = os.path.join(db_folder, "adk_sessions.db")
+    # Windows 下路径分隔符处理
+    if sys.platform == 'win32':
+        db_path = db_path.replace('\\', '/')
+        
+    # 使用自定义 DB Service
+    session_service = FullyCustomDbService(
+        db_url=f"sqlite+aiosqlite:///{db_path}",
+        session_table_name="adk_sessions",
+        event_table_name="adk_events"
+    )
+    await session_service.init_db()
+    
     system_prompt = build_system_prompt(config, sm.get_discovery_manifests())
 
     llm_model = LiteLlm(
@@ -286,7 +305,7 @@ async def run_agent(task: str, app_name: str, user_id: str, session_id: str):
     运行 Agent，支持多参数 Session 定位
     """
     global my_agent, session_service
-    if my_agent is None: create_agent()
+    if my_agent is None: await create_agent()
 
     # === [关键步骤 1] 设置上下文三元组 ===
     # 这样后续的 callback 才知道去哪个队列查信号
@@ -387,9 +406,23 @@ async def run_agent(task: str, app_name: str, user_id: str, session_id: str):
                         # 3.3 重组事件
                         new_events = system_events + [placeholder_user_evt]
                         
-                        # [Critical Fix] InMemorySessionService returns a deepcopy, so we MUST update the internal storage
+                        # [压缩前日志]
+                        print(f"[系统] 压缩前 event 数量: {len(session.events)}")
+                        
+                        # 更新本地 session 对象
+                        if hasattr(session.events, 'clear') and hasattr(session.events, 'extend'):
+                            session.events.clear()
+                            session.events.extend(new_events)
+                        else:
+                            session.events[:] = new_events
+                        
+                        # [压缩后日志]
+                        print(f"[系统] 压缩后 event 数量: {len(session.events)}")
+                        
+                        # [Critical Fix] 根据 session service 类型选择持久化策略
                         from google.adk.sessions import InMemorySessionService
                         if isinstance(session_service, InMemorySessionService):
+                            # InMemory 特殊处理：更新内部存储引用
                             try:
                                 if (app_name in session_service.sessions and 
                                     user_id in session_service.sessions[app_name] and 
@@ -401,19 +434,22 @@ async def run_agent(task: str, app_name: str, user_id: str, session_id: str):
                                         stored_session.events.extend(new_events)
                                     else:
                                         stored_session.events[:] = new_events
-                                    print("[系统] 已强制同步会话状态到存储")
+                                    print("[系统] 已强制同步会话状态到 InMemorySessionService")
                                     
-                                    # Update local session ref as well
-                                    if hasattr(session.events, 'clear') and hasattr(session.events, 'extend'):
-                                        session.events.clear()
-                                        session.events.extend(new_events)
-                                    else:
-                                        session.events[:] = new_events
-                                        
                             except Exception as e:
-                                print(f"[警告] 强制同步会话失败: {e}")
+                                print(f"[警告] InMemory 强制同步会话失败: {e}")
+                        else:
+                            # 数据库 Session Service：调用 save_session 持久化
+                            try:
+                                await session_service.save_session(session)
+                                print(f"[系统] ✅ 已通过 save_session() 持久化压缩后的 events 到数据库")
+                            except Exception as e:
+                                print(f"[错误] ❌ 数据库持久化失败: {e}")
+                                import traceback
+                                traceback.print_exc()
                             
                         turn_count = len(session.events)
+
                         
                         # === [新增] 计算压缩后文本长度并通知前端 ===
                         original_len = len(history_text)
