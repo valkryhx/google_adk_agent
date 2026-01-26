@@ -3,7 +3,7 @@ from google.adk.agents import LlmAgent
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
-from config import AgentConfig
+from skills.adk_agent.config import AgentConfig
 
 class AutoCompactAgent(LlmAgent):
     """
