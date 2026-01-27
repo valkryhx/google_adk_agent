@@ -13,8 +13,10 @@ import asyncio
 import os
 import sys
 import json
+import time
+import secrets
 from contextvars import ContextVar
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, Tuple, Optional, Any, List
 
 # 将当前目录添加到路径
 #sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -330,6 +332,29 @@ async def run_agent(task: str, app_name: str, user_id: str, session_id: str):
         if not session:
             session = await session_service.create_session(app_name=app_name, user_id=user_id, session_id=session_id)
 
+        # === [新增] 自动标题生成 ===
+        # 检查是否是首次对话 (events 为空或只有 system 消息)
+        user_event_count = 0
+        if session and hasattr(session, 'events'):
+            for evt in session.events:
+                role = 'unknown'
+                if hasattr(evt, 'content') and evt.content and hasattr(evt.content, 'role'):
+                    role = evt.content.role
+                elif hasattr(evt, 'author'):
+                    role = evt.author
+                if role == 'user':
+                    user_event_count += 1
+        
+        # 如果是首条用户消息,生成标题
+        if user_event_count == 0:
+            title = task[:30] + ("..." if len(task) > 30 else "")
+            if not hasattr(session, 'state') or session.state is None:
+                session.state = {}
+            session.state['title'] = title
+            await session_service.save_session(session)
+            print(f"[系统] 自动生成会话标题: {title}")
+
+
         # === [新增] 压缩逻辑移植 ===
         turn_count = len(session.events) if session and hasattr(session, 'events') and session.events else 0
         tool_count = len(my_agent.tools) if my_agent.tools else 0
@@ -590,6 +615,20 @@ class CancelRequest(BaseModel):
     user_id: str = DEFAULT_USER_ID
     session_id: str = DEFAULT_SESSION_ID
 
+class CreateSessionRequest(BaseModel):
+    app_name: str = DEFAULT_APP_NAME
+    user_id: str = DEFAULT_USER_ID
+
+class SessionInfo(BaseModel):
+    session_id: str
+    title: str
+    message_count: int
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+class SessionListResponse(BaseModel):
+    sessions: List[SessionInfo]
+
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     async def generate():
@@ -612,6 +651,150 @@ async def cancel_endpoint(req: CancelRequest):
     await q.put("CANCEL")
     print(f"🛑 [API] 收到 Cancel 信号 -> {req.app_name}/{req.user_id}/{req.session_id}")
     return {"status": "success"}
+
+@app.post("/api/sessions")
+async def create_session(request: CreateSessionRequest):
+    """创建新会话"""
+    # 生成唯一 session_id
+    timestamp = int(time.time() * 1000)
+    random_suffix = secrets.token_hex(4)
+    new_session_id = f"session_{timestamp}_{random_suffix}"
+    
+    # 创建会话
+    from datetime import datetime
+    session = await session_service.create_session(
+        app_name=request.app_name,
+        user_id=request.user_id, 
+        session_id=new_session_id
+    )
+    
+    return {
+        "session_id": new_session_id,
+        "title": "新对话",
+        "created_at": datetime.utcnow().isoformat()
+    }
+
+@app.get("/api/sessions")
+async def get_sessions(
+    app_name: str = DEFAULT_APP_NAME,
+    user_id: str = DEFAULT_USER_ID
+):
+    """获取会话列表"""
+    result = await session_service.list_sessions(
+        app_name=app_name,
+        user_id=user_id
+    )
+    
+    sessions = []
+    for s in result.sessions:
+        # 从 session.state 中提取标题
+        title = "新对话"
+        message_count = len(s.events) if hasattr(s, 'events') else 0
+        
+        if hasattr(s, 'state') and s.state:
+            title = s.state.get('title', '新对话')
+        
+        # 提取自定义属性 (由 custom_table_db_service 添加)
+        created_at = None
+        updated_at = None
+        if hasattr(s, '_db_created_at'):
+            created_at = s._db_created_at.isoformat() if s._db_created_at else None
+        if hasattr(s, '_db_updated_at'):
+            updated_at = s._db_updated_at.isoformat() if s._db_updated_at else None
+        
+        sessions.append({
+            "session_id": s.id,
+            "title": title,
+            "message_count": message_count,
+            "created_at": created_at,
+            "updated_at": updated_at
+        })
+    
+    return {"sessions": sessions}
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(
+    session_id: str,
+    app_name: str = DEFAULT_APP_NAME, 
+    user_id: str = DEFAULT_USER_ID
+):
+    """删除会话"""
+    await session_service.delete_session(
+        app_name=app_name,
+        user_id=user_id,
+        session_id=session_id
+    )
+    return {"status": "success"}
+
+@app.get("/api/sessions/{session_id}/history")
+async def get_session_history(
+    session_id: str,
+    app_name: str = DEFAULT_APP_NAME,
+    user_id: str = DEFAULT_USER_ID
+):
+    """获取会话历史消息"""
+    session = await session_service.get_session(
+        app_name=app_name,
+        user_id=user_id,
+        session_id=session_id
+    )
+    
+    if not session:
+        return {"messages": []}
+    
+    messages = []
+    for event in session.events:
+        if hasattr(event, 'content') and event.content:
+            role = 'unknown'
+            if hasattr(event.content, 'role'):
+                role = event.content.role
+            elif hasattr(event, 'author'):
+                role = event.author
+            
+            # 提取文本内容
+            text_content = ""
+            blocks = []
+            
+            if hasattr(event.content, 'parts'):
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        # 检查是否是思考过程
+                        if getattr(part, 'thought', False):
+                            blocks.append({"type": "thought", "content": part.text})
+                        else:
+                            blocks.append({"type": "text", "content": part.text})
+                            text_content += part.text
+                    
+                    if hasattr(part, 'function_call') and part.function_call:
+                        fc = part.function_call
+                        blocks.append({
+                            "type": "tool_call",
+                            "content": f"{fc.name} 输入参数: {fc.args}"
+                        })
+                    
+                    if hasattr(part, 'function_response') and part.function_response:
+                        fr = part.function_response
+                        blocks.append({
+                            "type": "tool_result",
+                            "content": f"结果: {fr.response}"
+                        })
+            
+            if role == 'user' or role == 'model':
+                messages.append({
+                    "role": role,
+                    "blocks": blocks,
+                    "text": text_content  # 兼容性字段
+                })
+    
+    return {"messages": messages}
+
+@app.on_event("startup")
+async def startup_event():
+    """FastAPI 启动时初始化 Agent 和 Session Service"""
+    global my_agent, session_service
+    print("[系统] 正在初始化 Agent 和 Session Service...")
+    await create_agent()
+    print("[系统] ✓ Agent 初始化完成")
 
 @app.get("/")
 async def root():

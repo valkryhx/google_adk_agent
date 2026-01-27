@@ -239,6 +239,9 @@ class FullyCustomDbService(BaseSessionService):
                 if user_id is not None:
                     stmt = stmt.where(self.DbSession.user_id == user_id)
                 
+                # 按更新时间倒序排列
+                stmt = stmt.order_by(self.DbSession.updated_at.desc())
+                
                 result = await db.execute(stmt)
                 db_sessions = result.scalars().all()
                 
@@ -258,6 +261,10 @@ class FullyCustomDbService(BaseSessionService):
                                 adk_session.state = json.loads(db_s.session_metadata)
                         except Exception as e:
                             print(f"State load error in list_sessions: {e}")
+                    
+                    # 添加额外字段 (自定义属性,用于前端显示)
+                    adk_session._db_created_at = db_s.created_at  # type: ignore
+                    adk_session._db_updated_at = db_s.updated_at  # type: ignore
                             
                     sessions_list.append(adk_session)
                     
