@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gemini</title>
+    <title>Ciri</title>
     <link rel="stylesheet" href="/static/style.css?v=1.1">
     <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet"
@@ -60,8 +60,18 @@
         <main class="main-content">
             <div class="top-bar">
                 <div class="model-selector">
-                    <span>Gemini</span>
+                    <span>Ciri</span>
                     <span class="material-symbols-outlined">arrow_drop_down</span>
+                </div>
+                <!-- 用户切换器 (用于测试多用户隔离) -->
+                <div class="model-selector" style="margin-left: auto; margin-right: 16px;">
+                    <select id="userSelector"
+                        style="background: transparent; border: 1px solid #dadce0; border-radius: 8px; padding: 6px 12px; font-size: 14px; cursor: pointer;">
+                        <option value="user_001">用户 001 (默认)</option>
+                        <option value="user_A">用户 A</option>
+                        <option value="user_B">用户 B</option>
+                        <option value="user_C">用户 C</option>
+                    </select>
                 </div>
                 <div class="user-profile">
                     <div class="avatar">U</div>
@@ -82,14 +92,14 @@
             <div class="input-area-wrapper">
                 <div class="input-area">
                     <button class="icon-btn"><span class="material-symbols-outlined">add_circle</span></button>
-                    <textarea id="userInput" placeholder="问问 Gemini" rows="1"></textarea>
+                    <textarea id="userInput" placeholder="问问 Ciri" rows="1"></textarea>
                     <button class="icon-btn"><span class="material-symbols-outlined">mic</span></button>
                     <button class="icon-btn" id="sendBtn"><span class="material-symbols-outlined">send</span></button>
                     <button class="icon-btn" id="stopBtn" style="display: none;" title="停止生成"><span
                             class="material-symbols-outlined">stop_circle</span></button>
                 </div>
                 <div class="disclaimer">
-                    Gemini 的回答未必准确无误，请注意核查。
+                    Ciri 的回答未必准确无误，请注意核查。
                 </div>
             </div>
         </main>

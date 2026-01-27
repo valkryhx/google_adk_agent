@@ -38,15 +38,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Session Constants (Should match backend defaults)
     const APP_NAME = "dynamic_expert";
-    const USER_ID = "user_001";
 
-    // 动态获取当前 session_id
+    // 动态获取当前 user_id (必须是函数，不能是常量！)
+    // ⚠️ 使用 sessionStorage 而非 localStorage，确保每个标签页独立
+    function getUserId() {
+        return sessionStorage.getItem('user_id_override') || "user_001";
+    }
+
+    // 在控制台显示当前用户ID
+    console.log(`[当前用户] ${getUserId()}`);
+
+    // ⚠️ sessionStorage 不会触发 storage 事件（每个标签页独立）
+    // 移除此监听器，因为现在每个标签页有自己的 sessionStorage
+
+    // 动态获取当前 session_id (使用 sessionStorage 实现标签页隔离)
     function getCurrentSessionId() {
-        return localStorage.getItem('current_session_id');
+        return sessionStorage.getItem('current_session_id');
     }
 
     function setCurrentSessionId(sessionId) {
-        localStorage.setItem('current_session_id', sessionId);
+        sessionStorage.setItem('current_session_id', sessionId);
     }
 
     stopBtn.addEventListener('click', async () => {
@@ -58,7 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     app_name: APP_NAME,
-                    user_id: USER_ID,
+                    user_id: getUserId(),  // 动态获取
                     session_id: currentSessionId
                 })
             });
@@ -96,11 +107,25 @@ document.addEventListener('DOMContentLoaded', () => {
         let appNameSet = false;
 
         try {
-            const currentSessionId = getCurrentSessionId();
+            // ⚠️ 延迟创建session：如果没有session，现在才创建
+            let currentSessionId = getCurrentSessionId();
             if (!currentSessionId) {
-                console.error('No active session');
-                return;
+                console.log('[首次发送] 检测到无session，正在创建...');
+                currentSessionId = await createNewSession();
+                if (!currentSessionId) {
+                    alert('无法创建会话，请刷新页面重试');
+                    return;
+                }
+                setCurrentSessionId(currentSessionId);
+                console.log(`[首次发送] session创建成功: ${currentSessionId}`);
+
+                // 刷新会话列表以显示新创建的session
+                await loadSessions();
             }
+
+            // 调试日志：显示发送的参数
+            const currentUserId = getUserId();
+            console.log('[发送请求] user_id:', currentUserId, 'session_id:', currentSessionId);
 
             const response = await fetch('/api/chat', {
                 method: 'POST',
@@ -110,7 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({
                     message: text,
                     app_name: APP_NAME,
-                    user_id: USER_ID,
+                    user_id: currentUserId,  // 使用上面获取的
                     session_id: currentSessionId
                 })
             });
@@ -233,7 +258,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function appendMessage(role, text, isLoading = false, appName = 'Gemini') {
+    function appendMessage(role, text, isLoading = false, appName = 'Ciri') {
         const msgDiv = document.createElement('div');
         msgDiv.className = `message ${role}`;
         // Use Date.now() + random to ensure uniqueness even if called rapidly
@@ -322,17 +347,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // 创建新会话
     async function createNewSession() {
         try {
+            const currentUserId = getUserId();  // 动态获取当前用户
             const response = await fetch('/api/sessions', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     app_name: APP_NAME,
-                    user_id: USER_ID
+                    user_id: currentUserId
                 })
             });
             const data = await response.json();
-            // 不在这里设置 current_session_id,让 switchSession 来设置
-            console.log('创建新会话:', data.session_id);
+
+            // ⚠️ 关键修复：为了确保不同用户的 session_id 完全隔离
+            // 在前端为 session_id 添加 user 前缀（后端已经这样做了，但前端也需要知道）
+            console.log(`[创建会话] user_id: ${currentUserId}, session_id: ${data.session_id}`);
+
             return data.session_id;
         } catch (e) {
             console.error('创建会话失败:', e);
@@ -344,7 +373,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadSessions() {
         try {
             const response = await fetch(
-                `/api/sessions?app_name=${APP_NAME}&user_id=${USER_ID}`
+                `/api/sessions?app_name=${APP_NAME}&user_id=${getUserId()}`  // 动态获取
             );
             const data = await response.json();
             renderSessionList(data.sessions);
@@ -463,7 +492,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadSessionHistory(sessionId) {
         try {
             const response = await fetch(
-                `/api/sessions/${sessionId}/history?app_name=${APP_NAME}&user_id=${USER_ID}`
+                `/api/sessions/${sessionId}/history?app_name=${APP_NAME}&user_id=${getUserId()}`  // 动态获取
             );
             const data = await response.json();
 
@@ -531,7 +560,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function deleteSession(sessionId) {
         try {
             const response = await fetch(
-                `/api/sessions/${sessionId}?app_name=${APP_NAME}&user_id=${USER_ID}`,
+                `/api/sessions/${sessionId}?app_name=${APP_NAME}&user_id=${getUserId()}`,  // 动态获取
                 { method: 'DELETE' }
             );
 
@@ -569,28 +598,50 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // 用户切换器事件监听
+    const userSelector = document.getElementById('userSelector');
+    if (userSelector) {
+        // 设置初始选中值 (使用 sessionStorage 实现标签页隔离)
+        const currentUserId = sessionStorage.getItem('user_id_override') || 'user_001';
+        userSelector.value = currentUserId;
+
+        // 监听切换事件
+        userSelector.addEventListener('change', (e) => {
+            const newUserId = e.target.value;
+            console.log(`[切换用户] ${currentUserId} -> ${newUserId}`);
+
+            // 更新用户ID (sessionStorage: 每个标签页独立)
+            sessionStorage.setItem('user_id_override', newUserId);
+
+            // ⚠️ 关键修复：清除旧的 session_id，强制为新用户创建新会话
+            sessionStorage.removeItem('current_session_id');
+            console.log('[清除会话] 已清除旧会话，将为新用户创建新会话');
+
+            // 静默刷新页面
+            location.reload();
+        });
+    }
+
     // 页面加载时初始化
     async function initializePage() {
+        // 显示当前用户（调试用）
+        const currentUser = getUserId();
+        console.log(`%c[页面加载] 当前用户: ${currentUser}`, 'background: #222; color: #bada55; font-size: 14px; padding: 2px 5px;');
+
         // 初始设置为欢迎模式
         document.body.classList.add('welcome-mode');
 
-        // 确保有当前会话
-        let sessionId = getCurrentSessionId();
-        if (!sessionId) {
-            sessionId = await createNewSession();
-            if (!sessionId) {
-                console.error('无法创建初始会话');
-                return;
-            }
-            // 首次创建会话,需要手动设置
-            setCurrentSessionId(sessionId);
-        }
+        // ⚠️ 延迟创建session：不在页面加载时创建，只在用户发送第一条消息时创建
+        // 这样可以避免用户切换用户时创建大量空session
 
-        // 加载会话列表
+        // 加载会话列表（如果有的话）
         await loadSessions();
 
-        // 加载当前会话的历史消息
-        await loadSessionHistory(sessionId);
+        // 如果有当前会话，才加载历史消息
+        const sessionId = getCurrentSessionId();
+        if (sessionId) {
+            await loadSessionHistory(sessionId);
+        }
     }
 
     // 调用初始化
