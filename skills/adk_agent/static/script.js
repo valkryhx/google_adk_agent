@@ -452,6 +452,13 @@ document.addEventListener('DOMContentLoaded', () => {
         await loadSessionHistory(sessionId);
     }
 
+    // 辅助函数: 检查 blocks 是否包含有效内容
+    function hasValidContent(blocks) {
+        if (!blocks || blocks.length === 0) return false;
+        // 只要有一个 block 内容不为空(trim后),就视为有效
+        return blocks.some(b => b.content && b.content.trim().length > 0);
+    }
+
     // 加载会话历史
     async function loadSessionHistory(sessionId) {
         try {
@@ -478,12 +485,22 @@ document.addEventListener('DOMContentLoaded', () => {
             // 渲染历史消息
             data.messages.forEach(msg => {
                 if (msg.role === 'user') {
-                    appendMessage('user', msg.text || '');
+                    if (msg.text && msg.text.trim()) {
+                        appendMessage('user', msg.text, false);
+                    }
                 } else if (msg.role === 'model') {
-                    // 使用 blocks 渲染模型响应
-                    const msgId = appendMessage('model', '', false);
-                    if (msg.blocks && msg.blocks.length > 0) {
-                        updateMessage(msgId, msg.blocks, true); // 第三个参数表示是历史消息,不显示光标
+                    // 优先处理 blocks 结构
+                    if (msg.blocks && hasValidContent(msg.blocks)) {
+                        const msgId = appendMessage('model', '', false);
+                        updateMessage(msgId, msg.blocks, true);
+                    }
+                    // 兼容旧的文本格式 (只有 text 没有 blocks)
+                    else if (msg.text && msg.text.trim()) {
+                        appendMessage('model', msg.text, false);
+                    }
+                    else {
+                        // 真的没有内容,忽略
+                        // console.warn('忽略空消息:', msg); 
                     }
                 }
             });
