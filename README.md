@@ -506,3 +506,181 @@ elif "brave.com" in url:
 else:
     headers["Authorization"] = f"Bearer {api_key}"
 ```
+
+---
+
+## 使用 Dynamic MCP 加载自定义 MCP 服务
+
+本章节展示如何使用 `dynamic-mcp` skill 在运行时动态加载自定义的 MCP 服务（如 Docker 内运行的业务 MCP）。
+
+### 实战案例：加载 Docker 业务参数 MCP
+
+#### 场景描述
+
+您有一个运行在 Docker 容器中的自定义 MCP 服务器（`parameter_mcp_server_main`），通过端口映射暴露在本地 `http://127.0.0.1:9014/mcp`。传统方式需要在配置文件中预先定义，但使用 `dynamic-mcp` 可以在运行时动态加载。
+
+#### 使用步骤
+
+##### 1. 加载 dynamic-mcp Skill
+
+在 Web 界面或 CLI 中执行：
+```
+加载技能 dynamic-mcp
+```
+
+Agent 会自动将 `connect_mcp` 工具添加到工具列表。
+
+##### 2. 连接自定义 MCP 服务
+
+执行连接命令：
+```
+连接 mcp http://127.0.0.1:9014/mcp
+```
+
+Agent 会：
+1. 自动检测服务类型（HTTP/SSE）
+2. 添加必需的 Accept headers：`application/json, text/event-stream`
+3. 主动调用 `toolset.get_tools()` 触发工具发现
+4. 在 10 秒超时时间内验证连接
+5. 返回发现的工具列表
+
+##### 3. 使用新加载的工具
+
+连接成功后，Agent 自动获得该 MCP 服务提供的所有工具，可以直接使用：
+```
+查询工单参数修改记录
+生成参数修改草稿
+创建工单
+```
+
+### 效果展示
+
+#### 连接过程
+
+![连接自定义 MCP 服务](动态mcp加载自定义的mcp1.png)
+
+**关键输出**：
+```
+[DynamicMCP] 连接远程（无认证）: http://127.0.0.1:9014/mcp
+[DynamicMCP] 正在验证连接...
+[Success] remote MCP 工具加载成功！成功发现 5 个工具: ...
+```
+
+#### 工具使用
+
+![使用动态加载的工具](动态mcp加载自定义的mcp2.png)
+
+成功加载后，Agent 可以立即调用新工具完成业务任务。
+
+### 技术要点
+
+#### 1. SSE 协议兼容性
+
+许多自定义 MCP 服务使用 Server-Sent Events (SSE) 协议，要求客户端提供特定的 Accept headers：
+
+```python
+headers = {
+    "Accept": "application/json, text/event-stream",
+    "Content-Type": "application/json"
+}
+```
+
+`dynamic-mcp` skill 已自动处理这些 headers，无需手动配置。
+
+#### 2. 主动工具发现
+
+改进后的验证机制直接调用 ADK 的 `get_tools()` 方法：
+
+```python
+async def _verify_mcp_connection(toolset: McpToolset, timeout: int = 10):
+    # 直接触发工具发现，而非等待
+    tools = await asyncio.wait_for(toolset.get_tools(), timeout=timeout)
+    
+    if tools:
+        return True, f"成功发现 {len(tools)} 个工具: ..."
+    return False, "连接失败"
+```
+
+**优势**：
+- ✅ 主动触发，而非被动等待
+- ✅ 明确的成功/失败状态
+- ✅ 10 秒超时控制，快速失败
+
+#### 3. 智能错误诊断
+
+连接失败时提供友好的错误提示：
+
+| 错误类型       | 返回消息                                            |
+| -------------- | --------------------------------------------------- |
+| 超时           | `连接超时（10秒内未响应），请检查服务地址和端口`    |
+| 认证失败 (401) | `认证失败，请检查 API Key 是否正确`                 |
+| 权限不足 (403) | `访问被拒绝，请确认 API Key 权限`                   |
+| 连接错误       | `无法连接到 MCP 服务，请确认服务地址和端口是否正确` |
+
+#### 4. Docker 端口映射支持
+
+对于 Docker 内运行的 MCP 服务：
+```yaml
+# docker-compose.yml
+services:
+  mcp_server:
+    ports:
+      - "9014:5014"  # 外部端口:内部端口
+```
+
+使用外部映射端口连接：
+```
+连接 mcp http://127.0.0.1:9014/mcp  # ✅ 使用映射后的端口
+```
+
+### 常见问题
+
+#### Q1: 连接失败，显示 "Not Acceptable: Client must accept text/event-stream"
+
+**原因**：服务器要求 SSE headers，但旧版本的 `dynamic-mcp` 没有添加。
+
+**解决**：更新到最新版本的 `dynamic-mcp` skill（已包含 Accept headers 修复）。
+
+#### Q2: 测试脚本成功但 Agent 加载失败
+
+**原因**：Agent 服务未重启，仍在使用旧代码。
+
+**解决**：
+```bash
+# Windows
+taskkill /F /IM python.exe
+python -m skills.adk_agent.main_web_start_steering
+
+# Linux/Mac
+killall python
+python -m skills.adk_agent.main_web_start_steering
+```
+
+#### Q3: 如何验证 MCP 服务是否支持 Dynamic MCP
+
+使用 curl 测试：
+```bash
+curl -H "Accept: application/json, text/event-stream" \
+     -H "Content-Type: application/json" \
+     -X POST http://127.0.0.1:9014/mcp \
+     -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}},"id":1}'
+```
+
+如果返回 `{"jsonrpc":"2.0","id":1,"result":{...}}`，说明服务支持。
+
+### 与静态 MCP 集成的对比
+
+| 特性     | 静态 MCP (`param_mcp`) | Dynamic MCP (`dynamic-mcp`) |
+| -------- | ---------------------- | --------------------------- |
+| 配置方式 | 配置文件 + 重启服务    | 运行时命令                  |
+| 适用场景 | 固定的业务服务         | 临时或多变的服务            |
+| 扩展性   | 受限于配置             | 无限扩展                    |
+| 验证机制 | 启动时检查             | 连接时主动验证              |
+| 错误诊断 | 日志查看               | 实时友好提示                |
+
+### 最佳实践
+
+1. **优先使用 Dynamic MCP**：对于频繁变化或临时使用的 MCP 服务
+2. **结合静态配置**：核心业务 MCP 使用静态配置，临时服务使用动态加载
+3. **验证连接**：加载新服务后，先测试一个简单工具确认可用性
+4. **监控超时**：如果连接经常超时，考虑增加超时参数或检查网络
