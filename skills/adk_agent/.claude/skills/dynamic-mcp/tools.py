@@ -47,35 +47,22 @@ def get_tools(agent, session_service, app_info) -> List:
             (成功标志, 消息)
         """
         try:
-            # 使用超时控制
-            async def _try_discover_tools():
-                # 方法 1：尝试访问 tools 属性（如果 McpToolset 已缓存）
-                if hasattr(toolset, 'tools') and toolset.tools:
-                    return toolset.tools
-                
-                # 方法 2：等待一段时间让 ADK 完成异步工具发现
-                # 这是一个保守策略，因为直接调用内部 API 可能不稳定
-                await asyncio.sleep(10)
-                
-                # 再次检查 tools 属性
-                if hasattr(toolset, 'tools') and toolset.tools:
-                    return toolset.tools
-                
-                # 如果仍然没有工具，返回 None 表示需要更多时间
-                return None
-            
-            # 使用 wait_for 实现超时控制
-            tools = await asyncio.wait_for(_try_discover_tools(), timeout=timeout)
+            # 【关键修复】直接调用 get_tools() 而非等待后检查属性
+            # 这与测试脚本的成功方式一致
+            tools = await asyncio.wait_for(toolset.get_tools(), timeout=timeout)
             
             if tools:
                 tool_names = [getattr(t, '__name__', str(t)) for t in tools]
                 return True, f"成功发现 {len(tools)} 个工具: {', '.join(tool_names[:3])}{'...' if len(tools) > 3 else ''}"
-            else:
-                # 工具未立即可用，但连接可能成功（ADK 仍在异步加载）
-                return True, "连接已建立，工具发现进行中（可能需要稍等片刻）"
+            
+            # 理论上不会到达这里（get_tools 应该返回列表或抛出异常）
+            return False, "未发现工具，连接可能失败"
         
         except asyncio.TimeoutError:
-            return False, f"连接超时（{timeout}秒内未响应），请检查网络或 API Key"
+            return False, f"连接超时（{timeout}秒内未响应），请检查服务地址和端口"
+        except ConnectionError as e:
+            # 捕获我们主动抛出的连接错误
+            return False, f"无法连接到 MCP 服务: {str(e)}"
         except Exception as e:
             error_msg = str(e)
             # 友好化错误消息
@@ -83,7 +70,9 @@ def get_tools(agent, session_service, app_info) -> List:
                 return False, "认证失败，请检查 API Key 是否正确"
             elif "403" in error_msg or "Forbidden" in error_msg:
                 return False, "访问被拒绝，请确认 API Key 权限"
-            elif "connection" in error_msg.lower() or "network" in error_msg.lower():
+            elif "ConnectError" in error_msg or "connection" in error_msg.lower():
+                return False, "无法连接到 MCP 服务，请确认服务地址和端口是否正确"
+            elif "network" in error_msg.lower():
                 return False, f"网络连接失败: {error_msg}"
             else:
                 return False, f"连接失败: {error_msg}"
@@ -148,7 +137,13 @@ def get_tools(agent, session_service, app_info) -> List:
                                 return f"无需重复连接：已连接到远程服务 {target_url}"
                 
                 # A-2. 配置参数（支持 API Key 认证）
-                headers = {}
+                headers = {
+                    # 必需的 MCP SSE headers（很多服务器要求这两个）
+                    "Accept": "application/json, text/event-stream",
+                    "Content-Type": "application/json"
+                }
+                
+                # 添加认证 header
                 if api_key:
                     # 智能检测服务类型并使用对应的 header
                     if "context7.com" in target_url.lower():
@@ -164,7 +159,7 @@ def get_tools(agent, session_service, app_info) -> List:
                 
                 connection_params = StreamableHTTPConnectionParams(
                     url=target_url,
-                    headers=headers if headers else None
+                    headers=headers
                 )
 
 
