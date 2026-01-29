@@ -148,6 +148,9 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 15px 20px;
+    z-index: 10;
+    /* Ensure clickability */
+    position: relative;
 }
 
 .model-selector {
@@ -172,21 +175,45 @@ body {
     justify-content: center;
 }
 
-/* Welcome Screen - 中上部对齐 */
+/* Welcome Mode Layout Overrides */
+body.welcome-mode .main-content {
+    /* Restore natural flow so Top Bar stays at top */
+    justify-content: flex-start;
+    /* Push visual center up by reserving bottom space */
+    padding-bottom: 18vh !important;
+}
+
+body.welcome-mode .chat-container {
+    flex: 0 1 auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    width: 100%;
+    align-items: center;
+
+    /* Push against Top Bar, taking half available space */
+    margin-top: auto;
+    margin-bottom: 20px;
+    /* Spacing between Title and Input */
+}
+
+/* Welcome Screen - Reset positioning and Align Left */
 .welcome-screen {
     display: flex;
     flex-direction: column;
+    /* Align items to the start (Left) */
     align-items: flex-start;
-    /* 从center改为flex-start,左对齐 */
-    justify-content: flex-start;
-    /* 改为顶部对齐 */
-    padding-top: 22vh;
-    /* 从25vh减少到18vh,标题上移避免重叠 */
-    padding-left: 3.5%;
-    /* 修正为7.5%,与输入框wrapper左边缘对齐(50% - 85%/2) */
-    min-height: calc(100vh - 200px);
+    justify-content: center;
+    padding-top: 0;
+    padding-left: 0;
+    min-height: auto;
     text-align: left;
-    /* 从center改为left */
+
+    /* Match Input Box Width Logic for visual left-alignment */
+    width: 70%;
+    max-width: 900px;
+    min-width: 400px;
+
+    margin-top: 0;
 }
 
 .greeting {
@@ -268,19 +295,31 @@ body {
     background-color: var(--bg-color);
 }
 
-/* 欢迎模式 - 输入框居中 (必须在基础样式后面,优先级更高) */
+/* 欢迎模式 - 输入框 (不再使用 Fixed 定位，改为流式布局) */
 body.welcome-mode .input-area-wrapper {
-    position: fixed !important;
-    bottom: 45% !important;
-    /* 从35%增加到45%,上移输入框 */
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-    width: 85% !important;
-    /* 从60%增加到70%,与对话模式的padding 15%*2=30%相近 */
-    max-width: 1200px !important;
-    /* 从700px增加,与对话页一致 */
-    padding: 20px 5% !important;
-    /* 使用与对话模式一致的padding */
+    position: static !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
+    background-color: transparent !important;
+
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+
+    /* Push against Bottom, taking other half of space -> Vertical Center */
+    margin-bottom: auto;
+}
+
+/* 欢迎模式下的输入框宽度控制 */
+body.welcome-mode .input-area-wrapper .input-area {
+    width: 70%;
+    max-width: 900px;
+    min-width: 400px;
+    /* 增加阴影提升悬浮感 */
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 /* 对话模式 - 输入框底部 */
