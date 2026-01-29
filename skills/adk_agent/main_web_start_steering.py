@@ -231,6 +231,8 @@ class SteeringSession:
             print(f"[调试] get_session 返回: app_name={self.app_name}, user_id={self.user_id}, session_id={self.session_id}, session存在={session is not None}")
             if session and hasattr(session, 'events'):
                 print(f"[调试] session.events数量={len(session.events)}")
+                # [DEBUG] Check DB ID
+                print(f"[DEBUG] Session Object ID: {id(session)}")
             
             if not session:
                 print(f"[调试] 创建新session: app_name={self.app_name}, user_id={self.user_id}, session_id={self.session_id}")
@@ -265,7 +267,7 @@ class SteeringSession:
             tool_count = len(self.agent.tools) if self.agent.tools else 0
             
             WARN_TURNS = 20
-            MAX_TURNS = 20
+            MAX_TURNS = 40
             
             if turn_count > WARN_TURNS and turn_count <= MAX_TURNS:
                 print(f"\n[提醒] event个数 ({turn_count}) 超过软阈值 {WARN_TURNS}，建议执行 smart_compact 压缩上下文")
@@ -280,6 +282,7 @@ class SteeringSession:
                 # ⚠️ 关键修复：更新turn_count，确保后续不再触发压缩
                 turn_count = len(session.events) if session and hasattr(session, 'events') else 0
                 print(f"[系统] 压缩完成，当前events数量: {turn_count}")
+                print(f"[DEBUG] Post-compact Session Object ID: {id(session)}")
             
             if tool_count > 12:
                 print(f"\n[提醒] 已加载工具较多 ({tool_count})，建议卸载不常用的 skill")
@@ -458,6 +461,17 @@ class SteeringSession:
                         try:
                             await self.session_service.save_session(session)
                             print(f"[系统] ✅ 已通过 save_session() 持久化压缩后的 events 到数据库")
+                            # [DEBUG] Verify what we just saved
+                            print(f"[DEBUG] Saving session state. Events count: {len(session.events)}")
+                            # [DEBUG] Immediate read-back verification
+                            try:
+                                test_load = await self.session_service.get_session(self.app_name, self.user_id, self.session_id)
+                                print(f"[DEBUG] Immediate read-back event count: {len(test_load.events)}")
+                            except Exception as e:
+                                print(f"[DEBUG] Read-back failed: {e}")
+
+                            if hasattr(session, 'events'):
+                                print(f"[DEBUG] First event type: {type(session.events[0])}")
                         except Exception as e:
                             print(f"[错误] ❌ 数据库持久化失败: {e}")
                             import traceback
