@@ -305,3 +305,204 @@ def _create_mcp_toolset():
 - **错误处理**: 当 MCP 服务不可用时，会使用占位工具返回友好的错误提示
 - **工具发现**: ADK 自动发现机制确保智能体可以无缝使用 MCP 服务提供的所有工具
 
+---
+
+## Dynamic MCP Skill 深度解析
+
+`dynamic-mcp` 是一个**元工具**（Meta-Tool），实现了 Agent 的"自主扩张能力"——运行时动态发现并加载新的 MCP 工具，无需重启服务。
+
+### 设计理念
+
+**传统方式的问题**：
+- Agent 需要预先配置所有可能用到的工具
+- 添加新工具需要修改配置文件并重启服务
+- 工具列表庞大导致 Token 消耗高、LLM 选择困难
+
+**Dynamic MCP 的解决方案**：
+- **Just-in-Time Tooling**（即时工具化）：Agent 只在需要时才"下载"技能
+- **搜索驱动加载**：通过 Web Search 发现 MCP 服务的连接方式，然后动态挂载
+- **零配置扩展**：无需修改代码或配置，Agent 自主完成工具扩展
+
+### 架构图
+
+![Dynamic MCP Skill 架构](动态mcp-skill.png)
+
+### 核心机制
+
+#### 1. 双模式支持
+
+**远程模式 (Remote)**：
+- 连接 HTTP/SSE 方式提供的 MCP 服务
+- 支持智能认证检测（自动识别 Context7 等服务的特殊 header）
+- 创建 `StreamableHTTPConnectionParams` 并挂载到 `agent.tools`
+
+**本地模式 (Local)**：
+- 启动本地 MCP 进程（如 `npx @upstash/context7-mcp`）
+- 支持环境变量注入（如 API Key）
+- 创建 `StdioServerParameters` 并建立 stdio 通信管道
+
+#### 2. 智能认证检测
+
+针对不同 MCP 服务的认证方式，实现了智能适配：
+
+```python
+if "context7.com" in target_url.lower():
+    headers["CONTEXT7_API_KEY"] = api_key  # Context7 专属 header
+else:
+    headers["Authorization"] = f"Bearer {api_key}"  # 标准 Bearer Token
+```
+
+**支持的认证方式**：
+- Context7: `CONTEXT7_API_KEY` header（自定义）
+- 标准 MCP: `Authorization: Bearer` header（通用）
+
+#### 3. 工具发现验证机制
+
+**痛点**：ADK 的 `McpToolset` 工具发现是异步的，可能导致误导性的错误日志。
+
+**解决方案**：实现 `_verify_mcp_connection` 主动验证函数
+
+```python
+async def _verify_mcp_connection(toolset: McpToolset, timeout: int = 15) -> Tuple[bool, str]:
+    """主动触发工具发现并等待完成"""
+    # 1. 等待 ADK 完成异步工具发现（10秒）
+    await asyncio.sleep(10)
+    
+    # 2. 验证工具是否已加载
+    if hasattr(toolset, 'tools') and toolset.tools:
+        return True, f"成功发现 {len(tools)} 个工具: ..."
+    
+    # 3. 超时或失败处理
+    return False, "连接超时或认证失败"
+```
+
+**优势**：
+- ✅ 消除误导性的 `[ERROR] Failed to get tools` 日志
+- ✅ 仅在验证成功后才添加工具到 `agent.tools`
+- ✅ 提供友好的错误分类（401→认证失败，403→权限不足等）
+
+#### 4. 安全机制
+
+**命令白名单**（本地模式）：
+```python
+ALLOWED_LOCAL_COMMANDS = {"npx", "uvx", "node", "python", "python3"}
+```
+
+**参数注入防护**：
+```python
+def _is_safe_arg(arg: str) -> bool:
+    dangerous_chars = ['|', '>', '<', ';', '&', '`', '$(']
+    return not any(char in arg for char in dangerous_chars)
+```
+
+### 典型使用流程
+
+#### 场景：用户想用 Context7 查询文档
+
+```
+1. 用户请求：
+   "用 context7 查一下 fastmcp 库的文档，我的 API Key 是 ctx7sk-xxx"
+
+2. Agent 工作流：
+   Step 1: Web Search
+   └─ 查询 "context7 mcp server url"
+   └─ 发现：https://mcp.context7.com/mcp
+   
+   Step 2: Dynamic Load
+   └─ 调用 connect_mcp(
+        mode="remote",
+        source="https://mcp.context7.com/mcp",
+        api_key="ctx7sk-xxx"
+      )
+   └─ 验证连接（10秒）
+   └─ 返回：成功发现 2 个工具: resolve-library-id, query-docs
+   
+   Step 3: Use New Tools
+   └─ 调用 resolve_library_id(library_name="fastmcp")
+   └─ 调用 query_docs(library_id="/jlowin/fastmcp", query="usage")
+```
+
+### 实现要点
+
+#### 1. 依赖注入获取 Agent 实例
+
+```python
+def get_tools(agent, session_service, app_info) -> List:
+    """利用 ADK 的依赖注入机制获取 agent 实例"""
+    async def connect_mcp(...):
+        # 可以直接修改 agent.tools 列表
+        agent.tools.append(new_toolset)
+```
+
+#### 2. 去重检查避免重复加载
+
+```python
+# 检查是否已连接相同的服务
+for tool in agent.tools:
+    if isinstance(tool, McpToolset) and hasattr(tool, 'connection_params'):
+        if isinstance(tool.connection_params, StreamableHTTPConnectionParams):
+            if tool.connection_params.url.rstrip('/') == target_url.rstrip('/'):
+                return "无需重复连接：已连接到远程服务"
+```
+
+#### 3. 异步验证的同步集成
+
+虽然 `_verify_mcp_connection` 是异步函数，但可以在 `connect_mcp` 中直接 `await`，因为 `connect_mcp` 本身也是 async 函数：
+
+```python
+async def connect_mcp(...):
+    new_toolset = McpToolset(connection_params=connection_params)
+    
+    # 主动验证连接
+    success, message = await _verify_mcp_connection(new_toolset, timeout=15)
+    
+    if not success:
+        return f"[Error] {message}"
+    
+    agent.tools.append(new_toolset)
+    return f"[Success] {message}"
+```
+
+### 性能优化
+
+**用户修改的等待时间（10秒 + 15秒超时）**：
+- 内部等待：10 秒（让 ADK 完成异步工具发现）
+- 超时时间：15 秒（最大等待时间）
+- 正常情况下：约 10-12 秒完成验证
+
+**优化空间**：未来可支持自定义超时参数
+
+### 技术难点与解决方案
+
+| 难点           | 挑战                                             | 解决方案                                        |
+| -------------- | ------------------------------------------------ | ----------------------------------------------- |
+| 异步工具发现   | ADK 的工具发现是异步的，可能产生误导性错误日志   | 实现主动验证机制，等待发现完成后再返回          |
+| 多服务认证差异 | Context7 使用自定义 header，标准 MCP 使用 Bearer | 智能检测 URL 域名，自动选择正确的 header 名称   |
+| 本地命令安全   | 用户可能注入恶意命令                             | 白名单机制 + 参数字符过滤                       |
+| 连接失败诊断   | 错误原因不明确（网络、认证、超时？）             | 捕获异常并分类（401→认证失败，超时→网络问题等） |
+
+### 与 param_mcp 的对比
+
+| 特性     | param_mcp           | dynamic-mcp                    |
+| -------- | ------------------- | ------------------------------ |
+| 定位     | 静态 MCP 集成       | 动态 MCP 加载器                |
+| 配置方式 | 配置文件/环境变量   | 运行时搜索+加载                |
+| 适用场景 | 固定的业务 MCP 服务 | 临时需要的任意 MCP 服务        |
+| 工具数量 | 固定                | 无限扩展                       |
+| 典型用例 | 内部参数管理系统    | Context7、Exa、Brave Search 等 |
+
+### 扩展性
+
+未来可以轻松添加更多服务的支持：
+
+```python
+# 扩展认证检测
+if "context7.com" in url:
+    headers["CONTEXT7_API_KEY"] = api_key
+elif "exa.ai" in url:
+    headers["X-EXA-API-KEY"] = api_key
+elif "brave.com" in url:
+    headers["X-Subscription-Token"] = api_key
+else:
+    headers["Authorization"] = f"Bearer {api_key}"
+```
