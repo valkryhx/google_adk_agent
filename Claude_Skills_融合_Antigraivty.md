@@ -18,7 +18,7 @@
 4.  **Python 执行规范**  
     必须设置编码并使用绝对路径：
     ```cmd
-    cmd /c set PYTHONIOENCODING=utf-8 && python C:/Users/drago/.gemini/skills/skills/xxxx.py
+    cmd /c set PYTHONIOENCODING=utf-8 && python C:/Users/drago/.gemini/skills/xxxx.py
     ```
 
 
@@ -27,9 +27,9 @@
 > 
 > 请务必注意，所有全局 Skills（包括 Skill Creator）都必须部署在以下路径：
 > 
-> **`C:\Users\drago\.gemini\skills\skills`**
+> **`C:\Users\drago\.gemini\skills`**
 > 
-> *注意：路径中包含双层 `skills` 目录 (`.../skills/skills/`)，这是由于仓库结构决定的，配置时请格外小心。*
+> 
 
 ## 1. 核心概念
 
@@ -67,7 +67,7 @@ description: Create a new Claude Skill using the official Skill Creator (Global)
 2. **Run Initialization**: 调用全局脚本。
    ```bash
    # 注意：此处使用了双层 skills 路径
-   cmd /c set PYTHONIOENCODING=utf-8 && python C:/Users/drago/.gemini/skills/skills/skill-creator/scripts/init_skill.py [SKILL_NAME] --path skills
+   cmd /c set PYTHONIOENCODING=utf-8 && python C:/Users/drago/.gemini/skills/skill-creator/scripts/init_skill.py [SKILL_NAME] --path skills
    ```
 ```
 
@@ -85,7 +85,7 @@ description: Create a new Claude Skill using the official Skill Creator (Global)
 When the user asks to create a new Claude Skill... ALWAYS use the official `skill-creator` script...
 Usage:
 # 务必使用正确的全局路径
-`cmd /c set PYTHONIOENCODING=utf-8 && python C:/Users/drago/.gemini/skills/skills/skill-creator/scripts/init_skill.py [skill-name] --path skills`
+`cmd /c set PYTHONIOENCODING=utf-8 && python C:/Users/drago/.gemini/skills/skill-creator/scripts/init_skill.py [skill-name] --path skills`
 ```
 
 ## 3. 实践案例：Web Search Skill
@@ -118,7 +118,7 @@ def load_api_key():
 使用 `quick_validate.py` 确保 Skill 符合 Claude 的规范：
 ```bash
 # 同样注意使用全局路径
-python C:/Users/drago/.gemini/skills/skills/skill-creator/scripts/quick_validate.py skills/adk_agent/.claude/skills/web-search
+python C:/Users/drago/.gemini/skills/skill-creator/scripts/quick_validate.py skills/adk_agent/.claude/skills/web-search
 ```
 
 ## 4. 总结
