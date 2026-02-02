@@ -90,6 +90,7 @@ python -m src.simple_agent
 4.  **web_search**: 网络搜索工具，用于获取实时信息。
 5.  **compactor**: 上下文压缩工具，用于管理 Token 消耗和重置会话状态。
 6.  **param_mcp**: 参数 MCP 工具集成，通过 HTTP 连接与外部参数 MCP 服务交互，提供参数管理、工单生成等功能。
+7.  **dex**: 异步任务管理工具，支持长耗时任务的后台执行、状态追踪和多租户数据隔离。
 
 ---
 
@@ -684,3 +685,43 @@ curl -H "Accept: application/json, text/event-stream" \
 2. **结合静态配置**：核心业务 MCP 使用静态配置，临时服务使用动态加载
 3. **验证连接**：加载新服务后，先测试一个简单工具确认可用性
 4. **监控超时**：如果连接经常超时，考虑增加超时参数或检查网络
+
+---
+
+## Dex 技能深度解析
+
+`dex` 是专门为**长耗时、异步执行场景**设计的任务管理技能。它允许 Agent 将复杂或耗时的指令（如模型微调、文件深度搜索、大数据处理）发送到后台执行，从而不阻塞当前的对话流。
+
+### 核心特性
+
+- **后台执行引擎**：支持 Windows (`DETACHED_PROCESS`) 和 Linux (`setsid`) 的真正后台化运行。
+- **严格隔离 (Multi-Tenant)**：
+    - **任务隔离**：`.dex/tasks/{user_id}/`。
+    - **日志隔离**：`.dex/logs/{user_id}/`。
+- **状态追踪**：任务经历 `pending` -> `running` -> `completed`/`failed` 的完整生命周期。
+- **中文字符优化**：通过环境变量强制 UTF-8 输出，完美解决 Windows 环境下的日志乱码问题。
+
+### 使用示例
+
+#### 示例 1：执行 Python 脚本 (如长耗时模拟任务)
+
+当需要运行一个可能持续数分钟的 Python 程序时：
+
+*   **用户指令**：*"请使用 Dex 帮我运行 MISC/long_task.py 脚本"*
+*   **执行流**：
+    1.  Agent 调用 `dex_create_task` 创建记录。
+    2.  Agent 调用 `dex_start_task(command="python MISC/long_task.py")`。
+    3.  任务在后台开始运行，Agent 立即返回确认信息。
+    4.  用户可随时通过 `dex_list_tasks` 或 `dex_get_task_details` 查看进度。
+
+#### 示例 2：执行非 Python 的自然语言指令 (文件搜索)
+
+Dex 也可以作为一个通用的 Shell 执行器处理非 Python 任务。
+
+*   **用户指令**：*"使用 DEX 技能，搜索 D 盘所有的 markdown 文件"*
+*   **执行流**：
+    1.  Agent 自动将请求转化为系统命令 `dir /s /b D:\*.md` (Windows)。
+    2.  Agent 通过 `dex_start_task` 在后台异步提交。
+    3.  **结果**：Agent 无需等待搜索完成即可处理其他请求。搜索完成后，所有匹配的文件路径都会被记录在专属的日志文件中，用户随时可以查阅。
+
+---
