@@ -647,34 +647,63 @@ document.addEventListener('DOMContentLoaded', () => {
         initSidebarResize();
     }
 
-    // 侧边栏调整大小功能 implementation
+    // 初始化侧边栏调整大小功能
     function initSidebarResize() {
         const sidebar = document.querySelector('.sidebar');
         const handle = document.querySelector('.resize-handle');
+        const menuBtn = document.querySelector('.menu-btn');
         let isResizing = false;
 
+        // --- 1. 侧边栏折叠/展开逻辑 ---
+        menuBtn.addEventListener('click', () => {
+            if (sidebar.classList.contains('collapsed')) {
+                sidebar.classList.remove('collapsed');
+                // 恢复宽度
+                sidebar.style.padding = ''; // 恢复 CSS 默认
+                sidebar.style.minWidth = ''; // 恢复 CSS 默认
+                const savedWidth = localStorage.getItem('sidebarWidth') || '260px';
+                sidebar.style.width = savedWidth;
+            } else {
+                sidebar.classList.add('collapsed');
+                sidebar.style.width = '0px';
+                sidebar.style.padding = '0px'; // 确保彻底消失
+                sidebar.style.minWidth = '0px';
+                sidebar.style.maxWidth = '0px';
+            }
+        });
+
+        // --- 2. 侧边栏调整大小逻辑 ---
         // 恢复保存的宽度
         const savedWidth = localStorage.getItem('sidebarWidth');
         if (savedWidth) {
             sidebar.style.width = savedWidth;
+            sidebar.style.minWidth = savedWidth;
         }
 
         handle.addEventListener('mousedown', (e) => {
+            if (sidebar.classList.contains('collapsed')) return;
             isResizing = true;
             handle.classList.add('active');
-            document.body.style.cursor = 'col-resize'; // 防止拖动过快光标丢失
-            document.body.style.userSelect = 'none'; // 防止拖动时选中文字
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
         });
 
         document.addEventListener('mousemove', (e) => {
             if (!isResizing) return;
 
-            // 限制最小和最大宽度
             let newWidth = e.clientX;
-            if (newWidth < 200) newWidth = 200;
-            if (newWidth > window.innerWidth * 0.5) newWidth = window.innerWidth * 0.5;
+
+            // 响应式限制：如果窗口很窄，允许侧边栏占满更多空间
+            const maxAllowedRatio = window.innerWidth < 600 ? 0.8 : 0.5;
+            const maxAllowed = window.innerWidth * maxAllowedRatio;
+            const minAllowed = 150; // 稍微降低最小限制以适应窄屏
+
+            if (newWidth < minAllowed) newWidth = minAllowed;
+            if (newWidth > maxAllowed) newWidth = maxAllowed;
 
             sidebar.style.width = `${newWidth}px`;
+            sidebar.style.minWidth = `${newWidth}px`;
+            sidebar.style.maxWidth = `${newWidth}px`;
         });
 
         document.addEventListener('mouseup', () => {

@@ -378,10 +378,20 @@ class SteeringSession:
                 yield {"type": "text", "content": "\n\n[已停止] 任务已取消。"}
                 return
         
+        except UserInterruption:
+            # 这个块通常不会被到达，因为 run_task 内部有局部处理，但为了双重保险
+            yield {"type": "text", "content": "\n\n[已停止] 任务已取消。"}
+            return
+            
         except Exception as e:
-            logger.error(f"执行出错: {e}")
-            yield f"[ERROR] {str(e)}"
-            print(f"\n[ERROR] 执行出错: {e}")
+            # 过滤掉包含中断信息的特定错误字符串
+            err_msg = str(e)
+            if "User requested to stop operation" in err_msg:
+                yield {"type": "text", "content": "\n\n[已停止] 任务已取消。"}
+            else:
+                logger.error(f"执行出错: {e}")
+                yield f"[ERROR] {err_msg}"
+                print(f"\n[ERROR] 执行出错: {e}")
         
         finally:
             # 打印 Session History（调试用）

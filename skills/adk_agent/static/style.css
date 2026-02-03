@@ -37,10 +37,30 @@ body {
     display: flex;
     flex-direction: column;
     padding: 10px;
-    /* transition: width 0.3s ease;  <-- Removed for smooth resizing */
     position: relative;
     min-width: 200px;
     max-width: 50vw;
+    transition: width 0.3s ease, padding 0.3s ease;
+    /* 仅在点击菜单按钮(折叠)时起作用,拖拽会被 JS 实时覆盖 */
+    overflow: hidden;
+    /* 折叠时隐藏内容 */
+}
+
+/* 当侧边栏正在被调整大小时, 暂时禁用 transition 以免卡顿 */
+.sidebar:active {
+    transition: none;
+}
+
+.sidebar.collapsed {
+    width: 0 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+.sidebar.collapsed * {
+    display: none;
+    /* 彻底移除内容,防止占位 */
 }
 
 .resize-handle {
@@ -48,15 +68,22 @@ body {
     top: 0;
     right: 0;
     bottom: 0;
-    width: 5px;
+    width: 8px;
+    /* 稍微调窄一点至 8px，依然易于点击 */
     cursor: col-resize;
-    z-index: 100;
-    transition: background-color 0.2s;
+    z-index: 1000;
+    background-color: transparent !important;
+    /* 强制背景透明 */
+    border: none !important;
+    /* 强制无边框 */
+    outline: none !important;
+    /* 强制无轮廓线 */
+    box-shadow: none !important;
+    /* 强制无阴影 */
 }
 
-.resize-handle:hover,
-.resize-handle.active {
-    background-color: rgba(0, 0, 0, 0.1);
+.resize-handle:hover {
+    background-color: transparent !important;
 }
 
 .sidebar-header {
