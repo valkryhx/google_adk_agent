@@ -275,8 +275,8 @@ class SteeringSession:
             turn_count = len(session.events) if session and hasattr(session, 'events') and session.events else 0
             tool_count = len(self.agent.tools) if self.agent.tools else 0
             
-            WARN_TURNS = 20
-            MAX_TURNS = 40
+            WARN_TURNS = 60
+            MAX_TURNS = 70
             
             if turn_count > WARN_TURNS and turn_count <= MAX_TURNS:
                 print(f"\n[提醒] event个数 ({turn_count}) 超过软阈值 {WARN_TURNS}，建议执行 smart_compact 压缩上下文")
@@ -936,7 +936,7 @@ async def get_session_history(
         return {"messages": []}
     
     messages = []
-    for event in session.events:
+    for event_idx, event in enumerate(session.events):
         if hasattr(event, 'content') and event.content:
             role = 'unknown'
             if hasattr(event.content, 'role'):
@@ -948,9 +948,18 @@ async def get_session_history(
             text_content = ""
             blocks = []
             
+            # [调试日志] 输出 event 的详细信息
+            print(f"\n[历史消息调试] Event {event_idx} - Role: {role}")
+            print(f"[历史消息调试] Event {event_idx} - Content 类型: {type(event.content)}")
+            
             if hasattr(event.content, 'parts'):
-                for part in event.content.parts:
+                print(f"[历史消息调试] Event {event_idx} - Parts 数量: {len(event.content.parts)}")
+                for part_idx, part in enumerate(event.content.parts):
+                    print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 类型: {type(part)}")
+                    
+                    # 检查 text
                     if hasattr(part, 'text') and part.text:
+                        print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 有 text (长度:{len(part.text)})")
                         # 检查是否是思考过程
                         if getattr(part, 'thought', False):
                             blocks.append({"type": "thought", "content": part.text})
@@ -958,24 +967,63 @@ async def get_session_history(
                             blocks.append({"type": "text", "content": part.text})
                             text_content += part.text
                     
+                    # 检查 function_call
                     if hasattr(part, 'function_call') and part.function_call:
                         fc = part.function_call
+                        print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 有 function_call: {fc.name}")
                         blocks.append({
                             "type": "tool_call",
                             "content": f"{fc.name} 输入参数: {fc.args}"
                         })
                     
-                    if hasattr(part, 'function_response') and part.function_response:
-                        fr = part.function_response
-                        blocks.append({
-                            "type": "tool_result",
-                            "content": f"结果: {fr.response}"
-                        })
+                    # 检查 function_response
+                    if hasattr(part, 'function_response'):
+                        print(f"[历史消息调试] Event {event_idx} Part {part_idx} - hasattr(function_response): True")
+                        print(f"[历史消息调试] Event {event_idx} Part {part_idx} - function_response value: {part.function_response}")
+                        if part.function_response:
+                            fr = part.function_response
+                            print(f"[历史消息调试] Event {event_idx} Part {part_idx} - function_response name: {fr.name}")
+                            blocks.append({
+                                "type": "tool_result",
+                                "content": f"结果: {fr.response}"
+                            })
+                        else:
+                            print(f"[历史消息调试] Event {event_idx} Part {part_idx} - function_response 是 None")
+                    else:
+                        print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 没有 function_response 属性")
+            
+            print(f"[历史消息调试] Event {event_idx} - 最终 blocks 数量: {len(blocks)}")
+            for block_idx, block in enumerate(blocks):
+                print(f"[历史消息调试] Event {event_idx} Block {block_idx}: type={block['type']}")
+            
+            # 合并连续的相同类型的 blocks（特别是 thought 和 text）
+            merged_blocks = []
+            for block in blocks:
+                # 如果 merged_blocks 为空，或者当前 block 类型与上一个不同，直接添加
+                if not merged_blocks or merged_blocks[-1]['type'] != block['type']:
+                    merged_blocks.append(block)
+                else:
+                    # 如果类型相同，合并 content（只合并 thought 和 text）
+                    if block['type'] in ['thought', 'text']:
+                        merged_blocks[-1]['content'] += block['content']
+                    else:
+                        # tool_call 和 tool_result 不合并，直接添加
+                        merged_blocks.append(block)
+            
+            print(f"[历史消息调试] Event {event_idx} - 合并后 blocks 数量: {len(merged_blocks)}")
+            
+            # [关键修复] 如果消息只包含 tool_result，则强制 role 为 'model'
+            # 原因：Google ADK 中 function_response 的 role 是 'user'，但从 UI 角度看
+            # tool_result 应该和 tool_call 一样在左侧对齐（都是系统操作）
+            only_tool_results = all(block['type'] == 'tool_result' for block in merged_blocks) if merged_blocks else False
+            if only_tool_results and role == 'user':
+                print(f"[历史消息调试] Event {event_idx} - 检测到只包含 tool_result，将 role 从 'user' 改为 'model'")
+                role = 'model'
             
             if role == 'user' or role == 'model':
                 messages.append({
                     "role": role,
-                    "blocks": blocks,
+                    "blocks": merged_blocks,  # 使用合并后的 blocks
                     "text": text_content  # 兼容性字段
                 })
     
