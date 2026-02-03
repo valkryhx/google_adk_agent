@@ -6,6 +6,7 @@ Shell Executor Skill - 系统命令执行工具集
 """
 
 import subprocess
+import asyncio
 import platform
 import os
 import psutil
@@ -47,22 +48,24 @@ def validate_command(command: str) -> tuple[bool, str]:
     return True, ""
 
 
-def bash(
+async def bash(
     command: str,
     restart: bool = False,
     timeout: int = 60,
     shell: bool = True,
-    cwd: Optional[str] = None
+    cwd: Optional[str] = None,
+    interruption_queue = None  # 🔑 新增: 中断队列
 ) -> str:
     """
-    执行系统 Shell 命令 (Bash Tool)
+    执行系统 Shell 命令 (Bash Tool) - 异步版本,支持中断
     
     Args:
         command: 要执行的命令
         restart: 重启会话 (当前无状态模式下仅作为兼容参数)
-        timeout: 超时时间（秒）
+        timeout: 超时时间(秒)
         shell: 是否使用 shell 执行
-        cwd: 工作目录（可选）
+        cwd: 工作目录(可选)
+        interruption_queue: 中断信号队列(可选)
         
     Returns:
         命令输出结果
@@ -79,57 +82,119 @@ def bash(
         return f"[ERROR] Security Alert: {reason}"
 
     try:
-        result = subprocess.run(
-            command,
-            shell=shell,
-            capture_output=True,
-            # text=True 会自动解码，导致我们没机会处理编码错误。改为 False 获取 bytes
-            text=False, 
-            timeout=timeout,
-            cwd=cwd,
-            # Windows 默认编码通常是 gbk/cp936，强制 utf-8 可能会导致解码错误从而丢弃输出
-            # 移除 encoding 参数，获取 bytes 后手动解码
-            # encoding='utf-8', 
-            # errors='replace'
-        )
-        
-        output_parts = []
+        # 🔑 使用异步 subprocess
+        if platform.system() == 'Windows':
+            # Windows needs shell=True for most commands
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd
+            )
+        else:
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                shell=shell,
+                cwd=cwd
+            )
         
         # 手动解码策略
         def decode_bytes(b: bytes) -> str:
             if not b: return ""
             try:
-                # 优先尝试 utf-8
                 return b.decode('utf-8')
             except UnicodeDecodeError:
                 try:
-                    # 尝试系统默认编码 (如 gbk)
                     return b.decode(platform.system() == 'Windows' and 'mbcs' or 'utf-8')
                 except:
-                    # 最后兜底
                     return b.decode('utf-8', errors='replace')
-
-        stdout_str = decode_bytes(result.stdout)
-        stderr_str = decode_bytes(result.stderr)
         
+        # 🔑 异步读取输出,并定期检查中断
+        stdout_chunks = []
+        stderr_chunks = []
+        start_time = asyncio.get_event_loop().time()
+        
+        while True:
+            # 🔑 检查中断信号
+            if interruption_queue and not interruption_queue.empty():
+                try:
+                    signal = interruption_queue.get_nowait()
+                    if signal == "CANCEL":
+                        # 终止进程
+                        process.terminate()
+                        try:
+                            await asyncio.wait_for(process.wait(), timeout=2.0)
+                        except asyncio.TimeoutError:
+                            process.kill()
+                        return "[INTERRUPTED] 命令执行被用户中断"
+                except:
+                    pass
+            
+            # 检查超时
+            if asyncio.get_event_loop().time() - start_time > timeout:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    process.kill()
+                return f"[ERROR] 命令执行超时(超过 {timeout} 秒)"
+            
+            # 非阻塞读取
+            try:
+                stdout_chunk = await asyncio.wait_for(
+                    process.stdout.read(4096), 
+                    timeout=0.2
+                )
+                if stdout_chunk:
+                    stdout_chunks.append(stdout_chunk)
+            except asyncio.TimeoutError:
+                pass  # 超时是正常的,继续下一轮
+            
+            try:
+                stderr_chunk = await asyncio.wait_for(
+                    process.stderr.read(4096), 
+                    timeout=0.2
+                )
+                if stderr_chunk:
+                    stderr_chunks.append(stderr_chunk)
+            except asyncio.TimeoutError:
+                pass
+            
+            # 检查进程是否结束
+            if process.returncode is not None:
+                break
+                
+            # 避免 CPU 空转
+            await asyncio.sleep(0.1)
+        
+        # 确保读取剩余输出
+        remaining_stdout, remaining_stderr = await process.communicate()
+        if remaining_stdout:
+            stdout_chunks.append(remaining_stdout)
+        if remaining_stderr:
+            stderr_chunks.append(remaining_stderr)
+        
+        # 合并并解码
+        stdout_str = decode_bytes(b''.join(stdout_chunks))
+        stderr_str = decode_bytes(b''.join(stderr_chunks))
+        
+        output_parts = []
         if stdout_str:
             output_parts.append(f"[标准输出]\n{stdout_str}")
         
         if stderr_str:
             output_parts.append(f"[错误输出]\n{stderr_str}")
         
-        if result.returncode != 0:
-            output_parts.append(f"[返回码] {result.returncode}")
+        if process.returncode != 0:
+            output_parts.append(f"[返回码] {process.returncode}")
         
         if not output_parts:
-            # 兼容 Claude Bash tool 的静默成功
-            # return "[OK] 命令执行成功，无输出" 
-            return "" 
+            return ""
         
         return "\n".join(output_parts)
         
-    except subprocess.TimeoutExpired:
-        return f"[ERROR] 命令执行超时（超过 {timeout} 秒）"
     except FileNotFoundError:
         return f"[ERROR] 命令未找到: {command.split()[0]}"
     except Exception as e:
