@@ -514,22 +514,33 @@ document.addEventListener('DOMContentLoaded', () => {
             // 渲染历史消息
             data.messages.forEach(msg => {
                 if (msg.role === 'user') {
+                    // 用户消息直接渲染 text
                     if (msg.text && msg.text.trim()) {
                         appendMessage('user', msg.text, false);
                     }
                 } else if (msg.role === 'model') {
+                    console.log('[前端调试] Model 消息:', msg);
+                    console.log('[前端调试] msg.blocks:', msg.blocks);
+                    console.log('[前端调试] hasValidContent(msg.blocks):', hasValidContent(msg.blocks));
+
                     // 优先处理 blocks 结构
                     if (msg.blocks && hasValidContent(msg.blocks)) {
+                        console.log('[前端调试] 准备渲染 blocks，数量:', msg.blocks.length);
+                        msg.blocks.forEach((block, idx) => {
+                            console.log(`[前端调试] Block ${idx}: type=${block.type}, content_length=${block.content?.length}`);
+                        });
+
                         const msgId = appendMessage('model', '', false);
                         updateMessage(msgId, msg.blocks, true);
                     }
                     // 兼容旧的文本格式 (只有 text 没有 blocks)
                     else if (msg.text && msg.text.trim()) {
+                        console.log('[前端调试] 使用旧格式 text');
                         appendMessage('model', msg.text, false);
                     }
                     else {
                         // 真的没有内容,忽略
-                        // console.warn('忽略空消息:', msg); 
+                        console.warn('[前端调试] 忽略空消息:', msg);
                     }
                 }
             });

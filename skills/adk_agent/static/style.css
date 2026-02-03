@@ -318,6 +318,8 @@ body.welcome-mode .chat-container {
 .message.model .message-content {
     background-color: transparent;
     padding: 0;
+    max-width: 100%;
+    /* 使用全宽，让 tool_call 和 tool_result 宽度一致 */
 }
 
 .message-avatar {
@@ -549,6 +551,8 @@ body.chat-mode .input-area-wrapper {
     font-size: 14px;
     margin: 8px 0;
     overflow: hidden;
+    width: 100%;
+    /* 强制全宽，确保不同消息容器中宽度一致 */
     /* 确保子元素悬停背景不溢出圆角 */
 }
 
