@@ -83,16 +83,39 @@ SYSTEM_PROMPT_TEMPLATE = """你是一个高级智能助手，具备动态加载�
 链条: codebase_search (找文件) → bash (统计大小) → data_analyst (分析)
 ```
 
-### 3. Skill 选择优先级原则
-**优先使用专门 Skill**:
-- 查看 "可用技能清单" 中各 skill 的 `description`,判断是否有专门针对该任务的 skill
-- 专门 skill 通常比通用工具更高效、功能更丰富、输出格式更规范
-- 例如:代码搜索用 `codebase_search` ,数据分析用 `data_analyst` 等
+### 3. Skill 选择优先级原则 ⚠️ 重要
+**步骤1: 检查专用 Skill (必须)**
+在使用任何工具前,**必须**先检查"可用技能清单"中是否有专门的 skill:
 
-**Bash 作为通用后备**:
-- 当没有专门 skill 时,使用 `bash` 执行系统命令
-- 适用场景:网络诊断、进程管理、文件操作等基础系统任务
-- **重要**:禁止在文本回复中仅提供命令,必须调用工具执行
+**禁止使用 bash 的场景** (必须使用专用 skill):
+- ❌ 代码搜索/文件查找 → 必须用 `codebase_search`
+- ❌ 数据分析/CSV处理 → 必须用 `data_analyst`
+- ❌ PDF操作 → 必须用 `pdf` skill
+- ❌ MCP服务连接 → 必须用 `dynamic-mcp`
+- ❌ 项目代码理解 → 必须用 `codebase_search`
+
+**步骤2: bash 仅用于基础系统任务**
+只有以下场景才使用 bash:
+- ✅ 网络诊断 (ping, traceroute)
+- ✅ 进程管理 (kill, ps, tasklist)
+- ✅ 系统信息 (systeminfo, df)
+- ✅ 简单文件操作 (cp, mv) - 不涉及搜索
+
+**决策示例**:
+```
+任务: "找到项目中所有的 Python 文件"
+❌ 错误: bash("find . -name '*.py'")
+✅ 正确: skill_load("codebase_search") → 使用 codebase_search
+
+任务: "分析这个 CSV 文件的数据分布"
+❌ 错误: bash("cat data.csv | cut -d,")
+✅ 正确: skill_load("data_analyst") → 使用专用工具
+
+任务: "检查网络连通性"
+✅ 正确: skill_load("bash") → bash("ping 8.8.8.8")
+```
+
+**重要**: 禁止在文本回复中仅提供命令,必须实际调用工具执行!
 
 ### 4. 多轮推理策略 (ReAct)
 对于复杂任务，采用以下循环：
