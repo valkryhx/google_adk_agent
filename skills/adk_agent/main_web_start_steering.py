@@ -153,6 +153,8 @@ class SteeringSession:
     def _load_skill_tools(self, skill_id: str):
         """加载技能工具到当前 agent"""
         import importlib.util
+        import functools
+        
         tools_path = os.path.join(self.config.skills_path, skill_id, "tools.py")
         if not os.path.exists(tools_path): 
             return []
@@ -181,6 +183,13 @@ class SteeringSession:
             existing_names = {t.__name__ for t in self.agent.tools if hasattr(t, '__name__')}
             for tool in tools:
                 t_name = getattr(tool, '__name__', str(tool))
+                
+                # 🔑 为 bash 工具绑定中断队列
+                if t_name == 'bash' and skill_id == 'bash':
+                    tool = functools.partial(tool, interruption_queue=self.queue)
+                    # 保持函数名称以便识别
+                    tool.__name__ = 'bash'
+                
                 if t_name not in existing_names:
                     self.agent.tools.append(tool)
                     loaded.append(tool)
@@ -321,6 +330,42 @@ class SteeringSession:
                 # 插入中断标记
                 try:
                     from google.adk.sessions import Event
+                    
+                    # ===【关键修复】检查是否有未完成的 function_call ===
+                    if session and hasattr(session, 'events') and session.events:
+                        last_event = session.events[-1]
+                        
+                        # 检查最后一个 event 是否包含未完成的 function_call
+                        has_pending_call = False
+                        pending_calls = []
+                        
+                        if hasattr(last_event, 'content') and last_event.content and hasattr(last_event.content, 'parts'):
+                            for part in last_event.content.parts:
+                                if hasattr(part, 'function_call') and part.function_call:
+                                    has_pending_call = True
+                                    pending_calls.append(part.function_call)
+                        
+                        # 如果有未完成的调用,插入 synthetic FunctionResponse
+                        if has_pending_call:
+                            print(f"[System] 检测到 {len(pending_calls)} 个未完成的工具调用,正在补全...")
+                            
+                            response_parts = []
+                            for fc in pending_calls:
+                                # 构造 FunctionResponse
+                                func_response = types.FunctionResponse(
+                                    name=fc.name,
+                                    id=fc.id if hasattr(fc, 'id') else None,
+                                    response={"status": "cancelled", "message": "工具执行被用户中断"}
+                                )
+                                response_parts.append(types.Part(function_response=func_response))
+                            
+                            # 插入为 model role 的 event
+                            response_content = types.Content(role='model', parts=response_parts)
+                            response_event = Event(author='model', content=response_content)
+                            session.events.append(response_event)
+                            print(f"[System] 已补全 {len(pending_calls)} 个 FunctionResponse")
+                    
+                    # 插入中断标记(system 消息)
                     stop_content = types.Content(role="system", parts=[types.Part(text="[System] 用户主动中断了当前对话。")])
                     stop_event = Event(author="system", content=stop_content)
                     

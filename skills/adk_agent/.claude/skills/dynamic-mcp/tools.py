@@ -63,7 +63,7 @@ def get_tools(agent, session_service, app_info) -> List:
         except ConnectionError as e:
             # 捕获我们主动抛出的连接错误
             return False, f"无法连接到 MCP 服务: {str(e)}"
-        except Exception as e:
+        except BaseException as e:
             error_msg = str(e)
             # 友好化错误消息
             if "401" in error_msg or "Unauthorized" in error_msg:
@@ -216,7 +216,7 @@ def get_tools(agent, session_service, app_info) -> List:
                 agent.tools.append(new_toolset)
                 return f"[Success] {mode} MCP 工具加载成功！{message}"
 
-        except Exception as e:
+        except BaseException as e:
             return f"[Error] 加载 MCP 失败: {str(e)}"
 
         return "[Error] 未知逻辑错误"

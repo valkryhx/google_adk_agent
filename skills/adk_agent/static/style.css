@@ -37,7 +37,26 @@ body {
     display: flex;
     flex-direction: column;
     padding: 10px;
-    transition: width 0.3s ease;
+    /* transition: width 0.3s ease;  <-- Removed for smooth resizing */
+    position: relative;
+    min-width: 200px;
+    max-width: 50vw;
+}
+
+.resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 5px;
+    cursor: col-resize;
+    z-index: 100;
+    transition: background-color 0.2s;
+}
+
+.resize-handle:hover,
+.resize-handle.active {
+    background-color: rgba(0, 0, 0, 0.1);
 }
 
 .sidebar-header {

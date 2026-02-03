@@ -642,6 +642,52 @@ document.addEventListener('DOMContentLoaded', () => {
         if (sessionId) {
             await loadSessionHistory(sessionId);
         }
+
+        // 初始化侧边栏调整大小功能
+        initSidebarResize();
+    }
+
+    // 侧边栏调整大小功能 implementation
+    function initSidebarResize() {
+        const sidebar = document.querySelector('.sidebar');
+        const handle = document.querySelector('.resize-handle');
+        let isResizing = false;
+
+        // 恢复保存的宽度
+        const savedWidth = localStorage.getItem('sidebarWidth');
+        if (savedWidth) {
+            sidebar.style.width = savedWidth;
+        }
+
+        handle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            handle.classList.add('active');
+            document.body.style.cursor = 'col-resize'; // 防止拖动过快光标丢失
+            document.body.style.userSelect = 'none'; // 防止拖动时选中文字
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+
+            // 限制最小和最大宽度
+            let newWidth = e.clientX;
+            if (newWidth < 200) newWidth = 200;
+            if (newWidth > window.innerWidth * 0.5) newWidth = window.innerWidth * 0.5;
+
+            sidebar.style.width = `${newWidth}px`;
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                handle.classList.remove('active');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+
+                // 保存宽度
+                localStorage.setItem('sidebarWidth', sidebar.style.width);
+            }
+        });
     }
 
     // 调用初始化
