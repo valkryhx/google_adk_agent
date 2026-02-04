@@ -50,6 +50,21 @@ class AutoCompactAgent(LlmAgent):
         """
         print(f"[AutoCompactAgent] 收到摘要请求，文本长度: {len(history_text)}")
         
+        # [SAFETY] 超大文本截断保护
+        # 如果历史记录太大 (例如 > 200k chars，约 50k tokens)，可能会导致 Compactor 自身也爆 Token
+        # 此时我们需要强行截断，只保留开头(System)和结尾(最近对话)，丢弃中间
+        MAX_SAFE_CHARS = 200000 
+        if len(history_text) > MAX_SAFE_CHARS:
+             print(f"[AutoCompactAgent] ⚠️ 警告：输入文本过长 ({len(history_text)} chars)，执行安全截断...")
+             # 保留前 20% 和后 30%，中间用占位符
+             keep_head = int(MAX_SAFE_CHARS * 0.2)
+             keep_tail = int(MAX_SAFE_CHARS * 0.3)
+             history_text = (
+                 history_text[:keep_head] + 
+                 f"\n\n... [中间 {len(history_text) - keep_head - keep_tail} 字符因过长已省略] ...\n\n" + 
+                 history_text[-keep_tail:]
+             )
+
         # Create a temporary session for this summarization task
         temp_session_service = InMemorySessionService()
         temp_session = await temp_session_service.create_session(
