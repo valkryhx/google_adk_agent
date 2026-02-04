@@ -266,14 +266,14 @@ def get_tools(agent, session_service, app_info) -> List:
                 
                 # 【用户体验优化】构建详细的工具列表信息
                 tools = await new_toolset.get_tools()
-                display_limit = 10
+                display_limit = 1000
                 tool_lines = []
                 
                 for i, tool in enumerate(tools[:display_limit], 1):
                     name = getattr(tool, 'name', 'unknown')
                     desc = getattr(tool, 'description', '')
-                    # 只取描述的第一行,限制长度
-                    desc = desc.strip().split('\n')[0][:80]
+                    # 只取描述的第一行,可以限制长度
+                    desc = desc.strip().split('\n')[0][:]
                     tool_lines.append(f"  {i}. `{name}` - {desc}")
                 
                 if len(tools) > display_limit:
