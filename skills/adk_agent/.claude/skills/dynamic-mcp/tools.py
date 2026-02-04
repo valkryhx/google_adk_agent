@@ -35,51 +35,51 @@ def get_tools(agent, session_service, app_info) -> List:
         dangerous_chars = ['|', '>', '<', ';', '&', '`', '$(']
         return not any(char in arg for char in dangerous_chars)
     
-    async def _wrap_mcp_tool(original_tool, mcp_identifier: str):
-        """
-        包装 MCP 工具,提供断线检测和友好错误提示
+    # async def _wrap_mcp_tool(original_tool, mcp_identifier: str):
+    #     """
+    #     包装 MCP 工具,提供断线检测和友好错误提示
         
-        Args:
-            original_tool: 原始 MCP 工具函数
-            mcp_identifier: MCP 服务标识符(用于错误提示)
+    #     Args:
+    #         original_tool: 原始 MCP 工具函数
+    #         mcp_identifier: MCP 服务标识符(用于错误提示)
         
-        Returns:
-            包装后的工具函数
-        """
-        async def wrapped(*args, **kwargs):
-            try:
-                # 调用原始工具
-                return await original_tool(*args, **kwargs)
-            except Exception as e:
-                err_msg = str(e)
-                # 检测常见的断线错误特征
-                disconnect_keywords = [
-                    "all connection attempts failed",
-                    "session termination failed",
-                    "connection closed",
-                    "disconnect",
-                    "shutdown",
-                    "connection error",
-                    "not connected"
-                ]
+    #     Returns:
+    #         包装后的工具函数
+    #     """
+    #     async def wrapped(*args, **kwargs):
+    #         try:
+    #             # 调用原始工具
+    #             return await original_tool(*args, **kwargs)
+    #         except Exception as e:
+    #             err_msg = str(e)
+    #             # 检测常见的断线错误特征
+    #             disconnect_keywords = [
+    #                 "all connection attempts failed",
+    #                 "session termination failed",
+    #                 "connection closed",
+    #                 "disconnect",
+    #                 "shutdown",
+    #                 "connection error",
+    #                 "not connected"
+    #             ]
                 
-                if any(keyword in err_msg.lower() for keyword in disconnect_keywords):
-                    # 返回友好的断线提示,而非抛出异常
-                    return (
-                        f"[MCP 连接已断开] {mcp_identifier} 服务不可用。\n\n"
-                        f"可能原因:\n"
-                        f"1. 浏览器进程已关闭\n"
-                        f"2. MCP 服务意外退出\n"
-                        f"3. 网络连接中断\n\n"
-                        f"建议操作: 使用 connect_mcp 重新连接"
-                    )
-                # 其他异常正常抛出
-                raise
+    #             if any(keyword in err_msg.lower() for keyword in disconnect_keywords):
+    #                 # 返回友好的断线提示,而非抛出异常
+    #                 return (
+    #                     f"[MCP 连接已断开] {mcp_identifier} 服务不可用。\n\n"
+    #                     f"可能原因:\n"
+    #                     f"1. 浏览器进程已关闭\n"
+    #                     f"2. MCP 服务意外退出\n"
+    #                     f"3. 网络连接中断\n\n"
+    #                     f"建议操作: 使用 connect_mcp 重新连接"
+    #                 )
+    #             # 其他异常正常抛出
+    #             raise
         
-        # 保持原函数的元数据
-        wrapped.__name__ = getattr(original_tool, '__name__', 'unknown_tool')
-        wrapped.__doc__ = getattr(original_tool, '__doc__', '')
-        return wrapped
+    #     # 保持原函数的元数据
+    #     wrapped.__name__ = getattr(original_tool, '__name__', 'unknown_tool')
+    #     wrapped.__doc__ = getattr(original_tool, '__doc__', '')
+    #     return wrapped
     
     async def _verify_mcp_connection(toolset: McpToolset, timeout: int = 10) -> Tuple[bool, str]:
         """
@@ -98,7 +98,8 @@ def get_tools(agent, session_service, app_info) -> List:
             tools = await asyncio.wait_for(toolset.get_tools(), timeout=timeout)
             
             if tools:
-                tool_names = [getattr(t, '__name__', str(t)) for t in tools]
+                # 优先使用 name 属性(MCPTool的标准属性),其次才是 __name__
+                tool_names = [getattr(t, 'name', getattr(t, '__name__', str(t))) for t in tools]
                 return True, f"成功发现 {len(tools)} 个工具: {', '.join(tool_names[:3])}{'...' if len(tools) > 3 else ''}"
             
             # 理论上不会到达这里（get_tools 应该返回列表或抛出异常）
@@ -258,27 +259,37 @@ def get_tools(agent, session_service, app_info) -> List:
                     # 验证失败,不添加到 agent.tools
                     return f"[Error] {message}"
                 
-                # 【关键修复】为所有 MCP 工具添加断线检测包装层
-                try:
-                    # 获取工具列表
-                    tools = await new_toolset.get_tools()
-                    
-                    # 构建 MCP 服务标识符(用于错误提示)
-                    mcp_id = f"{mode}:{source}"
-                    
-                    # 包装并添加每个工具
-                    for tool in tools:
-                        wrapped_tool = await _wrap_mcp_tool(tool, mcp_id)
-                        agent.tools.append(wrapped_tool)
-                    
-                    print(f"[DynamicMCP] 已为 {len(tools)} 个工具添加断线保护")
-                    return f"[Success] {mode} MCP 工具加载成功!{message}"
+                # 【关键修复】验证成功后,将 toolset 添加到 agent.tools
+                # 这一步是必需的,否则工具无法被 Agent 调用
+                agent.tools.append(new_toolset)
+                print(f"[DynamicMCP] 已将 MCP toolset 添加到 agent.tools")
                 
-                except Exception as wrap_error:
-                    # 如果包装过程失败,回退到直接添加 toolset
-                    print(f"[Warning] 工具包装失败,使用原始 toolset: {wrap_error}")
-                    agent.tools.append(new_toolset)
-                    return f"[Success] {mode} MCP 工具加载成功(未启用断线保护)!{message}"
+                # 【用户体验优化】构建详细的工具列表信息
+                tools = await new_toolset.get_tools()
+                display_limit = 10
+                tool_lines = []
+                
+                for i, tool in enumerate(tools[:display_limit], 1):
+                    name = getattr(tool, 'name', 'unknown')
+                    desc = getattr(tool, 'description', '')
+                    # 只取描述的第一行,限制长度
+                    desc = desc.strip().split('\n')[0][:80]
+                    tool_lines.append(f"  {i}. `{name}` - {desc}")
+                
+                if len(tools) > display_limit:
+                    tool_lines.append(f"  ... 还有 {len(tools) - display_limit} 个工具")
+                
+                tools_list_text = '\n'.join(tool_lines)
+                
+                # 返回格式化消息
+                return f"""✅ **{mode.upper()} MCP 连接成功**
+
+📦 已加载 **{len(tools)}** 个工具到当前会话
+
+🔧 **工具列表**:
+{tools_list_text}
+
+💡 现在可以直接调用这些工具了。"""
 
         except BaseException as e:
             return f"[Error] 加载 MCP 失败: {str(e)}"
