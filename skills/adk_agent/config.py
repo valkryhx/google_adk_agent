@@ -41,6 +41,7 @@ class AgentConfig:
     max_tool_calls_per_turn: int = 10
     verbose: bool = True
     log_tool_calls: bool = True
+    max_context_tokens: int = 200000  # Default safe limit if dynamic fetch fails
     
     def validate(self) -> List[str]:
         errors = []

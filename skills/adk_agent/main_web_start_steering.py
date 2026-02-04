@@ -25,6 +25,8 @@ from skills.adk_agent.core.manager import SkillManager
 from skills.adk_agent.core.executor import execute_python_code
 from skills.adk_agent.core.logger import AgentLogger, logger
 from skills.adk_agent.config import AgentConfig, build_system_prompt
+import litellm
+from litellm import ContextWindowExceededError
 from google.genai import types
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -37,9 +39,6 @@ from src.core.custom_table_db_service import FullyCustomDbService
 from google.adk.models.lite_llm import LiteLlm
 from skills.adk_agent.auto_compact_agent import AutoCompactAgent
 
-# ==========================================
-# [AOP 基础设施] 中断控制（已废弃，保留用于兼容）
-# ==========================================
 
 # SessionKey = (app_name, user_id, session_id)
 SessionKey = Tuple[str, str, str]
@@ -216,6 +215,119 @@ class SteeringSession:
                 pass
         
         return None
+
+    async def _check_and_compact_context(self, session, limit_token_count: int):
+        """检查并压缩上下文 (Token 基于)"""
+        if session is None or not hasattr(session, 'events'):
+             return
+
+        # 只有当 events 数量足够多时才检查，避免频繁计算
+        if len(session.events) < 10:
+            return
+
+        try:
+            # 粗略估算不做精细化 Tokenize，性能优先
+            total_chars = 0
+            for evt in session.events:
+                if hasattr(evt, 'content') and evt.content and evt.content.parts:
+                    for part in evt.content.parts:
+                        if part.text:
+                            total_chars += len(part.text)
+            
+            estimated_tokens = total_chars // 3  # 保守一点，除以3
+            
+            # 阈值为 Limit 的 90%
+            threshold = limit_token_count * 0.9
+            
+            if estimated_tokens > threshold:
+                print(f"[系统] ⚠️ Context Token 预警: 估算 {estimated_tokens} > 阈值 {threshold} (Limit: {limit_token_count})")
+                print(f"[系统] 触发主动压缩...")
+                await self._compact_context(session)
+                
+        except Exception as e:
+            print(f"[系统] Token 检查失败: {e}")
+
+    async def _compact_context(self, session):
+        """执行上下文压缩逻辑"""
+        print(f"[系统] 开始上下文压缩...")
+        
+        # 1. 提取历史文本
+        history_text = ""
+        for i, evt in enumerate(session.events):
+            role = "unknown"
+            content = ""
+            if hasattr(evt, 'content'):
+                role = evt.content.role if hasattr(evt.content, 'role') else "unknown"
+                if evt.content.parts:
+                    content = evt.content.parts[0].text if evt.content.parts[0].text else ""
+            
+            # Skip system prompt in history text for summarization to save tokens
+            if role == 'system': 
+                continue
+                
+            history_text += f"{role}: {content}\n\n"
+            
+        if not history_text:
+            return
+
+        # 2. 调用 Compactor
+        try:
+            # 查找会话专属的 compactor sub-agent
+            compactor = None
+            if self.agent.sub_agents:
+                 for sub in self.agent.sub_agents:
+                     if isinstance(sub, AutoCompactAgent):
+                         compactor = sub
+                         break
+            
+            if not compactor:
+                 print("[Error] No compactor found in sub_agents")
+                 return
+
+            summary = await compactor.compact_history(history_text)
+            print(f"[系统] 摘要生成完成: {summary[:100]}...")
+            
+            # 3. 重构 Context
+            # 保留 System Prompt
+            system_events = []
+            for evt in session.events:
+                role = 'unknown'
+                if hasattr(evt, 'content') and evt.content and hasattr(evt.content, 'role'):
+                    role = evt.content.role
+                if role == 'system':
+                    system_events.append(evt)
+                else:
+                    break 
+            
+            # 构造摘要消息 (注入为 User 消息)
+            if session.events:
+                import copy
+                # 复用一个 Event 对象以保持结构正确
+                template_evt = session.events[-1] 
+                new_evt = copy.deepcopy(template_evt)
+                new_evt.content.role = 'user' 
+                new_evt.content.parts = [types.Part(text=f"[System] Context compacted. Summary of previous conversation:\n{summary}")]
+                
+                new_events = system_events + [new_evt]
+                
+                print(f"[系统] 清理 Context: {len(session.events)} -> {len(new_events)}")
+                
+                # 更新 events
+                if hasattr(session.events, 'clear') and hasattr(session.events, 'extend'):
+                    session.events.clear()
+                    session.events.extend(new_events)
+                else:
+                    session.events[:] = new_events
+                
+                # 持久化
+                if isinstance(self.session_service, FullyCustomDbService):
+                     await self.session_service.save_session(session)
+                
+        except Exception as e:
+            print(f"[系统] 压缩失败: {e}")
+            import traceback
+            traceback.print_exc()
+
     
     async def run_task(self, task: str):
         """
@@ -296,8 +408,24 @@ class SteeringSession:
             if tool_count > 12:
                 print(f"\n[提醒] 已加载工具较多 ({tool_count})，建议卸载不常用的 skill")
             
+            # [新增] 动态 Token 分配逻辑
+            # 获取模型 Token 上限
+            token_limit = self.config.max_context_tokens
+            try:
+                # 尝试动态获取
+                model_name = self.config.model
+                dynamic_limit = litellm.get_max_tokens(model_name)
+                if dynamic_limit:
+                    token_limit = dynamic_limit
+                    # print(f"[系统] 模型 {model_name} Token 上限: {token_limit}")
+            except:
+                pass 
+            
+            # [Layer 1] 主动检查 Token 并在超限前压缩
+            await self._check_and_compact_context(session, token_limit)
+
             if turn_count > WARN_TURNS and turn_count <= MAX_TURNS:
-                task += "\n\n[System Note] Context is getting long (events > 40). Please call 'smart_compact' tool to summarize history and free up space."
+                task += "\n\n[System Note] Context is getting long. Please call 'smart_compact' tool."
             
             # 启动前检票
             self.interruption_guard()
@@ -310,10 +438,13 @@ class SteeringSession:
             print("-" * 60)
             
             try:
+                # 每次进入 Loop 前也检查一下 (防止 Function Call 产生的中间结果导致超限)
+                await self._check_and_compact_context(session, token_limit)
+
                 async for event in runner.run_async(
                     user_id=self.user_id,
                     session_id=self.session_id,
-                    new_message=user_query,
+                    new_message=user_query, # 只有第一次是 user_query, 后面由 Runner 管理
                     run_config=run_config
                 ):
                     # 文本输出时的打断检查
@@ -322,6 +453,21 @@ class SteeringSession:
                     chunks = _process_event_stream(event)
                     for chunk in chunks:
                         yield chunk
+        
+            except ContextWindowExceededError:
+                print(f"!!! [CRITICAL] Context Window Exceeded !!!")
+                print(f"!!! [CRITICAL] 触发紧急压缩恢复流程 !!!")
+                
+                # [Layer 2] 异常兜底：紧急压缩
+                await self._compact_context(session)
+                
+                # 必须重新抛出或者想办法重试
+                # 这里我们简单提示用户重试，因为完全自动重试整个流式请求比较复杂
+                yield {"type": "text", "content": "\n\n[System] Context limit reached. Auto-compaction triggered. Please retry your request."}
+                return
+
+            except Exception as e:
+                    raise e  # 交给外层处理常规异常
             
             except UserInterruption:
                 was_interrupted = True
