@@ -725,3 +725,45 @@ Dex 也可以作为一个通用的 Shell 执行器处理非 Python 任务。
     3.  **结果**：Agent 无需等待搜索完成即可处理其他请求。搜索完成后，所有匹配的文件路径都会被记录在专属的日志文件中，用户随时可以查阅。
 
 ---
+
+## 排查与修复实录 (Debug Journey)
+
+### TUI Client 工具调用显示问题修复
+
+**问题描述**: 在 TUI 客户端中，Agent 的 Tool Call（工具调用）和 Tool Result（工具结果）内容无法显示，界面上只看到思考过程，导致用户无法感知 Agent 的实际操作。
+
+**排查过程**:
+
+1.  **黑盒测试 (Black Box Testing)**:
+    *   最初怀疑是流式传输 (Streaming) 丢失了数据。
+    *   **排查手段**: 修改 `tui_client_light.py` 中的 `log_to_file` 函数，将所有接收到的 raw chunk 写入 `tui_debug_force.log`。
+    *   **发现**: 日志显示 `tool_call` 和 `tool_result` 的数据包完整到达了客户端。这排除了后端传输问题，定位为 **前端渲染问题**。
+
+2.  **UI 渲染分析 (Rendering Analysis)**:
+    *   检查 `MessageBlock` 组件。发现 `tool_call` 类型的消息块虽然被添加到了界面，但高度显计算为 0。
+    *   **原因**: Textual 框架在渲染空内容或仅包含特殊颜色标记的 Text 对象时，可能会将其折叠。
+    *   **干扰项**: 早期的代码在 `tool_call` 前面添加了 Emoji (🛠️)，这在某些终端下可能导致行高计算异常或被 Textual 的 Parser 误处理。
+
+3.  **修复方案 (The Fix)**:
+    *   **移除 Emoji**: 移除了 `MessageBlock` 中可能导致渲染不稳定的 Emoji 前缀。
+    *   **强制样式与内容**: 修改 `refresh_content` 方法，确保即使内容为空，也赋予明确的 `Renderable` 对象和样式颜色。
+    *   **样式调整**:
+        *   `tool_call`: 使用标准 `orange1` 颜色高亮。
+        *   `tool_result`: 使用 `grey70` 低调显示，并支持折叠。
+    *   **Sidebar 优化**: 顺带解决了侧边栏会话列表高度过高的问题，通过 `height: 1` 和 `margin-bottom: 1` 实现了紧凑且清晰的布局。
+
+**关键代码片段**:
+
+```python
+# tui_client_light.py - MessageBlock.refresh_content
+if self.block_type == "tool_call":
+    text_style = "orange1"  # 显式指定高亮颜色
+    # 确保没有 Emoji 干扰
+elif self.block_type == "tool_result":
+    text_style = "grey70"
+
+renderable = Text(full_text, style=text_style) 
+self.update(renderable) # 强制更新渲染对象
+```
+
+通过这一系列排查，我们从根本上修复了 TUI 的“隐形工具”Bug，并显著提升了界面的专业度和可用性。
