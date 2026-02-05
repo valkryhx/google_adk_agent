@@ -73,69 +73,132 @@ class SidebarItem(ListItem):
             yield Label(self.session_title, classes="sidebar-title")
             yield Button("×", variant="error", classes="delete-btn", id=f"del_{self.session_id}")
 
-class MessageBlock(Static):
+class MessageBlock(Vertical):
     """
-    简化的消息块 - 直接用 Static 显示,不用复杂的 Collapsible
-    根据 block_type 应用不同的 CSS 类
+    可折叠的消息块
+    - thought/tool_result: 默认折叠，部分显示(Header)，点击展开
+    - text/tool_call: 默认展开，无交互
     """
     def __init__(self, block_type: str, content: str = "", **kwargs):
-        super().__init__("", **kwargs)  # 初始化为空，依靠 refresh_content 渲染
+        super().__init__(**kwargs)
         self.block_type = block_type
-        self._raw_text = content  # 存储原始文本，不带 prefix
+        self._raw_text = content
         self.add_class(f"block-{block_type}")
         
-        # 根据类型添加前缀标签
-        if block_type == "thought":
-            self.prefix = "[思考过程]\n"
-        elif block_type == "tool_call":
-            self.prefix = "[工具调用]\n"
-        elif block_type == "tool_result":
-            self.prefix = "[工具结果]\n"
-        else:
-            self.prefix = ""
-            
-        # 初始渲染
+        # 折叠状态
+        self.is_collapsible = block_type in ["thought", "tool_result"]
+        self.is_collapsed = self.is_collapsible # 默认折叠
+        
+        # 子组件
+        self.header = Static("", classes="block-header")
+        self.content_static = Static("", classes="block-content")
+        
+        # 初始化内容
         self.refresh_content()
         log_to_file(f"[MessageBlock init] type={block_type}, raw_len={len(self._raw_text)}")
-    
+
+    def compose(self) -> ComposeResult:
+        if self.is_collapsible:
+            yield self.header
+        yield self.content_static
+
+    def on_mount(self):
+        if self.is_collapsible:
+            self.content_static.display = not self.is_collapsed
+            self.header.display = True
+        else:
+            self.header.display = False
+            
+    def on_click(self, event) -> None:
+        # 只响应 Header 点击
+        if self.is_collapsible and event.widget == self.header:
+            self.toggle()
+            # 阻止事件冒泡 (尽管 Textual 默认可能不冒泡，显式阻止更安全)
+            event.stop()
+
+    def toggle(self):
+        self.is_collapsed = not self.is_collapsed
+        self.content_static.display = not self.is_collapsed
+        self.refresh_header()
+        
+    def refresh_header(self):
+        if not self.is_collapsible:
+            return
+            
+        icon = "▶" if self.is_collapsed else "▼"
+        title = ""
+        if self.block_type == "thought":
+            title = "思考过程"
+        elif self.block_type == "tool_result":
+            title = "工具结果"
+            
+        header_text = f"{icon} [{title}] (点击查看)"
+        self.header.update(header_text)
+
     def refresh_content(self):
-        """统一渲染逻辑：使用 Rich Text 渲染并手动指定样式"""
+        """渲染逻辑"""
         try:
-            # 清理可能导致渲染问题的控制字符，特别是 Windows 的 \r
+            # 1. 更新 Header
+            self.refresh_header()
+            
+            # 2. 更新 Content
             clean_text = self._raw_text.replace("\r", "")
-            full_text = self.prefix + clean_text
             
-            # 记录渲染详情
-            log_to_file(f"[refresh_content] type={self.block_type}, prefix_len={len(self.prefix)}, clean_len={len(clean_text)}, full_len={len(full_text)}")
+            # 只有非折叠类型才需要 prefix? 或者保留 prefix 但放在 Content 里?
+            # 原始逻辑是 prefix + text。
+            # 为了保持一致性，Header 已经显示了类型，Content 里是否还需要 "[思考过程]" 前缀？
+            # 之前 prefix 是为了区分块类型。现在有了 Header，Content 里可以只放内容。
+            # 但为了兼容 Text 块 (无 Header)，我们需要区分处理。
             
-            # 手动指定样式，确保在 Static 中能显示出颜色
-            # 使用 Rich 标准颜色名替代 Hex，兼容性更好
+            prefix = ""
+            if not self.is_collapsible:
+                if self.block_type == "tool_call":
+                    prefix = "[工具调用]\n"
+                # thought 和 tool_result 由 Header 承担标题功能，Content 纯显示内容
+            
+            full_text = prefix + clean_text
+            
+            # 样式
             text_style = None
             if self.block_type == "tool_call":
                 text_style = "orange1"
             elif self.block_type == "tool_result":
-                text_style = "grey70"
+                # 工具结果通常很长，折叠时 header 需明显
+                text_style = "grey70" 
             elif self.block_type == "thought":
                 text_style = "magenta1"
                 
             renderable = Text(full_text, style=text_style)
-            self.update(renderable)
+            self.content_static.update(renderable)
             
-            # 确保块可见
-            self.display = True
+            # 记录日志
+            # log_to_file(f"[refresh_content] type={self.block_type}, collapsed={self.is_collapsed}, len={len(clean_text)}")
             
-            log_to_file(f"[refresh_content完成] type={self.block_type}, 渲染成功, display={self.display}")
         except Exception as e:
             log_to_file(f"渲染错误 type={self.block_type}: {e}")
             import traceback
             log_to_file(traceback.format_exc())
-            self.update(f"渲染错误: {e}")
+            self.content_static.update(f"渲染错误: {e}")
 
     def append_content(self, new_text: str):
         """追加内容(用于流式合并)"""
         self._raw_text += new_text
         self.refresh_content()
-        # log_to_file(f"[MessageBlock append] new_len={len(new_text)}, total_len={len(self._content)}")
+
+class ProcessingIndicator(Static):
+    """显示 Thinking and processing... 动画"""
+    def __init__(self, **kwargs):
+        super().__init__("Thinking and processing.", **kwargs)
+        self.add_class("processing-indicator")
+        self._dots = 1
+
+    def on_mount(self):
+        self.set_interval(0.5, self.update_dots)
+
+    def update_dots(self):
+        self._dots = (self._dots % 3) + 1
+        dots_str = "." * self._dots
+        self.update(f"Thinking and processing{dots_str}")
 
 
 class ChatMessage(Container):
@@ -170,13 +233,29 @@ class ChatMessage(Container):
         container = self.query_one("#blocks-container")
         container.mount(block)
         
-        # 调试: 检查实际挂载的子元素
-        log_to_file(f"[add_block后] container有{len(container.children)}个子元素")
-        log_to_file(f"[add_block后] block.display={block.display}, block.visible={block.visible}")
-        log_to_file(f"[add_block后] container.display={container.display}, container.visible={container.visible}")
-        log_to_file(f"[add_block后] container.size={container.size}, region={container.region}")
-        
         return block
+
+    def show_loading(self):
+        """显示加载指示器"""
+        # 避免重复添加
+        if not self.query("ProcessingIndicator"):
+            # 放在 blocks-container 之后
+            self.mount(ProcessingIndicator(id="loading-indicator"))
+
+    def remove_loading(self):
+        """移除加载指示器"""
+        for widget in self.query("ProcessingIndicator"):
+            widget.remove()
+
+class SmartInput(Input):
+    """
+    自定义 Input 组件
+    解决 Textual 默认聚焦时不将光标置于末尾的问题
+    """
+    def _on_focus(self, event) -> None:
+        super()._on_focus(event)
+        # 强制将光标移到末尾
+        self.cursor_position = len(self.value)
 
 # === 主程序 ===
 
@@ -291,12 +370,35 @@ class ADKTextualClientClaude(App):
         padding: 0 1;
         min-height: 1;
     }
+    
+    .block-header {
+        width: 100%;
+        height: auto;
+        text-style: bold;
+        color: $accent-color;
+    }
+    .block-header:hover {
+        background: #333333;
+    }
+    
+    .block-content {
+        width: 100%;
+        height: auto;
+    }
 
     .block-text {
         background: transparent;
+        margin: 0;
+        padding: 0;
         color: $text-color;
         border-left: none;
-        padding: 0;
+    }
+    
+    .processing-indicator {
+        color: #888888;
+        text-style: italic;
+        margin: 1 0 1 2;
+        height: auto;
     }
 
     .block-thought {
@@ -360,13 +462,13 @@ class ADKTextualClientClaude(App):
                 with Container(id="sidebar-header"):
                     yield Button("✨ 新对话", id="new-chat-btn")
                     yield Label("用户 ID:", classes="sidebar-label")
-                    yield Input(value=self.user_id, id="user-id-input", placeholder="输入用户名")
+                    yield SmartInput(value=self.user_id, id="user-id-input", placeholder="输入用户名")
                 yield ListView(id="session-list")
             
             with Vertical(id="chat-container"):
                 yield VerticalScroll(id="chat-scroll")
                 with Container(id="input-area"):
-                    yield Input(placeholder="向 Ciri 提问...", id="msg-input")
+                    yield SmartInput(placeholder="向 Ciri 提问...", id="msg-input")
         
         yield Footer()
 
@@ -377,8 +479,10 @@ class ADKTextualClientClaude(App):
 
     # === UI Actions ===
 
-    def action_focus_user_select(self):
-        self.query_one("#user-id-input").focus()
+    async def action_focus_user_select(self):
+        inp = self.query_one("#user-id-input")
+        inp.focus()
+        inp.cursor_position = len(inp.value)
         
     def action_toggle_sidebar(self):
         sidebar = self.query_one("#sidebar")
@@ -423,6 +527,9 @@ class ADKTextualClientClaude(App):
             self.generation_worker = self.run_worker(
                 self.stream_response(message, model_msg)
             )
+
+    async def on_new_chat_pressed(self):
+        await self.create_session()
 
     async def action_cancel_generation(self):
         if self.generation_worker and self.generation_worker.is_running:
@@ -481,8 +588,11 @@ class ADKTextualClientClaude(App):
                 )
                 if resp.status_code == 200:
                     sessions = resp.json().get("sessions", [])
-                    for s in reversed(sessions):
-                        list_view.append(SidebarItem(s["session_id"], s.get("title", "新对话")))
+                    for s in sessions:
+                        title = s.get("title")
+                        if not title or title == "新对话":
+                            title = "✨ 新对话"
+                        list_view.append(SidebarItem(s["session_id"], title))
         except Exception:
             pass
 
@@ -571,10 +681,14 @@ class ADKTextualClientClaude(App):
         
         
         
+        
         # 记录流式响应开始
         log_to_file(f"{'='*60}")
         log_to_file(f"开始新的流式响应: {user_msg}")
         log_to_file(f"{'='*60}")
+        
+        # 显示加载动画
+        model_msg_widget.show_loading()
         
         # 追踪当前块列表
         current_blocks: List[MessageBlock] = []
@@ -642,6 +756,9 @@ class ADKTextualClientClaude(App):
                 log_to_file(f"流式错误: {e}")
                 model_msg_widget.add_block("text", f"\n\n❌ 错误: {str(e)}")
                 model_msg_widget.scroll_visible()
+        finally:
+            # 无论成功失败，都移除加载动画
+            model_msg_widget.remove_loading()
 
 if __name__ == "__main__":
     app = ADKTextualClientClaude()
