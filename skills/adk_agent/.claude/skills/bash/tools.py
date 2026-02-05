@@ -351,7 +351,7 @@ def get_network_info() -> str:
         return f"[ERROR] 获取网络信息失败: {str(e)}"
 
 
-def ping_host(host: str, count: int = 4) -> str:
+async def ping_host(host: str, count: int = 4) -> str:
     """
     Ping 指定主机
     
@@ -369,7 +369,7 @@ def ping_host(host: str, count: int = 4) -> str:
     else:
         cmd = f"ping -c {count} {host}"
     
-    return bash(cmd, timeout=count * 5 + 10)
+    return await bash(cmd, timeout=count * 5 + 10)
 
 
 def check_port(host: str, port: int, timeout: int = 5) -> str:
