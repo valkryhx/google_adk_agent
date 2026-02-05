@@ -26,7 +26,7 @@ except Exception as e:
 class AgentConfig:
     """Agent 配置类"""
     
-    name: str = "Dynamic_Expert"
+    name: str = "Ciri"#"Dynamic_Expert"
     model: str =yaml_config.get("model") or "openai/qwen3-32b"
     skills_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".claude", "skills")
     
