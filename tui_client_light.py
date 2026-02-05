@@ -532,17 +532,15 @@ class ADKTextualClientClaude(App):
         await self.create_session()
 
     async def action_cancel_generation(self):
+        """取消当前正在生成的任务
+        
+        不主动取消 worker,而是通知后端中断,让 worker 自然接收完后端返回的取消消息。
+        这样可以确保 '[已停止] 任务已取消。' 消息能够立即显示,而不是延迟到下次请求。
+        """
         if self.generation_worker and self.generation_worker.is_running:
-            self.generation_worker.cancel()
-            self.generation_worker = None
+            # 不再调用 self.generation_worker.cancel()
+            # 让 worker 继续运行,接收后端返回的取消消息
             
-            scroll = self.query_one("#chat-scroll")
-            if scroll.children:
-                last_msg = scroll.children[-1]
-                if isinstance(last_msg, ChatMessage):
-                    last_msg.add_block("text", "\n\n🚫 已取消")
-                    last_msg.scroll_visible()
-
             if self.current_session_id:
                 try:
                     async with httpx.AsyncClient() as client:
@@ -554,7 +552,8 @@ class ADKTextualClientClaude(App):
                                 "session_id": self.current_session_id
                             }
                         )
-                    self.notify("已发送停止信号")
+                    # 不显示本地通知,让后端返回的正式消息成为唯一提示
+                    # self.notify("已发送停止信号")
                 except Exception as e:
                     self.notify(f"停止失败: {e}", severity="error")
         else:
