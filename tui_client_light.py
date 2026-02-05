@@ -9,7 +9,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll, Container
 from textual.widgets import (
     Header, Footer, Input, Button,
-    ListView, ListItem, Label, Static
+    ListView, ListItem, Label, Static, TextArea
 )
 from textual.binding import Binding
 from rich.markup import escape
@@ -26,7 +26,9 @@ import sys
 import time
 import logging
 
-LOG_FILE = r"d:\git_codes\google_adk_helloworld_git\tui_debug_force.log"
+# 获取脚本所在目录
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE = os.path.join(SCRIPT_DIR, "tui_debug_force.log")
 
 def log_to_file(msg: str):
     """强制写入文件的调试函数，绕过所有 logging 配置"""
@@ -247,15 +249,21 @@ class ChatMessage(Container):
         for widget in self.query("ProcessingIndicator"):
             widget.remove()
 
-class SmartInput(Input):
+class UserInput(Input):
     """
-    自定义 Input 组件
-    解决 Textual 默认聚焦时不将光标置于末尾的问题
+    用户 ID 输入框 - 单行 Input
+    聚焦时光标移到末尾
     """
     def _on_focus(self, event) -> None:
         super()._on_focus(event)
-        # 强制将光标移到末尾
         self.cursor_position = len(self.value)
+
+class MessageInput(TextArea):
+    """
+    消息输入框 - 多行 TextArea
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
 # === 主程序 ===
 
@@ -420,7 +428,6 @@ class ADKTextualClientClaude(App):
         border-left: thick $tool-result-color;
     }
 
-    /* === 输入区 === */
     #input-area {
         height: auto;
         dock: bottom;
@@ -432,7 +439,7 @@ class ADKTextualClientClaude(App):
         background: #2d2d2d;
         border: solid $border-color;
         color: #ffffff;
-        height: 3;
+        height: 7; /* 约 5 行高度 */
     }
     #msg-input:focus {
         border: solid $accent-color;
@@ -442,13 +449,29 @@ class ADKTextualClientClaude(App):
     Footer { background: $sidebar-bg; color: $secondary-text; }
     """
 
+    # 固定Footer按钮顺序 - 所有绑定必须使用相同的优先级
+    # Textual 的 Footer 会根据绑定的优先级和定义顺序来排列
+    # 使用 key_display 参数可以自定义显示的快捷键文本
     BINDINGS = [
-        Binding("ctrl+n", "new_chat", "新对话"),
-        Binding("ctrl+u", "focus_user_select", "切换用户"),
-        Binding("ctrl+d", "toggle_sidebar", "侧边栏"),
-        Binding("ctrl+s", "cancel_generation", "停止"),
-        Binding("ctrl+q", "quit", "退出"),
+        # 1. 侧边栏：从 Ctrl+d 改为 Ctrl+b (VS Code 习惯) 或 F2
+        # 注意：Ctrl+b 在某些终端可能是光标左移，如果仍有抖动，建议直接用 "f2"
+        Binding("ctrl+b", "toggle_sidebar", "侧边栏", show=True, priority=True, key_display="ctrl+b"),
+        
+        # 2. 切换用户：使用 F3 避免冲突
+        Binding("f3", "focus_user_select", "切换用户", show=True, priority=True, key_display="f3"),
+        
+        # 3. 退出：Ctrl+q 通常没有冲突，保留
+        Binding("ctrl+q", "quit", "退出", show=True, priority=True, key_display="ctrl+q"),
+        
+        # 4. 新对话：Ctrl+n (New) 通常没有冲突，保留
+        Binding("ctrl+n", "new_chat", "新对话", show=True, priority=True, key_display="ctrl+n"),
+        
+        # 5. 停止：Ctrl+s 通常没有冲突，保留
+        Binding("ctrl+s", "cancel_generation", "停止", show=True, priority=True, key_display="ctrl+s"),
     ]
+
+    # 确保Footer始终显示,不会因焦点变化而隐藏
+    SHOW_FOOTER = True
 
     def __init__(self):
         super().__init__()
@@ -457,23 +480,24 @@ class ADKTextualClientClaude(App):
         self.generation_worker = None
 
     def compose(self) -> ComposeResult:
+        yield Header()
         with Horizontal(id="main-layout"):
             with Vertical(id="sidebar"):
                 with Container(id="sidebar-header"):
                     yield Button("✨ 新对话", id="new-chat-btn")
                     yield Label("用户 ID:", classes="sidebar-label")
-                    yield SmartInput(value=self.user_id, id="user-id-input", placeholder="输入用户名")
+                    yield UserInput(value=self.user_id, id="user-id-input", placeholder="输入用户名")
                 yield ListView(id="session-list")
             
             with Vertical(id="chat-container"):
                 yield VerticalScroll(id="chat-scroll")
                 with Container(id="input-area"):
-                    yield SmartInput(placeholder="向 Ciri 提问...", id="msg-input")
+                    yield MessageInput(placeholder="向 Ciri 提问...enter/shift+enter换行 ctrl+enter发送", id="msg-input")
         
         yield Footer()
 
     async def on_mount(self):
-        self.title = f"CLAUDE CLIENT ({self.user_id})"
+        self.title = f"TUI CLIENT ({self.user_id})"
         self.query_one("#msg-input").focus()
         await self.load_sessions()
 
@@ -482,7 +506,16 @@ class ADKTextualClientClaude(App):
     async def action_focus_user_select(self):
         inp = self.query_one("#user-id-input")
         inp.focus()
-        inp.cursor_position = len(inp.value)
+        # TextArea 的光标位置是一个 tuple (row, col)
+        if isinstance(inp, TextArea):
+            content = inp.text
+            lines = content.splitlines()
+            if lines:
+                inp.cursor_location = (len(lines) - 1, len(lines[-1]))
+            else:
+                inp.cursor_location = (0, 0)
+        else:
+            inp.cursor_position = len(getattr(inp, "value", ""))
         
     def action_toggle_sidebar(self):
         sidebar = self.query_one("#sidebar")
@@ -491,42 +524,60 @@ class ADKTextualClientClaude(App):
     async def action_new_chat(self):
         await self.create_session()
 
+    async def on_key(self, event) -> None:
+        """全局按键处理，捕获 Ctrl+Enter 发送消息"""
+        if event.key in ("enter", "ctrl+j"):  # 支持标准键名及某些终端的映射
+             input_widget = self.query_one("#msg-input")
+             if input_widget.has_focus:
+                 await self.submit_message()
+                 event.prevent_default()
+        elif event.key == "shift+enter":
+             # 如果是单行 Input (user-id)，保持原有行为
+             # 如果是 TextArea，默认就是换行，不需要额外逻辑
+             pass
+
+    async def submit_message(self):
+        input_widget = self.query_one("#msg-input")
+        message = input_widget.text.strip()
+        if not message: return
+        input_widget.text = ""
+        
+        if not self.current_session_id:
+            await self.create_session()
+        
+        scroll = self.query_one("#chat-scroll")
+        
+        # 用户消息
+        user_msg = ChatMessage("user")
+        await scroll.mount(user_msg)
+        user_msg.add_block("text", message)
+        user_msg.scroll_visible()
+        
+        # 模型消息占位
+        model_msg = ChatMessage("model")
+        await scroll.mount(model_msg)
+        
+        # 启动流式生成
+        self.generation_worker = self.run_worker(
+            self.stream_response(message, model_msg)
+        )
+
     async def on_input_submitted(self, event: Input.Submitted):
         if event.input.id == "user-id-input":
-            new_uid = event.value.strip()
+            # 兼容处理：Input 有 value, TextArea 有 text
+            value = getattr(event.input, "value", None)
+            if value is None:
+                value = getattr(event.input, "text", "")
+                
+            new_uid = value.strip()
             if new_uid and new_uid != self.user_id:
                 self.user_id = new_uid
-                self.title = f"CLAUDE CLIENT ({self.user_id})"
+                self.title = f"TUI CLIENT ({self.user_id})"
                 self.current_session_id = None
                 await self.query_one("#chat-scroll").remove_children()
                 await self.load_sessions()
                 self.notify(f"用户切换至: {self.user_id}")
             return
-
-        if event.input.id == "msg-input":
-            message = event.value.strip()
-            if not message: return
-            event.input.value = ""
-            
-            if not self.current_session_id:
-                await self.create_session()
-            
-            scroll = self.query_one("#chat-scroll")
-            
-            # 用户消息
-            user_msg = ChatMessage("user")
-            await scroll.mount(user_msg)
-            user_msg.add_block("text", message)
-            user_msg.scroll_visible()
-            
-            # 模型消息占位
-            model_msg = ChatMessage("model")
-            await scroll.mount(model_msg)
-            
-            # 启动流式生成
-            self.generation_worker = self.run_worker(
-                self.stream_response(message, model_msg)
-            )
 
     async def on_new_chat_pressed(self):
         await self.create_session()
