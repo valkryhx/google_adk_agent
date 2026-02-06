@@ -138,6 +138,11 @@ class SteeringSession:
             before_tool_callback=self.interruption_guard   # 绑定实例方法
         )
         
+        # 🔑 自动加载 bash 作为第二个自带工具
+        self.agent = agent  # 临时设置,供 _load_skill_tools 使用
+        bash_tools = self._load_skill_tools('bash')
+        print(f"[SteeringSession] 已自动加载 bash 工具: {[t.__name__ for t in bash_tools]}")
+        
         return agent
     
     async def skill_load(self, skill_id: str) -> str:
@@ -242,91 +247,93 @@ class SteeringSession:
             if estimated_tokens > threshold:
                 print(f"[系统] ⚠️ Context Token 预警: 估算 {estimated_tokens} > 阈值 {threshold} (Limit: {limit_token_count})")
                 print(f"[系统] 触发主动压缩...")
-                await self._compact_context(session)
+                #await self._compact_context(session)
+                #session = await self._auto_compact_session(session)
+                await self._auto_compact_session(session)
                 
         except Exception as e:
             print(f"[系统] Token 检查失败: {e}")
 
-    async def _compact_context(self, session):
-        """执行上下文压缩逻辑"""
-        print(f"[系统] 开始上下文压缩...")
+    # async def _compact_context(self, session):
+    #     """执行上下文压缩逻辑"""
+    #     print(f"[系统] 开始上下文压缩...")
         
-        # 1. 提取历史文本
-        history_text = ""
-        for i, evt in enumerate(session.events):
-            role = "unknown"
-            content = ""
-            if hasattr(evt, 'content'):
-                role = evt.content.role if hasattr(evt.content, 'role') else "unknown"
-                if evt.content.parts:
-                    content = evt.content.parts[0].text if evt.content.parts[0].text else ""
+    #     # 1. 提取历史文本
+    #     history_text = ""
+    #     for i, evt in enumerate(session.events):
+    #         role = "unknown"
+    #         content = ""
+    #         if hasattr(evt, 'content'):
+    #             role = evt.content.role if hasattr(evt.content, 'role') else "unknown"
+    #             if evt.content.parts:
+    #                 content = evt.content.parts[0].text if evt.content.parts[0].text else ""
             
-            # Skip system prompt in history text for summarization to save tokens
-            if role == 'system': 
-                continue
+    #         # Skip system prompt in history text for summarization to save tokens
+    #         if role == 'system': 
+    #             continue
                 
-            history_text += f"{role}: {content}\n\n"
+    #         history_text += f"{role}: {content}\n\n"
             
-        if not history_text:
-            return
+    #     if not history_text:
+    #         return
 
-        # 2. 调用 Compactor
-        try:
-            # 查找会话专属的 compactor sub-agent
-            compactor = None
-            if self.agent.sub_agents:
-                 for sub in self.agent.sub_agents:
-                     if isinstance(sub, AutoCompactAgent):
-                         compactor = sub
-                         break
+    #     # 2. 调用 Compactor
+    #     try:
+    #         # 查找会话专属的 compactor sub-agent
+    #         compactor = None
+    #         if self.agent.sub_agents:
+    #              for sub in self.agent.sub_agents:
+    #                  if isinstance(sub, AutoCompactAgent):
+    #                      compactor = sub
+    #                      break
             
-            if not compactor:
-                 print("[Error] No compactor found in sub_agents")
-                 return
+    #         if not compactor:
+    #              print("[Error] No compactor found in sub_agents")
+    #              return
 
-            summary = await compactor.compact_history(history_text)
-            print(f"[系统] 摘要生成完成: {summary[:100]}...")
+    #         summary = await compactor.compact_history(history_text)
+    #         print(f"[系统] 摘要生成完成: {summary[:100]}...")
             
-            # 3. 重构 Context
-            # 保留 System Prompt
-            system_events = []
-            for evt in session.events:
-                role = 'unknown'
-                if hasattr(evt, 'content') and evt.content and hasattr(evt.content, 'role'):
-                    role = evt.content.role
-                if role == 'system':
-                    system_events.append(evt)
-                else:
-                    break 
+    #         # 3. 重构 Context
+    #         # 保留 System Prompt
+    #         system_events = []
+    #         for evt in session.events:
+    #             role = 'unknown'
+    #             if hasattr(evt, 'content') and evt.content and hasattr(evt.content, 'role'):
+    #                 role = evt.content.role
+    #             if role == 'system':
+    #                 system_events.append(evt)
+    #             else:
+    #                 break 
             
-            # 构造摘要消息 (注入为 User 消息)
-            if session.events:
-                import copy
-                # 复用一个 Event 对象以保持结构正确
-                template_evt = session.events[-1] 
-                new_evt = copy.deepcopy(template_evt)
-                new_evt.content.role = 'user' 
-                new_evt.content.parts = [types.Part(text=f"[System] Context compacted. Summary of previous conversation:\n{summary}")]
+    #         # 构造摘要消息 (注入为 User 消息)
+    #         if session.events:
+    #             import copy
+    #             # 复用一个 Event 对象以保持结构正确
+    #             template_evt = session.events[-1] 
+    #             new_evt = copy.deepcopy(template_evt)
+    #             new_evt.content.role = 'user' 
+    #             new_evt.content.parts = [types.Part(text=f"[System] Context compacted. Summary of previous conversation:\n{summary}")]
                 
-                new_events = system_events + [new_evt]
+    #             new_events = system_events + [new_evt]
                 
-                print(f"[系统] 清理 Context: {len(session.events)} -> {len(new_events)}")
+    #             print(f"[系统] 清理 Context: {len(session.events)} -> {len(new_events)}")
                 
-                # 更新 events
-                if hasattr(session.events, 'clear') and hasattr(session.events, 'extend'):
-                    session.events.clear()
-                    session.events.extend(new_events)
-                else:
-                    session.events[:] = new_events
+    #             # 更新 events
+    #             if hasattr(session.events, 'clear') and hasattr(session.events, 'extend'):
+    #                 session.events.clear()
+    #                 session.events.extend(new_events)
+    #             else:
+    #                 session.events[:] = new_events
                 
-                # 持久化
-                if isinstance(self.session_service, FullyCustomDbService):
-                     await self.session_service.save_session(session)
+    #             # 持久化
+    #             if isinstance(self.session_service, FullyCustomDbService):
+    #                  await self.session_service.save_session(session)
                 
-        except Exception as e:
-            print(f"[系统] 压缩失败: {e}")
-            import traceback
-            traceback.print_exc()
+    #     except Exception as e:
+    #         print(f"[系统] 压缩失败: {e}")
+    #         import traceback
+    #         traceback.print_exc()
 
     
     async def run_task(self, task: str):
@@ -387,8 +394,8 @@ class SteeringSession:
             turn_count = len(session.events) if session and hasattr(session, 'events') and session.events else 0
             tool_count = len(self.agent.tools) if self.agent.tools else 0
             
-            WARN_TURNS = 60
-            MAX_TURNS = 70
+            WARN_TURNS = 600
+            MAX_TURNS = 700
             
             if turn_count > WARN_TURNS and turn_count <= MAX_TURNS:
                 print(f"\n[提醒] event个数 ({turn_count}) 超过软阈值 {WARN_TURNS}，建议执行 smart_compact 压缩上下文")
@@ -459,7 +466,7 @@ class SteeringSession:
                 print(f"!!! [CRITICAL] 触发紧急压缩恢复流程 !!!")
                 
                 # [Layer 2] 异常兜底：紧急压缩
-                await self._compact_context(session)
+                session = await self._auto_compact_session(session)
                 
                 # 必须重新抛出或者想办法重试
                 # 这里我们简单提示用户重试，因为完全自动重试整个流式请求比较复杂
