@@ -15,6 +15,10 @@ from textual.binding import Binding
 from rich.markup import escape
 from rich.text import Text
 
+
+# 运行 python -m tui_client_light
+
+
 # === 配置 ===
 BASE_URL = "http://127.0.0.1:8000"
 APP_NAME = "dynamic_expert"
