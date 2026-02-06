@@ -55,39 +55,40 @@ def execute_python_code(code: str) -> str:
         output_capture.close()
 
 
-async def execute_context_compact(agent_instance: Any, session_service: Any, app_name: str, user_id: str, session_id: str) -> str:
-    """
-    卸载动作：清空 Session 历史，并将 Agent 工具集重置为仅含网关
+# async def execute_context_compact(agent_instance: Any, session_service: Any, app_name: str, user_id: str, session_id: str) -> str:
+#     """
+#     卸载动作：清空 Session 历史，并将 Agent 工具集重置为仅含网关
     
-    这个函数用于在任务完成后重置 Agent 状态，实现：
-    1. 清空对话历史，释放 Token
-    2. 卸载所有动态加载的工具
+#     这个函数用于在任务完成后重置 Agent 状态，实现：
+#     1. 清空对话历史，释放 Token
+#     2. 卸载所有动态加载的工具
     
-    Args:
-        agent_instance: Agent 实例
-        session_service: 会话服务实例
-        app_name: 应用名称
-        user_id: 用户 ID
-        session_id: 会话 ID
+#     Args:
+#         agent_instance: Agent 实例
+#         session_service: 会话服务实例
+#         app_name: 应用名称
+#         user_id: 用户 ID
+#         session_id: 会话 ID
         
-    Returns:
-        操作结果消息
-    """
-    try:
-        # 尝试清空会话
-        if hasattr(session_service, 'clear_session'):
-            await session_service.clear_session(session_id)
-        elif hasattr(session_service, 'delete_session'):
-            await session_service.delete_session(app_name=app_name, user_id=user_id, session_id=session_id)
+#     Returns:
+#         操作结果消息
+#     """
+#     try:
+#         # 尝试清空会话
+#         if hasattr(session_service, 'clear_session'):
+#             await session_service.clear_session(session_id)
+#         elif hasattr(session_service, 'delete_session'):
+#             await session_service.delete_session(app_name=app_name, user_id=user_id, session_id=session_id)
         
-        # 动态卸载所有通过 skill_load 挂载的工具
-        # 保留第一个工具（skill_load 网关）
-        if hasattr(agent_instance, 'tools') and len(agent_instance.tools) > 1:
-            agent_instance.tools = [agent_instance.tools[0]]
+#         # 动态卸载所有通过 skill_load 挂载的工具
+#         # 保留前两个工具:skill_load 和 bash
+#         if hasattr(agent_instance, 'tools') and len(agent_instance.tools) > 2:
+#             agent_instance.tools = agent_instance.tools[:2]  # 保留 skill_load 和 bash
+
             
-        return "[OK] 历史已重置。临时工具已卸载。当前状态：轻量化初始态。"
-    except Exception as e:
-        return f"[WARN] 重置过程中出现问题: {type(e).__name__}: {str(e)}"
+#         return "[OK] 历史已重置。临时工具已卸载。当前状态：轻量化初始态。"
+#     except Exception as e:
+#         return f"[WARN] 重置过程中出现问题: {type(e).__name__}: {str(e)}"
 
 
 def create_tool_function(tool_name: str, tool_description: str):

@@ -291,11 +291,11 @@ async def _smart_compact(
                 print(msg)
                 results.append(msg)
                 
-                # 保留第一个工具（skill_load 网关）
-                if original_count > 1:
-                    target_agent.tools = [target_agent.tools[0]]
+                # 保留前两个工具:skill_load 和 bash
+                if original_count > 2:
+                    target_agent.tools = target_agent.tools[:2]  # 保留 skill_load 和 bash
                     new_count = len(target_agent.tools)
-                    msg = f"[OK] 已卸载 {original_count - 1} 个临时工具，剩余 {new_count} 个"
+                    msg = f"[OK] 已卸载 {original_count - 2} 个临时工具,剩余 {new_count} 个"
                     print(msg)
                     results.append(msg)
                 else:
@@ -372,15 +372,15 @@ async def _get_compression_status(
     # 3. 判断是否需要压缩
     result.append("\n[建议]")
     
-    should_compact = turn_count > 15 or tool_count > 8
+    should_compact = turn_count > 100 or tool_count > 50
     
     if should_compact:
         result.append("   [!] 建议立即执行压缩")
-        if turn_count > 15:
-            result.append(f"   - 对话消息数 ({turn_count}) 超过阈值 (15)")
-        if tool_count > 8:
-            result.append(f"   - 工具数量 ({tool_count}) 超过阈值 (8)")
-    elif tool_count > 5 or turn_count > 10:
+        if turn_count > 100:
+            result.append(f"   - 对话消息数 ({turn_count}) 超过阈值 (100)")
+        if tool_count > 50:
+            result.append(f"   - 工具数量 ({tool_count}) 超过阈值 (50)")
+    elif tool_count > 25 or turn_count > 50:
         result.append("   - 状态正常，可考虑稍后压缩")
     else:
         result.append("   - 状态良好，暂无需压缩")
