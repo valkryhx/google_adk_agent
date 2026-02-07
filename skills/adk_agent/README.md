@@ -126,7 +126,7 @@ def my_tool(param: str) -> str:
     """工具描述"""
     return "结果"
 
-def get_tools():
+def get_tools(*args, **kwargs):
     return [my_tool]
 ```
 

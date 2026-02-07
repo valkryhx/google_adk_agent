@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ciri</title>
+    <link rel="stylesheet" href="/static/style.css?v=1.8">
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" />
+    <!-- Markdown Support -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <button class="menu-btn"><span class="material-symbols-outlined">menu</span></button>
+            </div>
+            <button class="new-chat-btn">
+                <span class="material-symbols-outlined">add</span>
+                <span>发起新对话</span>
+            </button>
+
+            <div class="nav-section">
+
+                <div class="nav-item">
+                    <span class="material-symbols-outlined">explore</span>
+                    <span>探索 Gem</span>
+                </div>
+            </div>
+
+            <div class="recent-chats">
+                <div class="recent-title">近期对话</div>
+                <!-- 会话列表将由 JavaScript 动态加载 -->
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="nav-item">
+                    <span class="material-symbols-outlined">help</span>
+                    <span>帮助</span>
+                </div>
+                <div class="nav-item">
+                    <span class="material-symbols-outlined">history</span>
+                    <span>活动</span>
+                </div>
+                <div class="nav-item">
+                    <span class="material-symbols-outlined">settings</span>
+                    <span>设置</span>
+                </div>
+            </div>
+            <!-- Resize Handle -->
+            <div class="resize-handle"></div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="top-bar">
+                <div class="model-selector">
+                    <span>Ciri</span>
+                    <span class="material-symbols-outlined">arrow_drop_down</span>
+                </div>
+                <!-- 用户切换器 (用于测试多用户隔离) -->
+                <div class="model-selector" style="margin-left: auto; margin-right: 16px;">
+                    <select id="userSelector"
+                        style="background: transparent; border: 1px solid #dadce0; border-radius: 8px; padding: 6px 12px; font-size: 14px; cursor: pointer;">
+                        <option value="user_001">用户 001 (默认)</option>
+                        <option value="user_A">用户 A</option>
+                        <option value="user_B">用户 B</option>
+                        <option value="user_C">用户 C</option>
+                    </select>
+                </div>
+                <div class="user-profile">
+                    <div class="avatar">U</div>
+                </div>
+            </div>
+
+            <div class="chat-container" id="chatContainer">
+                <div class="welcome-screen" id="welcomeScreen">
+                    <div class="greeting">
+                        <span class="gradient-text">你好, User</span>
+                    </div>
+                    <div class="sub-greeting">需要我为你做些什么？</div>
+                </div>
+
+                <!-- Chat Messages will be inserted here -->
+            </div>
+
+            <div class="input-area-wrapper">
+                <div class="input-area">
+                    <button class="icon-btn"><span class="material-symbols-outlined">add_circle</span></button>
+                    <textarea id="userInput" placeholder="问问 Ciri" rows="1"></textarea>
+                    <button class="icon-btn"><span class="material-symbols-outlined">mic</span></button>
+                    <button class="icon-btn" id="sendBtn"><span class="material-symbols-outlined">send</span></button>
+                    <button class="icon-btn" id="stopBtn" style="display: none;" title="停止生成"><span
+                            class="material-symbols-outlined">stop_circle</span></button>
+                </div>
+                <div class="disclaimer">
+                    Ciri 的回答未必准确无误，请注意核查。
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="/static/script.js?v=1.1"></script>
+</body>
+
+</html>
