@@ -301,6 +301,10 @@ body.welcome-mode .chat-container {
     justify-content: flex-end;
 }
 
+.message.model {
+    flex-direction: column;
+}
+
 .message-content {
     max-width: 80%;
     padding: 10px 15px;
@@ -737,4 +741,166 @@ details[open] .tool-header {
     /* Slightly smaller than main text */
     font-family: 'Roboto', sans-serif;
     font-weight: 400;
+}
+
+/* =========================================
+   Swarm Monitoring UI Styles
+   ========================================= */
+
+.swarm-monitor-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 1px dashed #eee;
+    width: 100%;
+}
+
+.swarm-card {
+    background: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+}
+
+.swarm-card:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.swarm-card.running {
+    border-left: 4px solid #4285f4;
+    /* Blue */
+}
+
+.swarm-card.success {
+    border-left: 4px solid #34a853;
+    /* Green */
+}
+
+.swarm-card.fail {
+    border-left: 4px solid #ea4335;
+    /* Red */
+}
+
+.swarm-card-header {
+    padding: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #f1f3f4;
+}
+
+.swarm-status-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #5f6368;
+}
+
+.swarm-status-icon .material-symbols-outlined {
+    font-size: 20px;
+}
+
+.swarm-info {
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+.swarm-worker-id {
+    font-size: 11px;
+    font-weight: 700;
+    color: #1a73e8;
+    /* Google Blue */
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
+
+.swarm-card.running .swarm-status-icon {
+    color: #4285f4;
+}
+
+.swarm-card.success .swarm-status-icon {
+    color: #34a853;
+}
+
+.swarm-card.fail .swarm-status-icon {
+    color: #ea4335;
+}
+
+
+.swarm-task-preview {
+    font-size: 12px;
+    color: #3c4043;
+    /* Google Dark Grey */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.swarm-meta {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: #80868b;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+}
+
+.swarm-logs-wrapper {
+    font-size: 11px;
+}
+
+.swarm-logs-wrapper summary {
+    padding: 8px 10px;
+    cursor: pointer;
+    color: #5f6368;
+    user-select: none;
+    background: #fff;
+    font-weight: 500;
+    border-top: 1px solid #f1f3f4;
+}
+
+.swarm-logs-wrapper summary:hover {
+    background: #f8f9fa;
+    color: #202124;
+}
+
+.swarm-terminal {
+    margin: 0;
+    padding: 10px;
+    background: #f8f9fa;
+    /* Light Google Grey */
+    color: #3c4043;
+    /* Dark Grey Text */
+    font-family: 'Roboto Mono', monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    height: 150px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    border-top: 1px solid #dadce0;
+}
+
+/* Scrollbar for terminal */
+.swarm-terminal::-webkit-scrollbar {
+    width: 6px;
+}
+
+.swarm-terminal::-webkit-scrollbar-track {
+    background: #f8f9fa;
+}
+
+.swarm-terminal::-webkit-scrollbar-thumb {
+    background: #dadce0;
+    border-radius: 3px;
+}
+
+.swarm-terminal::-webkit-scrollbar-thumb:hover {
+    background: #bdc1c6;
 }

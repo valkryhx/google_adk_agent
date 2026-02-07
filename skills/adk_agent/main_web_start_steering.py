@@ -188,11 +188,31 @@ class SteeringSession:
         # 中断控制
         self.queue = asyncio.Queue()
         
+        # [新特性] 旁路事件流队列 (用于 Swarm 实时状态汇报)
+        self.stream_queue = asyncio.Queue()
+
         # 创建会话专属的 Agent（内部会创建自己的 compactor）
         self.agent = self._create_agent()
         
         print(f"[SteeringSession] Created session for {self.key}")
     
+    def report_swarm_event(self, event_type: str, payload: dict):
+        """
+        供 Tool 调用的回调函数，用于实时汇报 Swarm 状态。
+        消息会被放入 stream_queue，最终合并到 HTTP SSE 流中推给前端。
+        """
+        print(f"[SteeringSession] Reporting Event: {event_type}")
+        event = {
+            "type": "swarm_event",
+            "sub_type": event_type, # init, chunk, finish, fail
+            "data": payload
+        }
+        # 使用 put_nowait 防止工具被阻塞，如果队列满了(极其罕见)则丢弃或报错
+        try:
+            self.stream_queue.put_nowait(event)
+        except asyncio.QueueFull:
+            print(f"[SteeringSession] ⚠️ stream_queue full, dropping event: {event_type}")
+
     def _create_agent(self) -> LlmAgent:
         """创建会话专属的 LlmAgent 实例"""
         system_prompt = build_system_prompt(self.config, self.skill_manager.get_discovery_manifests())
@@ -224,7 +244,7 @@ class SteeringSession:
             before_tool_callback=self.interruption_guard   # 绑定实例方法
         )
         
-        # 🔑 自动加载 bash 作为第二个自带工具
+        
         self.agent = agent  # 临时设置,供 _load_skill_tools 使用
         
         # 🟢 [Feature] 注入 Core Tool: File Editor (Anthropic Native)
@@ -239,7 +259,9 @@ class SteeringSession:
             print(f"[SteeringSession] 已加载 Core Tool: file_editor")
         except Exception as e:
             print(f"[SteeringSession] ⚠️ 加载 file_editor 失败: {e}")
-
+        
+        # # 🔑 自动加载 bash 作为第3个自带工具
+        # 加载 bash 时也尝试注入 reporter (虽然 bash 可能用不上)
         bash_tools = self._load_skill_tools('bash')
         print(f"[SteeringSession] 已自动加载 bash 工具: {[t.__name__ for t in bash_tools]}")
         
@@ -259,49 +281,52 @@ class SteeringSession:
         import importlib.util
         import functools
         
-        tools_path = os.path.join(self.config.skills_path, skill_id, "tools.py")
-        if not os.path.exists(tools_path): 
-            return []
+        tool_files = [
+            os.path.join(self.config.skills_path, skill_id, "tools.py"),
+            os.path.join(self.skill_manager.base_path, ".claude/skills", skill_id, "tools.py")
+        ]
         
-        try:
-            spec = importlib.util.spec_from_file_location(f"skill_{skill_id}", tools_path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            
-            tools = []
-            if hasattr(module, 'get_tools'):
+        loaded_tools = []
+        existing_names = {t.__name__ for t in self.agent.tools if hasattr(t, '__name__')}
+
+        for tool_file in tool_files:
+            if os.path.exists(tool_file):
                 try:
-                    # 注入会话信息
-                    app_info = {
-                        "app_name": self.app_name, 
-                        "user_id": self.user_id, 
-                        "session_id": self.session_id
-                    }
-                    tools = module.get_tools(self.agent, self.session_service, app_info)
-                except:
-                    tools = module.get_tools()
-            elif hasattr(module, 'TOOLS'):
-                tools = list(module.TOOLS.values())
-            
-            loaded = []
-            existing_names = {t.__name__ for t in self.agent.tools if hasattr(t, '__name__')}
-            for tool in tools:
-                t_name = getattr(tool, '__name__', str(tool))
-                
-                # 🔑 为 bash 工具绑定中断队列
-                if t_name == 'bash' and skill_id == 'bash':
-                    tool = functools.partial(tool, interruption_queue=self.queue)
-                    # 保持函数名称以便识别
-                    tool.__name__ = 'bash'
-                
-                if t_name not in existing_names:
-                    self.agent.tools.append(tool)
-                    loaded.append(tool)
-                    existing_names.add(t_name)
-            return loaded
-        except Exception as e:
-            logger.error(f"加载工具失败: {skill_id}", error=str(e))
-            return []
+                    spec = importlib.util.spec_from_file_location(f"skills.{skill_id}", tool_file)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    
+                    if hasattr(module, 'get_tools'):
+                        # 尝试注入 app_info 和 reporter
+                        # get_tools(agent, session_service, app_info, status_reporter)
+                        # 我们通过检查参数数量或直接传递 kwargs 来兼容
+                        
+                        common_args = (self.agent, self.session_service, {
+                            "app_name": self.app_name,
+                            "user_id": self.user_id,
+                            "session_id": self.session_id
+                        })
+                        
+                        try:
+                            # 尝试传入 status_reporter
+                            tools = module.get_tools(*common_args, status_reporter=self.report_swarm_event)
+                        except TypeError:
+                            # 如果报错 (unexpected keyword argument), 则回退到旧调用
+                            tools = module.get_tools(*common_args)
+                            
+                        if tools:
+                            # 绑定 interruption_guard
+                            wrapped_tools = []
+                            for tool in tools:
+                                # 确保是异步函数才能被 agent 正确执行 (agent 内部会检查 iscoroutinefunction)
+                                # 这里 agent 框架会自动处理，我们只需要 extend
+                                wrapped_tools.append(tool)
+                                
+                            self.agent.tools.extend(wrapped_tools)
+                            loaded_tools.extend(wrapped_tools)
+                except Exception as e:
+                     print(f"Failed to load tools from {tool_file}: {e}")
+        return loaded_tools
     
     def interruption_guard(self, *args, **kwargs):
         """中断卫士（实例方法，直接访问 self.queue）"""
@@ -549,18 +574,77 @@ class SteeringSession:
                 # 每次进入 Loop 前也检查一下 (防止 Function Call 产生的中间结果导致超限)
                 await self._check_and_compact_context(session, token_limit)
 
-                async for event in runner.run_async(
-                    user_id=self.user_id,
-                    session_id=self.session_id,
-                    new_message=user_query, # 只有第一次是 user_query, 后面由 Runner 管理
-                    run_config=run_config
-                ):
-                    # 文本输出时的打断检查
-                    self.interruption_guard()
+                # =================================================================
+                # [Merge Strategy] 将 Runner 的生成流与 StreamQueue 的旁路流合并
+                # 这样 Tool 执行期间产生的消息也能实时推送到前端
+                # =================================================================
+                
+                runner_queue = asyncio.Queue()
+                
+                async def _driver_coro():
+                    try:
+                        async for evt in runner.run_async(
+                            user_id=self.user_id,
+                            session_id=self.session_id,
+                            new_message=user_query, # 只有第一次是 user_query, 后面由 Runner 管理
+                            run_config=run_config
+                        ):
+                             await runner_queue.put(evt)
+                        await runner_queue.put(None) # Sentinel for EOF
+                    except Exception as e:
+                        await runner_queue.put(e)
+
+                driver_task = asyncio.create_task(_driver_coro())
+                
+                # 创建两个 listener task
+                pending_runner_get = asyncio.create_task(runner_queue.get())
+                pending_stream_get = asyncio.create_task(self.stream_queue.get())
+                
+                while True:
+                    # 等待任意一个队列有消息
+                    done, pending = await asyncio.wait(
+                        [pending_runner_get, pending_stream_get], 
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
                     
-                    chunks = _process_event_stream(event)
-                    for chunk in chunks:
-                        yield chunk
+                    # 1. 处理 Runner 的消息 (LLM Token, Tool Call 等)
+                    if pending_runner_get in done:
+                        result = pending_runner_get.result()
+                        
+                        # 准备下一次获取
+                        pending_runner_get = asyncio.create_task(runner_queue.get())
+                        
+                        if result is None:
+                            # Runner 结束，退出循环
+                            break
+                        
+                        elif isinstance(result, Exception):
+                             # Runner 报错
+                             if not pending_stream_get.done(): pending_stream_get.cancel()
+                             driver_task.cancel()
+                             raise result
+                        
+                        else:
+                            # 正常 Event
+                            self.interruption_guard()
+                            chunks = _process_event_stream(result)
+                            for chunk in chunks:
+                                yield chunk
+
+                    # 2. 处理 Side-Channel 消息 (Swarm Log, Progress 等)
+                    if pending_stream_get in done:
+                        event = pending_stream_get.result()
+                        
+                        # 准备下一次获取
+                        pending_stream_get = asyncio.create_task(self.stream_queue.get())
+                        
+                        yield event
+
+                # 清理
+                if not pending_runner_get.done(): pending_runner_get.cancel()
+                if not pending_stream_get.done(): pending_stream_get.cancel()
+                # driver_task 应该已经结束了，不过保险起见
+                if not driver_task.done(): driver_task.cancel()
         
             except ContextWindowExceededError:
                 print(f"!!! [CRITICAL] Context Window Exceeded !!!")
@@ -976,14 +1060,24 @@ def _process_event_stream(event):
                 fc = part.function_call
                 fc_msg = f"{fc.name} 输入参数: {fc.args}"
                 print(f"[streaming_工具调用] {fc_msg}")
-                chunks.append({"type": "tool_call", "content": fc_msg})
+                chunks.append({
+                    "type": "tool_call", 
+                    "content": fc_msg,
+                    "tool_name": fc.name,
+                    "tool_args": fc.args
+                })
 
             # 如果是结果 -> 正常发
             if hasattr(part, 'function_response') and part.function_response:
                 fr = part.function_response
-                fc_tool_response_msg= f"{fr.name} -> {fr.response}"
+                result_content = part.function_response.response
+                if isinstance(result_content, dict) and 'result' in result_content:
+                    result_content = result_content['result']
+                
+                fc_tool_response_msg= f"{fr.name} -> {result_content}"
                 print(f"[streaming_工具调用结果] {fc_tool_response_msg}")
-                chunks.append({"type": "tool_result", "content": f"结果: {part.function_response.response}"})
+                # Send clean string for streaming result too
+                chunks.append({"type": "tool_result", "content": str(result_content)})
 
     # 最终响应
     if is_final:
@@ -1146,6 +1240,112 @@ async def cancel_endpoint(req: CancelRequest):
     print(f"🛑 [API] 收到 Cancel 信号 -> {req.app_name}/{req.user_id}/{req.session_id}")
     return {"status": "success"}
 
+class StopWorkerRequest(BaseModel):
+    worker_port: int
+    worker_session_id: str
+    app_name: str
+    user_id: str
+
+@app.post("/api/stop_worker")
+async def stop_remote_worker(request: StopWorkerRequest):
+    """
+    [New] Manually stop a specific remote worker
+    """
+    print(f"[API] Request to stop worker {request.worker_port} (Session: {request.worker_session_id})")
+    
+    # 1. Look up worker URL from DB
+    worker_url = None
+    try:
+        with sqlite3.connect(REGISTRY_DB, timeout=5.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT url FROM nodes WHERE port = ?", (request.worker_port,))
+            row = cursor.fetchone()
+            if row:
+                worker_url = row[0]
+    except Exception as e:
+        return {"status": "error", "message": f"DB Lookup Failed: {str(e)}"}
+
+    if not worker_url:
+        return {"status": "error", "message": f"Worker {request.worker_port} not found in registry"}
+
+    # 2. Call the worker's /api/cancel endpoint
+    import httpx
+    async with httpx.AsyncClient() as client:
+        try:
+            # The worker expects a CancelRequest with app_name, user_id, session_id
+            # Note: The worker's session_id is specific to that task (sub-session)
+            
+            # Define CLUSTER_APP_NAME locally or use hardcoded value
+            CLUSTER_APP_NAME = "adk_universal_swarm"
+            
+            payload = {
+                "app_name": CLUSTER_APP_NAME, # Should match what dispatch_task uses
+                "user_id": f"Agent_Node_{node_config.port}", # Should match dispatch_task caller_id
+                "session_id": request.worker_session_id
+            }
+            # Actually, dispatch_task uses:
+            # app_name=CLUSTER_APP_NAME ("adk_universal_swarm")
+            # user_id=f"Agent_Node_{CURRENT_NODE_PORT}"
+            # session_id=use_session_id
+            
+            # Since the worker validates (app_name, user_id, session_id) tuple for the session,
+            # we must match EXACTLY what dispatch_task sent.
+            # However, the user calling this API is the *human via browser*.
+            # The provided request.app_name/user_id are the HUMAN's.
+            # But the worker is working for the AGENT (Leader).
+            
+            # LUCKILY, `dispatch_task` in tools.py uses:
+            # "app_name": CLUSTER_APP_NAME
+            # "user_id": caller_id  (Agent_Node_X)
+            # "session_id": use_session_id
+            
+            # The frontend calls /api/stop_worker with:
+            # worker_session_id (which IS use_session_id from the init event)
+            
+            # So here we must reconstruct the credentials the Leader used to talk to the Worker.
+            # We know CLUSTER_APP_NAME is "adk_universal_swarm" (defined in tools.py, but not imported here?)
+            # Wait, CLUSTER_APP_NAME is in existing code? No.
+            # But the worker code (main_web_start_steering.py) runs on the worker too.
+            # It just checks if session matches.
+            
+            # Let's verify what dispatch_task sends.
+            # tools.py: 
+            # CLUSTER_APP_NAME = "adk_universal_swarm"
+            # user_id = f"Agent_Node_{CURRENT_NODE_PORT}"
+            
+            # So in this /api/stop_worker (running on Leader), we need to emulate that.
+            # We need to access node_config.port to construct user_id.
+            
+            # Correction: This file (main_web_start_steering.py) doesn't have CLUSTER_APP_NAME defined.
+            # It is defined in tools.py.
+            # I should define it here or hardcode it to match.
+            
+            swarm_app_name = "adk_universal_swarm"
+            leader_user_id = f"Agent_Node_{node_config.port}"
+            
+            print(f" -> Sending Cancel to {worker_url} for {swarm_app_name}/{leader_user_id}/{request.worker_session_id}")
+
+            resp = await client.post(
+                f"{worker_url}/api/cancel",
+                json={
+                    "app_name": swarm_app_name,
+                    "user_id": leader_user_id,
+                    "session_id": request.worker_session_id
+                },
+                timeout=5.0
+            )
+            
+            if resp.status_code == 200:
+                print(" -> Success")
+                return {"status": "success"}
+            else:
+                print(f" -> Failed: {resp.text}")
+                return {"status": "error", "message": f"Worker responded {resp.status_code}: {resp.text}"}
+                
+        except Exception as e:
+            print(f" -> Exception: {e}")
+            return {"status": "error", "message": str(e)}
+
 @app.post("/api/sessions")
 async def create_session(request: CreateSessionRequest):
     """创建新会话"""
@@ -1276,7 +1476,9 @@ async def get_session_history(
                         print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 有 function_call: {fc.name}")
                         blocks.append({
                             "type": "tool_call",
-                            "content": f"{fc.name} 输入参数: {fc.args}"
+                            "content": f"{fc.name} 输入参数: {fc.args}",
+                            "tool_name": fc.name,
+                            "tool_args": fc.args
                         })
                     
                     # 检查 function_response
@@ -1286,9 +1488,19 @@ async def get_session_history(
                         if part.function_response:
                             fr = part.function_response
                             print(f"[历史消息调试] Event {event_idx} Part {part_idx} - function_response name: {fr.name}")
+                            
+                            # [Fix] Add 'tool_result_clean' field for frontend parsing, separate from raw 'content'
+                            result_clean = None
+                            result_display = fr.response
+                            
+                            if isinstance(fr.response, dict) and 'result' in fr.response:
+                                result_clean = fr.response['result']
+                                result_display = result_clean # Use clean string for display too!
+                            
                             blocks.append({
                                 "type": "tool_result",
-                                "content": f"结果: {fr.response}"
+                                "content": str(result_display), # Send string so script.js can marked.parse() it
+                                "tool_result_clean": str(result_clean) if result_clean else None
                             })
                         else:
                             print(f"[历史消息调试] Event {event_idx} Part {part_idx} - function_response 是 None")

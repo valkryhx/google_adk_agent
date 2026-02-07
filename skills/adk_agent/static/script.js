@@ -165,6 +165,31 @@ document.addEventListener('DOMContentLoaded', () => {
                             appNameSet = true;
                         }
 
+                        // [New Feature] 处理 Swarm 旁路事件流
+                        // Backend wraps everything in "chunk": { "chunk": { "type": "swarm_event", ... } }
+                        // Wait, backend does yield json.dumps({"chunk": chunk})
+                        // So data is { chunk: { type: "swarm_event", ... } }
+
+                        if (data.chunk && data.chunk.type === 'swarm_event') {
+                            const evt = data.chunk;
+                            // [Fix] Chronological Ordering:
+                            // When 'init' event arrives, insert a placeholder block into the stream.
+                            if (evt.sub_type === 'init') {
+                                responseBlocks.push({
+                                    type: 'swarm_placeholder',
+                                    msgId: loadingId, // Helper to construct ID
+                                    port: evt.data.worker_port,
+                                    data: evt.data
+                                });
+                                // Force render immediately so the placeholder exists for processSwarmEvent
+                                updateMessage(loadingId, responseBlocks);
+                            }
+
+                            // Process the event (create/update the actual card element)
+                            processSwarmEvent(loadingId, evt.sub_type, evt.data);
+                            continue;
+                        }
+
                         if (data.chunk) {
                             const chunk = data.chunk; // Expecting {type: '...', content: '...'}
 
@@ -217,8 +242,140 @@ document.addEventListener('DOMContentLoaded', () => {
             if (loadingEl) {
                 const cursor = loadingEl.querySelector('.streaming-cursor');
                 if (cursor) cursor.remove();
+
+                // 标记 Swarm 任务结束
+                markSwarmTasksFinished(loadingId);
             }
         }
+    }
+
+    // ==========================================
+    // Swarm Monitoring UI Logic
+    // ==========================================
+
+    function processSwarmEvent(msgId, subType, data) {
+        const msgEl = document.getElementById(msgId);
+        if (!msgEl) return;
+
+        const workerPort = data.worker_port;
+        const cardId = `swarm-card-${msgId}-${workerPort}`;
+        const placeholderId = `swarm-placeholder-${msgId}-${workerPort}`;
+
+        let card = document.getElementById(cardId);
+
+        // 1. Init: 创建卡片
+        if (subType === 'init' && !card) {
+            // Find the placeholder created by renderBlocks
+            let placeholder = document.getElementById(placeholderId);
+
+            // Fallback: If no placeholder (legacy or race condition), use bottom container
+            if (!placeholder) {
+                console.warn(`Placeholder ${placeholderId} not found, falling back to bottom container.`);
+                let container = msgEl.querySelector('.swarm-monitor-container');
+                if (!container) {
+                    container = document.createElement('div');
+                    container.className = 'swarm-monitor-container';
+                    const content = msgEl.querySelector('.message-content');
+                    if (content) {
+                        content.parentNode.insertBefore(container, content.nextSibling);
+                    } else {
+                        msgEl.appendChild(container); // Absolute fallback
+                    }
+                }
+                placeholder = container; // Treat container as parent
+            }
+
+            card = document.createElement('div');
+            card.id = cardId;
+            card.className = 'swarm-card running';
+            // Mark as 'in-placeholder' if it is inside one, to aid styling if needed
+            if (placeholder.classList.contains('swarm-placeholder')) {
+                card.classList.add('inline-card');
+            }
+
+            card.innerHTML = `
+                <div class="swarm-card-header">
+                    <div class="swarm-status-icon"><span class="material-symbols-outlined spin">sync</span></div>
+                    <div class="swarm-info">
+                        <div class="swarm-worker-id">Worker-${workerPort}</div>
+                        <div class="swarm-task-preview" title="${data.task_preview}">${data.task_preview || 'Task Started...'}</div>
+                    </div>
+                    <div class="swarm-meta">Running</div>
+                    <div class="swarm-actions" style="margin-left: 10px;">
+                        <button class="stop-worker-btn" title="Force Stop Worker" onclick="stopWorker(${workerPort}, '${data.session_id}')" style="background:none; border:none; cursor:pointer;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">
+                            <span class="material-symbols-outlined" style="font-size: 20px; color: #ff5252;">stop_circle</span>
+                        </button>
+                    </div>
+                </div>
+                <details class="swarm-logs-wrapper">
+                    <summary>Show Real-time Logs</summary>
+                    <pre class="swarm-terminal"></pre>
+                </details>
+            `;
+            placeholder.appendChild(card);
+            scrollToBottom();
+        }
+
+        if (!card) return; // 容错
+
+        const terminal = card.querySelector('.swarm-terminal');
+        const meta = card.querySelector('.swarm-meta');
+        const icon = card.querySelector('.swarm-status-icon');
+        const details = card.querySelector('details');
+
+        // 2. Chunk: 追加日志
+        if (subType === 'chunk') {
+            if (terminal) {
+                terminal.textContent += data.content;
+                // 自动滚动到底部
+                terminal.scrollTop = terminal.scrollHeight;
+
+                // 如果有新内容，且用户没有手动折叠/展开过，可以考虑自动展开？
+                // 不，用户说要保持整洁，所以默认折叠。
+                // 可以加个小红点提示有更新？(High effort, skip for now)
+            }
+        }
+
+        // 3. Finish: 标记成功
+        if (subType === 'finish') {
+            card.classList.remove('running');
+            card.classList.add('success');
+            meta.textContent = 'Completed';
+            icon.innerHTML = '<span class="material-symbols-outlined">check_circle</span>';
+            // 任务完成后可以自动收起日志? 默认本身就是收起的。
+        }
+
+        // 4. Fail: 标记失败
+        if (subType === 'fail') {
+            card.classList.remove('running');
+            card.classList.add('fail');
+            meta.textContent = 'Failed';
+            icon.innerHTML = '<span class="material-symbols-outlined">error</span>';
+
+            // 失败时，如果还没有创建卡片（比如连接失败），则需临时创建一个
+            if (terminal) {
+                terminal.textContent += `\n[ERROR] ${data.error}`;
+                details.open = true; // 失败时自动展开看原因
+            }
+        }
+    }
+
+    function markSwarmTasksFinished(msgId) {
+        // 遍历所有还在 running 的卡片，强制标记为结束（防止 UI 卡在转圈）
+        // 正常情况下 finish 事件会处理，但防止异常中断
+        const msgEl = document.getElementById(msgId);
+        if (!msgEl) return;
+        const runningCards = msgEl.querySelectorAll('.swarm-card.running');
+        runningCards.forEach(card => {
+            card.classList.remove('running');
+            // 如果没有明确 failed，就默认为 done? 或者 stopped?
+            // 还是保持 running 状态说明连接断了？
+            // 最好变成灰色 unknown
+            const meta = card.querySelector('.swarm-meta');
+            const icon = card.querySelector('.swarm-status-icon');
+            if (meta) meta.textContent = 'Disconnected';
+            if (icon) icon.innerHTML = '<span class="material-symbols-outlined">wifi_off</span>';
+        });
     }
 
     function updateMessage(id, blocks, isHistory = false) {
@@ -229,6 +386,15 @@ document.addEventListener('DOMContentLoaded', () => {
             // 1. 记录当前所有 details 标签的展开状态 (open 属性)
             const detailsStates = Array.from(messageContent.querySelectorAll('details')).map(d => d.open);
 
+            // [New] Preserve Swarm Cards across re-renders
+            // "Teleport" them out of the DOM before innerHTML wipe
+            const savedCards = new Map();
+            messageContent.querySelectorAll('.swarm-card').forEach(card => {
+                savedCards.set(card.id, card);
+                // Note: We don't need to explicitly remove them, innerHTML will do it.
+                // But we hold the reference, so they are not garbage collected.
+            });
+
             // 2. 渲染新内容 (+ cursor,除非是历史消息)
             const html = renderBlocks(blocks);
             if (isHistory) {
@@ -236,6 +402,20 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 messageContent.innerHTML = html + '<span class="streaming-cursor"></span>';
             }
+
+            // [New] Restore Swarm Cards to their specific placeholders
+            messageContent.querySelectorAll('.swarm-placeholder').forEach(ph => {
+                const port = ph.dataset.port;
+                // Construct ID (assuming we know the rule) or just use the ID mapping
+                // Helper: logic is `swarm-card-${msgId}-${port}`
+                // The placeholder ID is `swarm-placeholder-${msgId}-${port}`
+                const cardId = ph.id.replace('swarm-placeholder-', 'swarm-card-');
+
+                const card = savedCards.get(cardId);
+                if (card) {
+                    ph.appendChild(card);
+                }
+            });
 
             // 3. 恢复状态与智能初始化
             const newDetails = messageContent.querySelectorAll('details');
@@ -306,17 +486,111 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderBlocks(blocks) {
         let html = '';
 
-        blocks.forEach(block => {
+        for (let i = 0; i < blocks.length; i++) {
+            const block = blocks[i];
+
             if (block.type === 'text') {
                 html += marked.parse(block.content);
             } else if (block.type === 'tool_call') {
+                // 1. Always Render Generic Tool Call (Raw)
+                let contentDisplay = block.content;
+                if (block.tool_name && block.tool_args) {
+                    contentDisplay = `${block.tool_name}(${JSON.stringify(block.tool_args, null, 2)})`;
+                }
+
                 html += `<div class="tool-call">
                             <div class="tool-header">
                                 <span class="material-symbols-outlined">build</span>
-                                <span>Tool Call</span>
+                                <span>Tool Call: ${block.tool_name || 'Unknown'}</span>
                             </div>
-                            <div class="tool-content">${block.content}</div>
+                            <div class="tool-content">${contentDisplay}</div>
                         </div>`;
+
+                // 2. Swarm Visual Extensions (History Cards)
+                if (block.tool_name === 'dispatch_task' && block.tool_args) {
+                    const args = block.tool_args;
+                    const taskPreview = args.task_instruction ? (args.task_instruction.substring(0, 50) + '...') : 'Swarm Task';
+                    const workerInfo = args.target_port ? `Worker-${args.target_port}` : 'Swarm-Auto';
+
+                    // Try to peek next block for result to display inside card too
+                    let resultHtml = '';
+                    if (i + 1 < blocks.length && (blocks[i + 1].type === 'tool_result' || blocks[i + 1].type === 'function_response')) {
+                        const resultBlock = blocks[i + 1];
+                        // Optionally consume it? For now, let's just peek and show it inside card too.
+                        // But if we show it inside, maybe we should skip the next block?
+                        // Let's NOT skip, to be safe. Just duplicate info is better than missing.
+                        // Or better: render it inside card and rely on user expanding it.
+                        resultHtml = `<details class="swarm-logs-wrapper">
+                                         <summary>Execution Result</summary>
+                                         <pre class="swarm-terminal">${resultBlock.content}</pre>
+                                       </details>`;
+                    }
+
+                    html += `<div class="swarm-card success" style="margin: 10px 0;">
+                                <div class="swarm-card-header">
+                                    <div class="swarm-status-icon"><span class="material-symbols-outlined">history</span></div>
+                                    <div class="swarm-info">
+                                        <div class="swarm-worker-id">${workerInfo}</div>
+                                        <div class="swarm-task-preview" title="${args.task_instruction}">${taskPreview}</div>
+                                    </div>
+                                    <div class="swarm-meta">History</div>
+                                </div>
+                                ${resultHtml}
+                            </div>`;
+
+                } else if (block.tool_name === 'dispatch_batch_tasks' && block.tool_args) {
+                    const tasks = block.tool_args.tasks || [];
+
+                    // Peek for batch results
+                    let batchResults = {};
+                    if (i + 1 < blocks.length && (blocks[i + 1].type === 'tool_result' || blocks[i + 1].type === 'function_response')) {
+                        const nextBlock = blocks[i + 1];
+
+                        // [New] Use clean result field if available!
+                        const content = nextBlock.tool_result_clean || nextBlock.content || '';
+
+                        // Regex now expects CLEAN string with newlines
+                        const regex = /--- 任务 (\d+) 结果 ---[\r\n]+([\s\S]*?)(?=[\r\n]+--- 任务|[\r\n]+$|$)/g;
+                        let match;
+                        while ((match = regex.exec(content)) !== null) {
+                            const taskIndex = parseInt(match[1]) - 1;
+                            batchResults[taskIndex] = match[2].trim();
+                        }
+                    }
+
+                    tasks.forEach((task, index) => {
+                        const taskPreview = task.substring(0, 50) + '...';
+                        const result = batchResults[index];
+
+                        let resultHtml = '';
+                        if (result) {
+                            resultHtml = `<details class="swarm-logs-wrapper">
+                                            <summary>Result (History)</summary>
+                                            <pre class="swarm-terminal">${result}</pre>
+                                          </details>`;
+                        } else {
+                            resultHtml = `<div style="font-size:12px; color:#999; padding:0 10px 5px;">(No individual result parsed)</div>`;
+                        }
+
+                        html += `<div class="swarm-card success" style="margin: 10px 0;">
+                                    <div class="swarm-card-header">
+                                        <div class="swarm-status-icon"><span class="material-symbols-outlined">history</span></div>
+                                        <div class="swarm-info">
+                                            <div class="swarm-worker-id">Batch-Worker-${index + 1}</div>
+                                            <div class="swarm-task-preview" title="${task}">${taskPreview}</div>
+                                        </div>
+                                        <div class="swarm-meta">History</div>
+                                    </div>
+                                    ${resultHtml}
+                                </div>`;
+                    });
+
+                    // [Dev Mode] Do not skip next block. Let it render as raw tool result too.
+                    // if (Object.keys(batchResults).length > 0) {
+                    //     i++; // Skip next block
+                    // }
+
+                }
             } else if (block.type === 'tool_result' || block.type === 'function_response') {
                 console.log('Rendering tool_result block:', block);
                 html += `<details class="tool-result">
@@ -324,7 +598,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 <span class="material-symbols-outlined">check_circle</span>
                                 <span>Tool Result (点击展开)</span>
                             </summary>
-                            <div class="tool-content">${block.content}</div>
+                            <div class="tool-content">${marked.parse(block.content)}</div>
                         </details>`;
             } else if (block.type === 'thought') {
                 html += `<details class="thought-process">
@@ -334,8 +608,12 @@ document.addEventListener('DOMContentLoaded', () => {
                             </summary>
                             <div class="tool-content">${marked.parse(block.content)}</div>
                         </details>`;
+            } else if (block.type === 'swarm_placeholder') {
+                // [New] Render placeholder for inline swarm card
+                // ID strictly follows the pattern needed for processSwarmEvent to find it
+                html += `<div id="swarm-placeholder-${block.msgId}-${block.port}" class="swarm-placeholder" data-port="${block.port}" style="margin: 10px 0;"></div>`;
             }
-        });
+        }
 
         return html;
     }
@@ -431,7 +709,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             deleteBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                if (confirm(`确认删除对话 "${session.title}"?`)) {
+                if (confirm(`确认删除对话 "${session.title}" ? `)) {
                     await deleteSession(session.session_id);
                 }
             });
@@ -492,7 +770,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadSessionHistory(sessionId) {
         try {
             const response = await fetch(
-                `/api/sessions/${sessionId}/history?app_name=${APP_NAME}&user_id=${getUserId()}`  // 动态获取
+                `/api/sessions/${sessionId}/history?app_name=${APP_NAME}&user_id=${getUserId()}` // 动态获取
             );
             const data = await response.json();
 
@@ -729,6 +1007,42 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // [New Feature] Stop Specific Worker function
+    window.stopWorker = async function (workerPort, workerSessionId) {
+        if (!confirm(`Confirm to force stop Worker-${workerPort}?`)) return;
+
+        console.log(`[Stop Worker] Port: ${workerPort}, Session: ${workerSessionId}`);
+
+        try {
+            // Retrieve current user ID dynamically
+            const currentUserId = getUserId();
+
+            const response = await fetch('/api/stop_worker', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    worker_port: workerPort,
+                    worker_session_id: workerSessionId,
+                    app_name: APP_NAME,
+                    user_id: currentUserId
+                })
+            });
+
+            const res = await response.json();
+            if (res.status === 'success') {
+                // Manually update the card UI to show stopped (optional, as backend might not push fail event immediately if cancelling)
+                // note: msgId is not available here, relying on backend event stream
+
+                alert(`Instruction sent to stop Worker-${workerPort}.`);
+            } else {
+                alert(`Failed to stop worker: ${res.error || res.message}`);
+            }
+        } catch (e) {
+            console.error("Stop worker error:", e);
+            alert("Error stopping worker.");
+        }
+    };
 
     // 调用初始化
     initializePage();
