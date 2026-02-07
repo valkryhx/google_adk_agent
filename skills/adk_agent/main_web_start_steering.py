@@ -117,7 +117,9 @@ class SteeringSession:
             model=self.config.model, 
             api_key=self.config.api_key, 
             api_base=self.config.api_base, 
-            extra_body=self.config.extra_body
+            extra_body=self.config.extra_body,
+            timeout=self.config.timeout_seconds,
+            max_retries=self.config.max_retries
         )
         
         def handle_tool_error(tool, args, tool_context, error):
