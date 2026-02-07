@@ -249,6 +249,6 @@ CODEBASE_SEARCH_TOOLS = {
 }
 
 
-def get_tools() -> List:
+def get_tools(*args, **kwargs) -> List:
     """返回所有代码搜索工具函数列表"""
     return list(CODEBASE_SEARCH_TOOLS.values())

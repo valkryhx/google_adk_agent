@@ -69,7 +69,7 @@ def get_mcp_toolset():
     return toolset
 
 
-def get_tools() -> List:
+def get_tools(*args, **kwargs) -> List:
     """
     返回 MCP 集成工具列表
     

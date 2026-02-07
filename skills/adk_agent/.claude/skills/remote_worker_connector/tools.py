@@ -63,13 +63,19 @@ def _remove_dead_node(port: int):
 # 核心工具：任务分发
 # ==========================================
 
+# Debug: Confirm File Loading
+print(f"LOADING remote_worker_connector tools.py from {__file__}")
+
 async def dispatch_task(
     task_instruction: str, 
     context_info: Optional[str] = "",
     target_port: Optional[int] = None,
     sub_session_id: Optional[str] = None,
-    priority: str = "NORMAL"
+    priority: str = "NORMAL",
+    _status_reporter = None
 ) -> str:
+    print(f"[DEBUG] dispatch_task called. reporter type: {type(_status_reporter)}")
+    print(f"[DEBUG] dispatch_task called with reporters={_status_reporter}")
     """
     【集群指挥官核心工具】将任务分发给 Swarm 集群中的其他智能体。
     
@@ -132,20 +138,29 @@ async def dispatch_task(
     caller_id = f"Agent_Node_{CURRENT_NODE_PORT}"
     use_session_id = sub_session_id or f"sub_{uuid.uuid4().hex[:8]}"
 
+    # Reporting Helper
+    def report(event_type, data):
+        if _status_reporter:
+            _status_reporter(event_type, data)
+
     # 4. 开始尝试调度（轮询候选人）
     last_error = ""
     
     # 增加重试机制，防止网络抖动导致的误判
-    max_retries = 5
+    max_retries = 2 # [Optimized] Reduced from 5 to 2 (total 3 attempts)
 
     for worker in candidates:
         worker_port = worker['port']
         worker_url = worker['url']
         
         # [优化] 增加微小的随机等待，避免 Batch 模式下瞬间请求风暴
-        await asyncio.sleep(random.uniform(1, 15))
+        # [Optimized] Reduced sleep time significantly for faster dispatch
+        await asyncio.sleep(random.uniform(0.1, 1.0))
         
         print(f"[Swarm Dispatch] 📡 正在连接 Worker {worker_port} (Session: {use_session_id})...")
+        
+        # [Report] 尝试连接
+        # report('try_connect', {"worker_port": worker_port})
 
         payload = {
             "message": full_message,
@@ -156,7 +171,12 @@ async def dispatch_task(
 
         for attempt in range(max_retries + 1):
             try:
-                async with httpx.AsyncClient(timeout=300.0) as client: # 增加超时时间到5分钟
+                # [Optimized] Use separate timeouts for connect and read
+                # Connect: 3s (fast fail if node down)
+                # Read: 30s (shorter timeout to trigger retry earlier as requested)
+                timeout_config = httpx.Timeout(180.0, connect=3.0)
+                
+                async with httpx.AsyncClient(timeout=timeout_config) as client:
                     async with client.stream("POST", f"{worker_url}/api/chat", json=payload) as response:
                         
                         # === 场景 A: 对方忙碌 (503) ===
@@ -165,13 +185,9 @@ async def dispatch_task(
                             if target_port:
                                 error_json = await response.json()
                                 task_preview = error_json.get('current_task', 'Unknown')
-                                return (
-                                    f"【调度冲突】目标 Worker ({worker_port}) 正在忙碌。\n"
-                                    f"⚠️ 当前任务: '{task_preview}'\n"
-                                    f"❌ 建议：\n"
-                                    f"   1. 若任务紧急，请重新调用并设置 priority='URGENT' 以强制打断。\n"
-                                    f"   2. 若不紧急，请稍后重试。"
-                                )
+                                msg = f"【调度冲突】目标 Worker ({worker_port}) 正在忙碌: {task_preview}"
+                                report('fail', {"worker_port": worker_port, "error": msg})
+                                return msg
                             else:
                                 # 如果是随机分配，那就找下一个人
                                 print(f"[Swarm] Worker {worker_port} 正忙，尝试下一个...")
@@ -179,6 +195,13 @@ async def dispatch_task(
 
                         # === 场景 B: 连接成功 (200) ===
                         if response.status_code == 200:
+                            # [Report] 任务开始 (Init)
+                            report('init', {
+                                "worker_port": worker_port, 
+                                "session_id": use_session_id,
+                                "task_preview": task_instruction[:50] + "..."
+                            })
+
                             # 【过程屏蔽】只收集文本内容，忽略中间的 tool_calls
                             final_report = ""
                             async for line in response.aiter_lines():
@@ -187,11 +210,24 @@ async def dispatch_task(
                                     data = json.loads(line)
                                     chunk = data.get("chunk", {})
                                     if chunk.get("type") == "text":
-                                        final_report += chunk.get("content", "")
+                                        content = chunk.get("content", "")
+                                        final_report += content
+                                        
+                                        # [Report] 实时流 (Chunk)
+                                        # 只有当有内容时才汇报
+                                        if content:
+                                            report('chunk', {
+                                                "worker_port": worker_port,
+                                                "content": content
+                                            })
                                 except: continue
                             
                             # 成功！返回结构化报告
                             print(f"[Swarm] ✅ Worker {worker_port} 任务完成。")
+                            
+                            # [Report] 任务完成 (Finish)
+                            report('finish', {"worker_port": worker_port, "status": "success"})
+                            
                             return (
                                 f"✅ [SWARM SUCCESS]\n"
                                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -221,17 +257,15 @@ async def dispatch_task(
                 break 
 
     # 5. 所有候选人都试过了，还是失败
-    return (
-        f"【调度失败】无法将任务分派给任何 Worker。\n"
-        f"原因: 所有候选节点 ({len(candidates)}个) 都忙碌或无法连接。\n"
-        f"最后一次错误: {last_error}"
-        f"建议: 请尝试自己执行该任务，或稍后重试。"
-    )
+    msg = f"【调度失败】无法将任务分派给任何 Worker。Last Error: {last_error}"
+    report('fail', {"worker_port": 0, "error": msg}) # Port 0 means system/scheduler fail
+    return msg
 
 async def dispatch_batch_tasks(
     tasks: List[str],
     common_context: Optional[str] = "",
-    priority: str = "NORMAL"
+    priority: str = "NORMAL",
+    _status_reporter = None # [Internal] Injected by get_tools
 ) -> str:
     """
     【并发加速】同时向集群分发多个并行任务。
@@ -262,14 +296,14 @@ async def dispatch_batch_tasks(
         
             print(f"  -> 启动子任务 {index+1}: {instruction[:20]}...")
             
-            # 这里的 target_port=None 让 dispatch_task 内部去随机找人
-            # 由于 dispatch_task 有重试机制，它会处理竞争 busy 的情况
+            # [Call] 务必传递 _status_reporter
             result = await dispatch_task(
                 task_instruction=task_with_id,
                 context_info=common_context,
                 target_port=None, 
                 sub_session_id=None,
-                priority=priority
+                priority=priority,
+                _status_reporter=_status_reporter
             )
             return f"--- 任务 {index+1} 结果 ---\n{result}\n"
 
@@ -281,9 +315,33 @@ async def dispatch_batch_tasks(
     
     # 汇总结果
     final_report = f"【批量任务执行报告】\n共执行 {len(tasks)} 个并发任务。\n" + "\n".join(results)
+    
     print(f"[Swarm Batch] ✅ {len(tasks)} 个任务全部完成。")
     return final_report
 
-def get_tools(agent, session_service, app_info):
-    # 记得导出新工具
-    return [dispatch_task, dispatch_batch_tasks]
+def get_tools(agent, session_service, app_info, status_reporter=None):
+    """
+    Factory function to create tools with injected dependencies.
+    Accepted status_reporter to enable real-time side-channel streaming.
+    """
+    import functools
+    
+    # 使用 partial 注入 status_reporter，同时保持其他参数的灵活性
+    # 注意：agent 调用时只会传它认识的参数（task_instruction等），
+    # _status_reporter 必须作为 keyword argument 预先绑定。
+    
+    dt = functools.partial(dispatch_task, _status_reporter=status_reporter)
+    dbt = functools.partial(dispatch_batch_tasks, _status_reporter=status_reporter)
+    
+    # 恢复原函数的元数据，以便 Agent 能够正确识别工具说明
+    dt.__name__ = "dispatch_task"
+    dt.__doc__ = dispatch_task.__doc__
+    # 如果 inspect.signature 是基于原函数的，partial 对象通常能保留签名信息，
+    # 但为了保险，有些框架可能需要 update_wrapper
+    functools.update_wrapper(dt, dispatch_task)
+    
+    dbt.__name__ = "dispatch_batch_tasks"
+    dbt.__doc__ = dispatch_batch_tasks.__doc__
+    functools.update_wrapper(dbt, dispatch_batch_tasks)
+
+    return [dt, dbt]

@@ -449,6 +449,6 @@ bash_TOOLS = {
 }
 
 
-def get_tools() -> List:
+def get_tools(*args, **kwargs) -> List:
     """返回所有 Bash 工具函数列表"""
     return list(bash_TOOLS.values())
