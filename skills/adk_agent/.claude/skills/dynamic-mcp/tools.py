@@ -28,7 +28,7 @@ def get_tools(agent, session_service, app_info) -> List:
     """
     
     # --- 安全配置 ---
-    ALLOWED_LOCAL_COMMANDS = {"npx", "uvx", "node", "python", "python3"}
+    ALLOWED_LOCAL_COMMANDS = {"npx", "npx.cmd", "uvx", "node", "python", "python3"}
     
     def _is_safe_arg(arg: str) -> bool:
         """防止 Shell 注入攻击"""
