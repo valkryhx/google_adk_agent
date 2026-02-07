@@ -193,6 +193,6 @@ DATA_ANALYST_TOOLS = {
 }
 
 
-def get_tools() -> List:
+def get_tools(*args, **kwargs) -> List:
     """返回所有数据分析工具函数列表"""
     return list(DATA_ANALYST_TOOLS.values())
