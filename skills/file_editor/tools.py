@@ -54,9 +54,9 @@ class EditTool:
         else:
             path = path.resolve()
             
-        # 2. 沙箱逃逸检查 (防止访问 /etc/passwd 等)
-        if not str(path).startswith(str(self.root)):
-             raise ToolError(f"Access denied: Path {path} is outside the allowed workspace {self.root}")
+        # 2. 沙箱逃逸检查 (防止访问 /etc/passwd 等) - 已禁用
+        # if not str(path).startswith(str(self.root)):
+        #      raise ToolError(f"Access denied: Path {path} is outside the allowed workspace {self.root}")
 
         # 3. 检查文件是否存在
         if not path.exists() and command != "create":
