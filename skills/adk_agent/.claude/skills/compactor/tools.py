@@ -291,11 +291,24 @@ async def _smart_compact(
                 print(msg)
                 results.append(msg)
                 
-                # 保留前两个工具:skill_load 和 bash
-                if original_count > 2:
-                    target_agent.tools = target_agent.tools[:2]  # 保留 skill_load 和 bash
+                # 定义需要保留的核心工具名称
+                # 1. skill_load: 动态加载能力
+                # 2. bash: 系统操作能力
+                # 3. file_editor: 文件编辑能力 (新增)
+                CORE_TOOL_NAMES = {'skill_load', 'bash', 'file_editor'}
+                
+                # 筛选出核心工具
+                kept_tools = []
+                for tool in target_agent.tools:
+                    t_name = getattr(tool, '__name__', str(tool))
+                    if t_name in CORE_TOOL_NAMES:
+                        kept_tools.append(tool)
+                
+                # 更新工具列表
+                if len(kept_tools) < original_count:
+                    target_agent.tools = kept_tools
                     new_count = len(target_agent.tools)
-                    msg = f"[OK] 已卸载 {original_count - 2} 个临时工具,剩余 {new_count} 个"
+                    msg = f"[OK] 已卸载 {original_count - new_count} 个临时工具, 剩余 {new_count} 个核心工具 ({[t.__name__ for t in kept_tools]})"
                     print(msg)
                     results.append(msg)
                 else:
