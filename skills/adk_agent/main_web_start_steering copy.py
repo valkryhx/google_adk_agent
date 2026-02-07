@@ -15,17 +15,12 @@ import sys
 import json
 import time
 import secrets
-import sqlite3
-import functools
 from contextvars import ContextVar
 from typing import Dict, Tuple, Optional, Any, List
 
 # 将当前目录添加到路径
 #sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# 将项目根目录添加到路径 (3层目录向上)
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-import argparse
 from skills.adk_agent.core.manager import SkillManager
 from skills.adk_agent.core.executor import execute_python_code
 from skills.adk_agent.core.logger import AgentLogger, logger
@@ -33,12 +28,11 @@ from skills.adk_agent.config import AgentConfig, build_system_prompt
 import litellm
 from litellm import ContextWindowExceededError
 from google.genai import types
-from fastapi import FastAPI, Response, status
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import uvicorn
-import datetime
 
 from google.adk.agents import LlmAgent
 from src.core.custom_table_db_service import FullyCustomDbService
@@ -74,84 +68,6 @@ compactor_agent = None
 DEFAULT_APP_NAME = "dynamic_expert"
 DEFAULT_USER_ID = "user_001"
 DEFAULT_SESSION_ID = "session_001"
-
-
-# ==========================================
-# 1. 节点配置与全局变量 (新增)
-# ==========================================
-class NodeConfig:
-    port: int = 8000
-    # 数据库名由 port 自动生成，实现物理隔离
-
-node_config = NodeConfig()
-
-# ==========================================
-# [新增] 全局工作锁与状态管理
-# ==========================================
-class WorkerState:
-    def __init__(self):
-        self.locked = False
-        self.current_task_summary = ""
-        self.current_session_id = ""
-        self.start_time = None
-        
-    def set_busy(self, task_summary, session_id):
-        self.locked = True
-        self.current_task_summary = task_summary
-        self.current_session_id = session_id
-        self.start_time = datetime.datetime.now()
-        
-    def set_idle(self):
-        self.locked = False
-        self.current_task_summary = ""
-        self.current_session_id = ""
-        self.start_time = None
-
-worker_state = WorkerState()
-WORKER_LOCK = asyncio.Lock()
-
-# ==========================================
-# 2. SQLite 服务注册逻辑 (Service Discovery)
-# ==========================================
-REGISTRY_DB = "swarm_registry.db"
-
-def init_registry_db():
-    """初始化注册表数据库 (幂等操作)"""
-    try:
-        with sqlite3.connect(REGISTRY_DB, timeout=10.0) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS nodes (
-                    port INTEGER PRIMARY KEY,
-                    url TEXT NOT NULL,
-                    status TEXT,
-                    last_seen REAL
-                )
-            """)
-    except Exception as e:
-        print(f"[Registry Init] ⚠️ 初始化警告: {e}")
-
-def register_self():
-    """启动时将自己注册到 SQLite"""
-    try:
-        url = f"http://localhost:{node_config.port}"
-        with sqlite3.connect(REGISTRY_DB, timeout=10.0) as conn:
-            conn.execute("""
-                INSERT OR REPLACE INTO nodes (port, url, status, last_seen)
-                VALUES (?, ?, ?, ?)
-            """, (node_config.port, url, "active", time.time()))
-        print(f"[Node-{node_config.port}] 📝 已注册到 Swarm 集群")
-    except Exception as e:
-        print(f"[Node-{node_config.port}] ❌ 注册失败: {e}")
-
-def deregister_self():
-    """关闭时将自己移除"""
-    try:
-        with sqlite3.connect(REGISTRY_DB, timeout=10.0) as conn:
-            conn.execute("DELETE FROM nodes WHERE port = ?", (node_config.port,))
-        print(f"[Node-{node_config.port}] 👋 已退出 Swarm 集群")
-    except Exception as e:
-        print(f"[Node-{node_config.port}] ⚠️ 注销失败: {e}")
-
 
 # ==========================================
 # [新架构] SteeringSession 类
@@ -309,7 +225,6 @@ class SteeringSession:
             try:
                 signal = self.queue.get_nowait()
                 if signal == "CANCEL":
-                    print(f"🛑 [AOP拦截] 检测到中断信号! Target: {self.key}")
                     print(f"🛑 [AOP拦截] 检测到中断信号! Target: {self.key}")
                     
                     # 清空队列
@@ -884,18 +799,20 @@ def setup_env():
 # [DEPRECATED] 旧的全局函数（兼容层）
 # ==========================================
 
-# async def skill_load(skill_id: str) -> str:
-#     """
-#     [DEPRECATED] 旧的 skill_load 函数，现在已废弃
-#     新架构中 skill_load 是 SteeringSession 的实例方法
-#     """
-#     print(f"[WARNING] 调用了已废弃的全局 skill_load 函数")
-#     return "[ERROR] 该函数已废弃，请使用 SteeringSession.skill_load"
+async def skill_load(skill_id: str) -> str:
+    """
+    [DEPRECATED] 旧的 skill_load 函数，现在已废弃
+    新架构中 skill_load 是 SteeringSession 的实例方法
+    """
+    print(f"[WARNING] 调用了已废弃的全局 skill_load 函数")
+    return "[ERROR] 该函数已废弃，请使用 SteeringSession.skill_load"
 
 async def create_agent(custom_config: AgentConfig = None):
     """
-    [Restored] 初始化全局服务（session_service, sm, compactor_agent）
-    虽然新架构中 Agent 由 SteeringSession 创建，但全局服务仍需在此初始化。
+    [DEPRECATED] 旧的 create_agent 函数，现在已废弃
+    新架构中 Agent 由 SteeringSession 在初始化时自动创建
+    
+    该函数现在用于初始化全局服务（session_service, sm, compactor_agent）
     """
     global session_service, sm, config, compactor_agent, session_manager
     if custom_config: 
@@ -909,13 +826,11 @@ async def create_agent(custom_config: AgentConfig = None):
     if not os.path.exists(db_folder):
         os.makedirs(db_folder, exist_ok=True)
     
-    # [物理隔离] 数据库文件名绑定端口
-    db_filename = f"adk_sessions_port_{node_config.port}.db"
-    db_path = os.path.join(db_folder, db_filename)
-    if sys.platform == 'win32': db_path = db_path.replace('\\', '/')
+    db_path = os.path.join(db_folder, "adk_sessions.db")
+    if sys.platform == 'win32':
+        db_path = db_path.replace('\\', '/')
         
-    print(f"[Node-{node_config.port}] 🔒 挂载私有记忆库: {db_filename}")
-    
+    # 使用自定义 DB Service
     session_service = FullyCustomDbService(
         db_url=f"sqlite+aiosqlite:///{db_path}",
         session_table_name="adk_sessions",
@@ -925,8 +840,18 @@ async def create_agent(custom_config: AgentConfig = None):
     
     # 创建 AutoCompactAgent (Sub-Agent)
     compactor_agent = AutoCompactAgent(config)
-    session_manager = SessionManager(config, session_service, sm, compactor_agent)
-    print(f"[Node-{node_config.port}] ✅ 智能体就绪")
+    
+    # 创建 SessionManager
+    session_manager = SessionManager(
+        config=config,
+        session_service=session_service,
+        skill_manager=sm,
+        compactor_agent=compactor_agent
+    )
+    
+    print("[系统] 全局服务初始化完成 (session_service, sm, compactor_agent, session_manager)")
+    
+    return None  # 不再返回 my_agent
 
 def _process_event_stream(event):
     """处理事件单独一个event 而不是整个事件流"""
@@ -1053,76 +978,17 @@ class SessionListResponse(BaseModel):
     sessions: List[SessionInfo]
 
 @app.post("/api/chat")
-async def chat_endpoint(request: ChatRequest, response: Response):
-    # 1. 检查是否忙碌
-    if WORKER_LOCK.locked():
-        # === 核心逻辑：智能忙碌响应 ===
-        duration = 0
-        if worker_state.start_time:
-            duration = (datetime.datetime.now() - worker_state.start_time).seconds
-        
-        # 如果请求标记为【紧急中断】
-        is_urgent_interrupt = "[URGENT_INTERRUPT]" in request.message
-
-        if is_urgent_interrupt:
-            print(f"[Node-{node_config.port}] ⚠️ 收到紧急中断指令！正在终止旧任务...")
-            # 找到正在运行的 session 并发送 CANCEL
-            if session_manager:
-                busy_session = session_manager.get(request.app_name, request.user_id, worker_state.current_session_id)
-                if busy_session:
-                    await busy_session.queue.put("CANCEL") # 发送中断信号
-                    # 等待一小会儿让它退出锁
-                    # 轮询等待锁释放
-                    for _ in range(20): # 最多等待 2秒
-                        if not WORKER_LOCK.locked(): break
-                        await asyncio.sleep(0.1)
-            
-            # 此时锁应该释放了（因为 run_agent 会抛出异常并 finally 释放）
-        else:
-            # 普通请求，返回详细的忙碌状态
-            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-            return {
-                "error": "Worker is busy",
-                "status": "busy",
-                "current_task": worker_state.current_task_summary,
-                "running_time_seconds": duration,
-                "suggestion": "Append '[URGENT_INTERRUPT]' to message to force execution if the task is really urgent."
-            }
-
-    # 2. 抢锁并执行
-    try:
-        # 手动获取锁（确保在 generator 执行期间一直持有）
-        await WORKER_LOCK.acquire()
-        worker_state.set_busy(request.message[:50], request.session_id)
-        print(f"[Node-{node_config.port}] 🔒 锁定: 开始执行任务 (Session: {request.session_id})")
-
-        async def generate():
-            try:
-                # 传入完整的三元组
-                async for chunk in run_agent(
-                    request.message, 
-                    request.app_name, 
-                    request.user_id, 
-                    request.session_id
-                ):
-                    yield json.dumps({"chunk": chunk}) + "\n"
-            except Exception as e:
-                yield json.dumps({"chunk": {"type": "error", "content": str(e)}}) + "\n"
-            finally:
-                # 释放锁
-                worker_state.set_idle()
-                WORKER_LOCK.release()
-                print(f"[Node-{node_config.port}] 🔓 解锁: 任务结束，恢复空闲")
-
-        return StreamingResponse(generate(), media_type="application/x-ndjson")
-            
-    except Exception as e:
-        # 如果在获取锁或设置状态时出错，清理
-        if WORKER_LOCK.locked() and worker_state.current_session_id == request.session_id:
-             WORKER_LOCK.release()
-             worker_state.set_idle()
-        print(f"[Node-{node_config.port}] ❌ 执行异常: {e}")
-        return {"error": str(e)}
+async def chat_endpoint(request: ChatRequest):
+    async def generate():
+        # 传入完整的三元组
+        async for chunk in run_agent(
+            request.message, 
+            request.app_name, 
+            request.user_id, 
+            request.session_id
+        ):
+            yield json.dumps({"chunk": chunk}) + "\n"
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 @app.post("/api/cancel")
 async def cancel_endpoint(req: CancelRequest):
@@ -1334,34 +1200,22 @@ async def get_session_history(
 
 @app.on_event("startup")
 async def startup_event():
-    init_registry_db()
-    await create_agent()
-    register_self()
-    print(f"[Node-{node_config.port}] 🚀 服务已完全启动 (已加入 Swarm)")
+    """
+    [新架构] FastAPI 启动时初始化全局服务
+    不再初始化全局 Agent，Agent 由 SteeringSession 按需创建
+    """
+    global session_service, session_manager
+    print("[系统] 正在初始化全局服务...")
+    await create_agent()  # 初始化 session_service, sm, compactor_agent, session_manager
+    print("[系统] ✓ 全局服务初始化完成")
 
 @app.get("/")
 async def root():
     return FileResponse(os.path.join(os.path.dirname(__file__), "static", "index.html"))
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    deregister_self()
-
-def start_web_server(port: int):
-    print(f"Starting web server at http://localhost:{port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+def start_web_server():
+    print("Starting web server at http://localhost:8000")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--port', type=int, default=8000)
-    args = parser.parse_args()
-    
-    node_config.port = args.port
-    
-    # 【核心】注入环境变量，解耦工具
-    os.environ["ADK_CURRENT_PORT"] = str(args.port)
-    
-    print(f"=== 🚀 启动通用全能智能体节点 ===")
-    print(f"🏠 端口: {node_config.port}")
-    print(f"💾 隔离数据库: adk_sessions_port_{node_config.port}.db")
-    start_web_server(node_config.port)
+    start_web_server()
