@@ -140,6 +140,20 @@ class SteeringSession:
         
         # 🔑 自动加载 bash 作为第二个自带工具
         self.agent = agent  # 临时设置,供 _load_skill_tools 使用
+        
+        # 🟢 [Feature] 注入 Core Tool: File Editor (Anthropic Native)
+        try:
+            from skills.file_editor.tools import get_tools as get_file_tools
+            file_tools = get_file_tools(self.agent, self.session_service, {
+                "app_name": self.app_name, 
+                "user_id": self.user_id, 
+                "session_id": self.session_id
+            })
+            self.agent.tools.extend(file_tools)
+            print(f"[SteeringSession] 已加载 Core Tool: file_editor")
+        except Exception as e:
+            print(f"[SteeringSession] ⚠️ 加载 file_editor 失败: {e}")
+
         bash_tools = self._load_skill_tools('bash')
         print(f"[SteeringSession] 已自动加载 bash 工具: {[t.__name__ for t in bash_tools]}")
         
