@@ -137,6 +137,8 @@ google_adk_agent/
 ├── image/              # 演示图片资源
 └── start_demo_swarm.bat # Swarm 启动脚本
 
+```
+
 ---
 
 ## 📚 设计背后的故事 (Behind the Design)
