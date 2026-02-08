@@ -1,6 +1,6 @@
 [English](README.md) | [中文](README_CN.md)
 
-# Ciri: The Google ADK Agent from scratch by vibe coding ⚡
+# Ciri: An AI Agent from scratch by vibe coding ⚡
 
 
 > **"Vibe Coding" Reimagined.**
@@ -138,6 +138,16 @@ google_adk_agent/
 ├── image/              # Demo Images
 └── start_demo_swarm.bat # Swarm Startup Script
 ```
+
+---
+
+## 📚 Behind the Design
+
+The `MISC/tech_files` directory contains the complete evolution of Ciri from concept to implementation. These are the records of in-depth technical discussions with **Google Gemini 3 Pro**.
+
+Special thanks to **Google Gemini 3 Pro** for its unprecedented **2M+ Token Context Window** and **exceptional architectural design capabilities**. It was instrumental in building this complex Swarm architecture from scratch in such a short time. These discussion logs are invaluable resources for understanding Agentic AI design patterns and are highly recommended for reading.
+
+Also, a huge shoutout to **Antigravity** — the ultimate **Vibe Coding IDE**. Its powerful Agentic collaboration and seamless tool integration made the "from scratch" development process flow like water. In this project, Antigravity was not just an editor, but my true Pair Programmer.
 
 ---
 
