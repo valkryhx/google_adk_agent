@@ -1,15 +1,14 @@
-[English](README_en.md) | [中文](README.md)
+[English](README.md) | [中文](README_CN.md)
 
-# Ciri: The Google ADK Agent ⚡
+# Ciri: The Google ADK Agent from scratch by vibe coding ⚡
 
-![Project Banner](image/web展示.png)
 
 > **"Vibe Coding" Reimagined.**
 > 
 > **Ciri** is a modern AI Agent system built entirely from scratch based on the **Google ADK (Agent Development Kit)**.
 > She was created not just to be a powerful assistant, but to **demonstrate the infinite potential of Google ADK**.
 > Through Ciri, you can experience next-generation Agent features like **Dynamic Skills**, **Infinite Context**, and **Scalable Swarm**.
-
+![Project Banner](image/web展示.png)
 ---
 
 ## ✨ Project Vision
