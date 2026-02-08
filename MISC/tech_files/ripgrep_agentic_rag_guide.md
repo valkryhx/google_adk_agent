@@ -199,7 +199,7 @@ CODEBASE_SEARCH_TOOLS = {
     "list_files": list_files,
 }
 
-def get_tools():
+def get_tools(*args, **kwargs):
     return list(CODEBASE_SEARCH_TOOLS.values())
 ```
 
