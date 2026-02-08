@@ -14,6 +14,16 @@
 
 **Ciri** 旨在展示如何使用 Google ADK 构建一个**现代化**、**可扩展**且**具备“Vibe”** 的 AI 操作系统。我们希望通过这个开源项目，让更多开发者了解到 Google ADK 的强大之处，并激发大家去探索 Agentic AI 的未来。
 
+## 📚 设计背后的故事 (Behind the Design)
+
+本项目 `MISC/tech_files` 目录下完整记录了 Ciri 从概念到实现的演进过程。这些是通过与 **Google Gemini 3 Pro** 进行的深度技术讨论沉淀下来的。
+
+特别感谢 **Google Gemini 3 Pro** 惊人的 **2M+ Token 超长上下文能力** 和 **卓越的架构设计水平**。正是得益于它的辅助，我们才能在短时间内从零构建出如此复杂的 Swarm 架构。这些讨论日志是理解 Agentic AI 设计思路的绝佳资料，强烈推荐阅读。
+
+同时也要感谢 **Antigravity** —— 这个极致流畅的 **Vibe Coding IDE**。如果没有它强大的 Agentic 协作能力和无缝的工具集成，我无法如此快速地将这些复杂的想法转化为现实。在这个项目中，Antigravity 不仅仅是一个编辑器，更是我的 Pair Programmer。
+
+---
+
 ## ✨ 核心特性 (Key Features)
 
 ### 🚀 1. Agent Swarm (集群智能)
@@ -141,15 +151,7 @@ google_adk_agent/
 
 ---
 
-## 📚 设计背后的故事 (Behind the Design)
 
-本项目 `MISC/tech_files` 目录下完整记录了 Ciri 从概念到实现的演进过程。这些是通过与 **Google Gemini 3 Pro** 进行的深度技术讨论沉淀下来的。
-
-特别感谢 **Google Gemini 3 Pro** 惊人的 **2M+ Token 超长上下文能力** 和 **卓越的架构设计水平**。正是得益于它的辅助，我们才能在短时间内从零构建出如此复杂的 Swarm 架构。这些讨论日志是理解 Agentic AI 设计思路的绝佳资料，强烈推荐阅读。
-
-同时也要感谢 **Antigravity** —— 这个极致流畅的 **Vibe Coding IDE**。如果没有它强大的 Agentic 协作能力和无缝的工具集成，我无法如此快速地将这些复杂的想法转化为现实。在这个项目中，Antigravity 不仅仅是一个编辑器，更是我的 Pair Programmer。
-
----
 
 ## 🤝 贡献 (Contributing)
 欢迎 Star, Fork, 提交 PR 贡献新的 Skill 或优化 Swarm 调度算法！让我们一起探索 Agentic AI 的无限可能。
