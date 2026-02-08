@@ -6,6 +6,7 @@ import os
 import yaml
 from dataclasses import dataclass, field
 from typing import Optional, List
+import platform
 
 # 加载 YAML 配置
 try:
@@ -28,7 +29,7 @@ class AgentConfig:
     
     name: str = "Ciri"#"Dynamic_Expert"
     model: str =yaml_config.get("model") or "openai/qwen3-32b"
-    skills_path: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".claude", "skills")
+    skills_path: str = os.path.join(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")), "skills")
     
     # API 配置: 优先环境变量，其次 YAML，无硬编码默认值
     api_key: Optional[str] = field(default_factory=lambda: os.environ.get("DASHSCOPE_API_KEY", yaml_config.get("api_key")))
@@ -66,8 +67,8 @@ SYSTEM_PROMPT_TEMPLATE = """你是一个高级智能助手，具备动态加载�
 ## 核心工具与机制 (Core Tools & Mechanisms)
 1. **基础工具 (Built-in Tools)**:
    - `file_editor`: 始终可用。用于读取、创建、编辑文件。
-   - `skill_load(skill_id)`: 用于加载扩展技能。
-   - `bash`: 执行 Shell 命令 (**注意**: bash已经被加载，如果确实但需要可显式加载 `skill_load('bash')`)。
+   - `skill_load(skill_id)`: 用于加载扩展技能，始终可用。
+   - `bash`: 执行 Shell 命令 (内置工具，始终可用，无需重复加载)。
    - `transfer_to_agent`: 用于任务转移。
 
 2. **动态技能 (Dynamic Skills)**:
@@ -110,7 +111,7 @@ SYSTEM_PROMPT_TEMPLATE = """你是一个高级智能助手，具备动态加载�
 - MCP服务连接 → 推荐 `dynamic-mcp`
 
 **Bash (Shell) 工具的使用**:
-- `bash` 是一个强大的通用工具，通常通过 `skill_load('bash')` 加载。
+- `bash` 是一个强大的通用工具，作为内置核心工具始终可用。
 - **关键依赖**: 很多高级技能 (如 `web-search`) 底层依赖 `bash` 来执行脚本。
 - **灵活使用**: 当没有更合适的专用工具，或专用工具执行失败时，**完全可以使用 bash** 来完成任务 (如使用 grep 搜索，使用 curl 下载等)。
 - **注意**: 在 Windows 环境下，`bash` 可能对应 cmd 或 PowerShell，请根据 `os_info` 灵活调整命令。
@@ -166,6 +167,10 @@ Answer: 给出最终答案
 3. 任务进展：已完成和待完成的步骤
 4. 重要数据：文件路径、配置值等
 
+
+## 系统环境感知 (OS Context)
+{os_context}
+
 ## 运行环境
 当前操作系统: {os_info}
 当前时间: {current_time}
@@ -177,9 +182,37 @@ Answer: 给出最终答案
 """
 
 
+def get_os_specific_instructions() -> str:
+    """获取特定操作系统的指令提示"""
+    system = platform.system()
+    
+    if system == "Windows":
+        return """- **当前环境为 Windows**。
+- **命令行工具**: 默认使用 `cmd` 或 `PowerShell`。
+- **路径分隔符**: 使用反斜杠 `\\` (但在 Python 代码及字符串中推荐使用正斜杠 `/` 以避免转义问题)。
+- **常用命令映射**:
+    - `ls` -> `dir` (或 `dir /b`)
+    - `cat` -> `type`
+    - `grep` -> `findstr`
+    - `rm` -> `del` (删除文件), `rd /s /q` (删除目录)
+    - `touch` -> `echo. > file`
+    - `cp` -> `copy` / `xcopy`
+    - `mv` -> `move`
+- **注意**: 避免直接使用 `sudo`, `chmod` 等 Linux 专有命令。
+- **PowerShell**: 如果需要执行复杂脚本，可以显式使用 `powershell -Command "..."`。"""
+    
+    elif system in ["Linux", "Darwin"]:
+        return """- **当前环境为 Unix-like (Linux/macOS)**。
+- **命令行工具**: 使用标准的 Bash/Sh。
+- **路径分隔符**: 使用正斜杠 `/`。
+- **权限**: 如果遇到 Permission denied，可能需要提示用户或检查权限(注意: Agent 通常没有 root 权限，慎用 sudo)。"""
+    
+    else:
+        return f"- **当前环境**: {system} (通用配置)。请根据标准系统命令操作。"
+
+
 def build_system_prompt(config: AgentConfig, skill_manifests: str) -> str:
     """构建系统提示词"""
-    import platform
     import datetime
     
     # 获取操作系统信息
@@ -195,5 +228,6 @@ def build_system_prompt(config: AgentConfig, skill_manifests: str) -> str:
         skill_manifests=skill_manifests,
         max_retries=config.max_retries,
         os_info=os_info,
+        os_context=get_os_specific_instructions(),
         current_time=current_time
     )

@@ -311,4 +311,3 @@ class FullyCustomDbService(BaseSessionService):
                         db_session.session_metadata = json.dumps(session.state or {}, ensure_ascii=False)
         
         return event
-

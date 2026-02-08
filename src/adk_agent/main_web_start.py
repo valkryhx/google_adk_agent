@@ -8,7 +8,7 @@ ADK Dynamic Skills Agent - 主入口 (增强版)
 4. 结构化日志：详细的执行跟踪
 
 启动 web服务 ，在localhost:8000打开测试页面
-python -m skills.adk_agent.main_web_start
+python -m src.adk_agent.main_web_start
 """
 
 import asyncio
@@ -16,12 +16,12 @@ import os
 import sys
 
 # 将当前目录添加到路径
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from core.manager import SkillManager
-from core.executor import execute_python_code, execute_context_compact
-from core.logger import AgentLogger, logger
-from config import AgentConfig, build_system_prompt
+from src.adk_agent.core.manager import SkillManager
+from src.adk_agent.core.executor import execute_python_code, execute_context_compact
+from src.adk_agent.core.logger import AgentLogger, logger
+from src.adk_agent.config import AgentConfig, build_system_prompt
 from google.genai import types
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
@@ -244,7 +244,7 @@ def create_agent(custom_config: AgentConfig = None):
 
     # 创建 LlmAgent (注意：使用 LlmAgent 而非 Agent)
     # 创建 AutoCompactAgent (Sub-Agent)
-    from auto_compact_agent import AutoCompactAgent
+    from src.adk_agent.auto_compact_agent import AutoCompactAgent
     compactor_agent = AutoCompactAgent(config)
 
     # 创建主 Agent

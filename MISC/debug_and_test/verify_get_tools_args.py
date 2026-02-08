@@ -5,13 +5,13 @@ import importlib.util
 import traceback
 
 # Add project root to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 # Add the directory containing skills/adk_agent to path
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 
 try:
-    from skills.adk_agent.config import AgentConfig
+    from src.adk_agent.config import AgentConfig
     config = AgentConfig()
     
     skill_id = "bash"

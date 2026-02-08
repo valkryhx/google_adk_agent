@@ -16,10 +16,10 @@ Extracts text and tables from a PDF and outputs a formatted Markdown file.
 
 ```bash
 # Windows (Recommended)
-cmd /c set PYTHONIOENCODING=utf-8 && python skills/adk_agent/.claude/skills/pdf/scripts/extract_pdf_content.py [input_pdf] [output_md]
+cmd /c set PYTHONIOENCODING=utf-8 && python skills/pdf/scripts/extract_pdf_content.py [input_pdf] [output_md]
 
 # Unix/macOS
-python skills/adk_agent/.claude/skills/pdf/scripts/extract_pdf_content.py [input_pdf] [output_md]
+python skills/pdf/scripts/extract_pdf_content.py [input_pdf] [output_md]
 ```
 
 ### 2. Convert PDF to Images
@@ -27,10 +27,10 @@ Converts each page of a PDF into a PNG image. Useful for visual analysis or OCR.
 
 ```bash
 # Windows (Recommended)
-cmd /c set PYTHONIOENCODING=utf-8 && python skills/adk_agent/.claude/skills/pdf/scripts/convert_pdf_to_images.py [input_pdf] [output_directory]
+cmd /c set PYTHONIOENCODING=utf-8 && python skills/pdf/scripts/convert_pdf_to_images.py [input_pdf] [output_directory]
 
 # Unix/macOS
-python skills/adk_agent/.claude/skills/pdf/scripts/convert_pdf_to_images.py [input_pdf] [output_directory]
+python skills/pdf/scripts/convert_pdf_to_images.py [input_pdf] [output_directory]
 ```
 
 ### 3. Handle PDF Forms
@@ -39,30 +39,30 @@ python skills/adk_agent/.claude/skills/pdf/scripts/convert_pdf_to_images.py [inp
 Identifies fillable fields in a PDF and saves their metadata to JSON.
 ```bash
 # Windows (Recommended)
-cmd /c set PYTHONIOENCODING=utf-8 && python skills/adk_agent/.claude/skills/pdf/scripts/extract_form_field_info.py [input_pdf] [output_json]
+cmd /c set PYTHONIOENCODING=utf-8 && python skills/pdf/scripts/extract_form_field_info.py [input_pdf] [output_json]
 
 # Unix/macOS
-python skills/adk_agent/.claude/skills/pdf/scripts/extract_form_field_info.py [input_pdf] [output_json]
+python skills/pdf/scripts/extract_form_field_info.py [input_pdf] [output_json]
 ```
 
 #### Fill Fillable Fields
 Fills standard PDF form fields using values from a JSON file.
 ```bash
 # Windows (Recommended)
-cmd /c set PYTHONIOENCODING=utf-8 && python skills/adk_agent/.claude/skills/pdf/scripts/fill_fillable_fields.py [input_pdf] [field_values_json] [output_pdf]
+cmd /c set PYTHONIOENCODING=utf-8 && python skills/pdf/scripts/fill_fillable_fields.py [input_pdf] [field_values_json] [output_pdf]
 
 # Unix/macOS
-python skills/adk_agent/.claude/skills/pdf/scripts/fill_fillable_fields.py [input_pdf] [field_values_json] [output_pdf]
+python skills/pdf/scripts/fill_fillable_fields.py [input_pdf] [field_values_json] [output_pdf]
 ```
 
 #### Fill with Annotations
 Fills non-fillable PDFs by adding text annotations at specific coordinates.
 ```bash
 # Windows (Recommended)
-cmd /c set PYTHONIOENCODING=utf-8 && python skills/adk_agent/.claude/skills/pdf/scripts/fill_pdf_form_with_annotations.py [input_pdf] [fields_json] [output_pdf]
+cmd /c set PYTHONIOENCODING=utf-8 && python skills/pdf/scripts/fill_pdf_form_with_annotations.py [input_pdf] [fields_json] [output_pdf]
 
 # Unix/macOS
-python skills/adk_agent/.claude/skills/pdf/scripts/fill_pdf_form_with_annotations.py [input_pdf] [fields_json] [output_pdf]
+python skills/pdf/scripts/fill_pdf_form_with_annotations.py [input_pdf] [fields_json] [output_pdf]
 ```
 
 ## Examples
@@ -71,20 +71,20 @@ python skills/adk_agent/.claude/skills/pdf/scripts/fill_pdf_form_with_annotation
 **Action:**
 ```bash
 # Windows (Recommended)
-cmd /c set PYTHONIOENCODING=utf-8 && python skills/adk_agent/.claude/skills/pdf/scripts/extract_pdf_content.py "report.pdf" "report.md"
+cmd /c set PYTHONIOENCODING=utf-8 && python skills/pdf/scripts/extract_pdf_content.py "report.pdf" "report.md"
 
 # Unix/macOS
-python skills/adk_agent/.claude/skills/pdf/scripts/extract_pdf_content.py "report.pdf" "report.md"
+python skills/pdf/scripts/extract_pdf_content.py "report.pdf" "report.md"
 ```
 
 **User:** "Convert 'presentation.pdf' to images in the 'slides' folder."
 **Action:**
 ```bash
 # Windows (Recommended)
-cmd /c set PYTHONIOENCODING=utf-8 && python skills/adk_agent/.claude/skills/pdf/scripts/convert_pdf_to_images.py "presentation.pdf" "slides"
+cmd /c set PYTHONIOENCODING=utf-8 && python skills/pdf/scripts/convert_pdf_to_images.py "presentation.pdf" "slides"
 
 # Unix/macOS
-python skills/adk_agent/.claude/skills/pdf/scripts/convert_pdf_to_images.py "presentation.pdf" "slides"
+python skills/pdf/scripts/convert_pdf_to_images.py "presentation.pdf" "slides"
 ```
 
 ## Scripts Reference

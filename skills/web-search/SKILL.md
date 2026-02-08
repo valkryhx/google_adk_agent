@@ -21,7 +21,7 @@ This skill provides capabilities to search the web and extract content from spec
 To search for information, you **must** have the `bash` skill loaded and use the `bash` tool to run the `search.py` script.
 
 ```bash
-python skills/adk_agent/.claude/skills/web-search/scripts/search.py --query "your search query"
+python skills/web-search/scripts/search.py --query "your search query"
 ```
 
 **Optional Arguments:**
@@ -34,7 +34,7 @@ python skills/adk_agent/.claude/skills/web-search/scripts/search.py --query "you
 To read the content of a specific URL, run the `search.py` script with the `--url` argument.
 
 ```bash
-python skills/adk_agent/.claude/skills/web-search/scripts/search.py --url "https://example.com/article"
+python skills/web-search/scripts/search.py --url "https://example.com/article"
 ```
 
 ## Examples
@@ -42,10 +42,10 @@ python skills/adk_agent/.claude/skills/web-search/scripts/search.py --url "https
 **User:** "What are the latest features in Python 3.13?"
 **Action:**
 1. `skill_load(skill_id="bash")` (if not already loaded)
-2. `bash(command="python skills/adk_agent/.claude/skills/web-search/scripts/search.py --query \"Python 3.13 new features\" --include-answer")`
+2. `bash(command="python skills/web-search/scripts/search.py --query \"Python 3.13 new features\" --include-answer")`
 
 **User:** "Read this article for me: https://example.com/long-article"
 **Action:**
 ```bash
-python skills/adk_agent/.claude/skills/web-search/scripts/search.py --url "https://example.com/long-article"
+python skills/web-search/scripts/search.py --url "https://example.com/long-article"
 ```

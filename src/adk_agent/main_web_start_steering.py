@@ -26,10 +26,10 @@ from typing import Dict, Tuple, Optional, Any, List
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import argparse
-from skills.adk_agent.core.manager import SkillManager
-from skills.adk_agent.core.executor import execute_python_code
-from skills.adk_agent.core.logger import AgentLogger, logger
-from skills.adk_agent.config import AgentConfig, build_system_prompt
+from src.adk_agent.core.manager import SkillManager
+from src.adk_agent.core.executor import execute_python_code
+from src.adk_agent.core.logger import AgentLogger, logger
+from src.adk_agent.config import AgentConfig, build_system_prompt
 import litellm
 from litellm import ContextWindowExceededError
 from google.genai import types
@@ -41,9 +41,9 @@ import uvicorn
 import datetime
 
 from google.adk.agents import LlmAgent
-from src.core.custom_table_db_service import FullyCustomDbService
+from src.shared.db.custom_table_db_service import FullyCustomDbService
 from google.adk.models.lite_llm import LiteLlm
-from skills.adk_agent.auto_compact_agent import AutoCompactAgent
+from src.adk_agent.auto_compact_agent import AutoCompactAgent
 
 
 # SessionKey = (app_name, user_id, session_id)
@@ -287,6 +287,7 @@ class SteeringSession:
         ]
         
         loaded_tools = []
+        # 获取当前已加载工具的名称集合
         existing_names = {t.__name__ for t in self.agent.tools if hasattr(t, '__name__')}
 
         for tool_file in tool_files:
@@ -320,10 +321,22 @@ class SteeringSession:
                             for tool in tools:
                                 # 确保是异步函数才能被 agent 正确执行 (agent 内部会检查 iscoroutinefunction)
                                 # 这里 agent 框架会自动处理，我们只需要 extend
+                                
+                                # [FIX] 检查是否重复加载
+                                if hasattr(tool, '__name__') and tool.__name__ in existing_names:
+                                    print(f"[{self.key}] ⚠️ 跳过重复工具: {tool.__name__} (from {skill_id})")
+                                    continue
+
                                 wrapped_tools.append(tool)
                                 
-                            self.agent.tools.extend(wrapped_tools)
-                            loaded_tools.extend(wrapped_tools)
+                            if wrapped_tools:
+                                self.agent.tools.extend(wrapped_tools)
+                                loaded_tools.extend(wrapped_tools)
+                                # 更新 existing_names 以防止同一次加载中的重复（虽然不太可能）
+                                for t in wrapped_tools:
+                                    if hasattr(t, '__name__'):
+                                        existing_names.add(t.__name__)
+                                        
                 except Exception as e:
                      print(f"Failed to load tools from {tool_file}: {e}")
         return loaded_tools
@@ -780,7 +793,7 @@ class SteeringSession:
                 # 从 agent 的 sub_agents 中获取 compactor
                 compactor = None
                 if self.agent.sub_agents:
-                    from skills.adk_agent.auto_compact_agent import AutoCompactAgent # Import here to avoid circular dependency
+                    from src.adk_agent.auto_compact_agent import AutoCompactAgent # Import here to avoid circular dependency
                     for sub in self.agent.sub_agents:
                         if isinstance(sub, AutoCompactAgent):
                             compactor = sub

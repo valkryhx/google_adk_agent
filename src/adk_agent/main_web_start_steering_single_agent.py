@@ -6,7 +6,7 @@ ADK Dynamic Skills Agent - 单智能体主入口 (多租户并发安全版)
 2. claudecode风格的steering实时文本打断增强：在流式输出循环中增加强制检查。
 3. AOP 拦截：使用 before_model/tool callback。
 
-python -m skills.adk_agent.main_web_start_steering_single_agent
+python -m src.adk_agent.main_web_start_steering_single_agent
 """
 
 import asyncio
@@ -21,10 +21,10 @@ from typing import Dict, Tuple, Optional, Any, List
 # 将当前目录添加到路径
 #sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from skills.adk_agent.core.manager import SkillManager
-from skills.adk_agent.core.executor import execute_python_code
-from skills.adk_agent.core.logger import AgentLogger, logger
-from skills.adk_agent.config import AgentConfig, build_system_prompt
+from src.adk_agent.core.manager import SkillManager
+from src.adk_agent.core.executor import execute_python_code
+from src.adk_agent.core.logger import AgentLogger, logger
+from src.adk_agent.config import AgentConfig, build_system_prompt
 import litellm
 from litellm import ContextWindowExceededError
 from google.genai import types
@@ -35,9 +35,9 @@ from pydantic import BaseModel
 import uvicorn
 
 from google.adk.agents import LlmAgent
-from src.core.custom_table_db_service import FullyCustomDbService
+from src.shared.db.custom_table_db_service import FullyCustomDbService
 from google.adk.models.lite_llm import LiteLlm
-from skills.adk_agent.auto_compact_agent import AutoCompactAgent
+from src.adk_agent.auto_compact_agent import AutoCompactAgent
 
 
 # SessionKey = (app_name, user_id, session_id)
@@ -611,7 +611,7 @@ class SteeringSession:
                 # 从 agent 的 sub_agents 中获取 compactor
                 compactor = None
                 if self.agent.sub_agents:
-                    from skills.adk_agent.auto_compact_agent import AutoCompactAgent # Import here to avoid circular dependency
+                    from src.adk_agent.auto_compact_agent import AutoCompactAgent # Import here to avoid circular dependency
                     for sub in self.agent.sub_agents:
                         if isinstance(sub, AutoCompactAgent):
                             compactor = sub

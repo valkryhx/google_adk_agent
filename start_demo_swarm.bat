@@ -7,7 +7,7 @@ setlocal enabledelayedexpansion
 set LEADER_PORT=8000
 set WORKER_COUNT=4
 set START_PORT=8001
-set MODULE_PATH=skills.adk_agent.main_web_start_steering
+set MODULE_PATH=src.adk_agent.main_web_start_steering
 :: ==========================================
 
 :: 切换到脚本所在目录，防止路径错误

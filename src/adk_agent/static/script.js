@@ -396,7 +396,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             // 2. 渲染新内容 (+ cursor,除非是历史消息)
-            const html = renderBlocks(blocks);
+            const html = renderBlocks(blocks, isHistory);
             if (isHistory) {
                 messageContent.innerHTML = html; // 历史消息不显示光标
             } else {
@@ -483,7 +483,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function renderBlocks(blocks) {
+    function renderBlocks(blocks, isHistory = false) {
         let html = '';
 
         for (let i = 0; i < blocks.length; i++) {
@@ -507,89 +507,83 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>`;
 
                 // 2. Swarm Visual Extensions (History Cards)
-                if (block.tool_name === 'dispatch_task' && block.tool_args) {
-                    const args = block.tool_args;
-                    const taskPreview = args.task_instruction ? (args.task_instruction.substring(0, 50) + '...') : 'Swarm Task';
-                    const workerInfo = args.target_port ? `Worker-${args.target_port}` : 'Swarm-Auto';
+                // Only render these when loading from history. 
+                // In live mode, the Swarm Events (swarm_placeholder) will handle the UI.
+                if (isHistory) {
+                    if (block.tool_name === 'dispatch_task' && block.tool_args) {
+                        const args = block.tool_args;
+                        const taskPreview = args.task_instruction ? (args.task_instruction.substring(0, 50) + '...') : 'Swarm Task';
+                        const workerInfo = args.target_port ? `Worker-${args.target_port}` : 'Swarm-Auto';
 
-                    // Try to peek next block for result to display inside card too
-                    let resultHtml = '';
-                    if (i + 1 < blocks.length && (blocks[i + 1].type === 'tool_result' || blocks[i + 1].type === 'function_response')) {
-                        const resultBlock = blocks[i + 1];
-                        // Optionally consume it? For now, let's just peek and show it inside card too.
-                        // But if we show it inside, maybe we should skip the next block?
-                        // Let's NOT skip, to be safe. Just duplicate info is better than missing.
-                        // Or better: render it inside card and rely on user expanding it.
-                        resultHtml = `<details class="swarm-logs-wrapper">
-                                         <summary>Execution Result</summary>
-                                         <pre class="swarm-terminal">${resultBlock.content}</pre>
-                                       </details>`;
-                    }
-
-                    html += `<div class="swarm-card success" style="margin: 10px 0;">
-                                <div class="swarm-card-header">
-                                    <div class="swarm-status-icon"><span class="material-symbols-outlined">history</span></div>
-                                    <div class="swarm-info">
-                                        <div class="swarm-worker-id">${workerInfo}</div>
-                                        <div class="swarm-task-preview" title="${args.task_instruction}">${taskPreview}</div>
-                                    </div>
-                                    <div class="swarm-meta">History</div>
-                                </div>
-                                ${resultHtml}
-                            </div>`;
-
-                } else if (block.tool_name === 'dispatch_batch_tasks' && block.tool_args) {
-                    const tasks = block.tool_args.tasks || [];
-
-                    // Peek for batch results
-                    let batchResults = {};
-                    if (i + 1 < blocks.length && (blocks[i + 1].type === 'tool_result' || blocks[i + 1].type === 'function_response')) {
-                        const nextBlock = blocks[i + 1];
-
-                        // [New] Use clean result field if available!
-                        const content = nextBlock.tool_result_clean || nextBlock.content || '';
-
-                        // Regex now expects CLEAN string with newlines
-                        const regex = /--- 任务 (\d+) 结果 ---[\r\n]+([\s\S]*?)(?=[\r\n]+--- 任务|[\r\n]+$|$)/g;
-                        let match;
-                        while ((match = regex.exec(content)) !== null) {
-                            const taskIndex = parseInt(match[1]) - 1;
-                            batchResults[taskIndex] = match[2].trim();
-                        }
-                    }
-
-                    tasks.forEach((task, index) => {
-                        const taskPreview = task.substring(0, 50) + '...';
-                        const result = batchResults[index];
-
+                        // Try to peek next block for result to display inside card too
                         let resultHtml = '';
-                        if (result) {
+                        if (i + 1 < blocks.length && (blocks[i + 1].type === 'tool_result' || blocks[i + 1].type === 'function_response')) {
+                            const resultBlock = blocks[i + 1];
                             resultHtml = `<details class="swarm-logs-wrapper">
-                                            <summary>Result (History)</summary>
-                                            <pre class="swarm-terminal">${result}</pre>
-                                          </details>`;
-                        } else {
-                            resultHtml = `<div style="font-size:12px; color:#999; padding:0 10px 5px;">(No individual result parsed)</div>`;
+                                             <summary>Execution Result</summary>
+                                             <pre class="swarm-terminal">${resultBlock.content}</pre>
+                                           </details>`;
                         }
 
                         html += `<div class="swarm-card success" style="margin: 10px 0;">
                                     <div class="swarm-card-header">
                                         <div class="swarm-status-icon"><span class="material-symbols-outlined">history</span></div>
                                         <div class="swarm-info">
-                                            <div class="swarm-worker-id">Batch-Worker-${index + 1}</div>
-                                            <div class="swarm-task-preview" title="${task}">${taskPreview}</div>
+                                            <div class="swarm-worker-id">${workerInfo}</div>
+                                            <div class="swarm-task-preview" title="${args.task_instruction}">${taskPreview}</div>
                                         </div>
                                         <div class="swarm-meta">History</div>
                                     </div>
                                     ${resultHtml}
                                 </div>`;
-                    });
 
-                    // [Dev Mode] Do not skip next block. Let it render as raw tool result too.
-                    // if (Object.keys(batchResults).length > 0) {
-                    //     i++; // Skip next block
-                    // }
+                    } else if (block.tool_name === 'dispatch_batch_tasks' && block.tool_args) {
+                        const tasks = block.tool_args.tasks || [];
 
+                        // Peek for batch results
+                        let batchResults = {};
+                        if (i + 1 < blocks.length && (blocks[i + 1].type === 'tool_result' || blocks[i + 1].type === 'function_response')) {
+                            const nextBlock = blocks[i + 1];
+
+                            // [New] Use clean result field if available!
+                            const content = nextBlock.tool_result_clean || nextBlock.content || '';
+
+                            // Regex now expects CLEAN string with newlines
+                            const regex = /--- 任务 (\d+) 结果 ---[\r\n]+([\s\S]*?)(?=[\r\n]+--- 任务|[\r\n]+$|$)/g;
+                            let match;
+                            while ((match = regex.exec(content)) !== null) {
+                                const taskIndex = parseInt(match[1]) - 1;
+                                batchResults[taskIndex] = match[2].trim();
+                            }
+                        }
+
+                        tasks.forEach((task, index) => {
+                            const taskPreview = task.substring(0, 50) + '...';
+                            const result = batchResults[index];
+
+                            let resultHtml = '';
+                            if (result) {
+                                resultHtml = `<details class="swarm-logs-wrapper">
+                                                <summary>Result (History)</summary>
+                                                <pre class="swarm-terminal">${result}</pre>
+                                              </details>`;
+                            } else {
+                                resultHtml = `<div style="font-size:12px; color:#999; padding:0 10px 5px;">(No individual result parsed)</div>`;
+                            }
+
+                            html += `<div class="swarm-card success" style="margin: 10px 0;">
+                                        <div class="swarm-card-header">
+                                            <div class="swarm-status-icon"><span class="material-symbols-outlined">history</span></div>
+                                            <div class="swarm-info">
+                                                <div class="swarm-worker-id">Batch-Worker-${index + 1}</div>
+                                                <div class="swarm-task-preview" title="${task}">${taskPreview}</div>
+                                            </div>
+                                            <div class="swarm-meta">History</div>
+                                        </div>
+                                        ${resultHtml}
+                                    </div>`;
+                        });
+                    }
                 }
             } else if (block.type === 'tool_result' || block.type === 'function_response') {
                 console.log('Rendering tool_result block:', block);
