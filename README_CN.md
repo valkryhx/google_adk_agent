@@ -7,7 +7,7 @@
 > **Ciri** 是一个完全基于 **Google ADK (Agent Development Kit)** 从零构建的现代化 AI Agent 系统。
 > 她的诞生不仅是为了提供一个强大的助手，更是为了**演示 Google ADK 的无限潜力**。
 > 通过 Ciri，你可以体验到 **Dynamic Skills (动态技能扩展)**、**Infinite Context (无限上下文)** 以及 **Scalable Swarm (大规模集群协作)** 等下一代 Agent 核心特性。
-![Project Banner](image/web展示.png)
+
 ---
 
 ## ✨ 项目愿景 (Project Vision)
