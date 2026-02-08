@@ -1,4 +1,28 @@
-#pip install google-adk==1.21.0
+# Core Framework
 google-adk
-# 额外安装
 google-genai
+
+# Web Service
+fastapi
+uvicorn
+
+# Database (Async)
+sqlalchemy
+aiosqlite
+
+# LLM & Configuration
+litellm
+pydantic
+PyYAML
+nest_asyncio
+
+# Skills: Data Analysis & Visualization
+pandas
+numpy
+matplotlib
+
+# Skills: Web Search
+tavily-python
+
+# Skills: PDF Processing
+pdfplumber

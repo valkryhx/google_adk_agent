@@ -1,769 +1,148 @@
-# Google ADK Hello World
+[English](README_en.md) | [中文](README.md)
 
-本项目是一个使用 Google ADK (Agent Development Kit) 的简单示例，展示了如何集成 LiteLlm (Qwen 模型) 和 MCP (Model Context Protocol) 工具来构建智能体。
+# Ciri: The Google ADK Agent ⚡
 
-## 项目简介
+![Project Banner](image/web展示.png)
 
-`google_adk_helloworld` 演示了以下核心功能：
-- **LiteLlm 集成**: 使用通义千问 (Qwen) 模型作为智能体的后端 LLM。
-- **工具使用**:
-  - **简单工具**: 本地定义的 Python 函数，如获取当前时间 (`get_current_time`) 和 JSON 解析 (`parse_llm_json`)。
-  - **MCP 工具**: 集成 Model Context Protocol 工具 (`McpToolset`)，通过 HTTP 连接与外部 MCP 服务交互。
-- **流式输出**: 支持 LLM 响应的流式传输 (Streaming)。
-- **会话管理**: 使用 `InMemorySessionService` 管理智能体会话。
+> **"Vibe Coding" Reimagined.**
+> 
+> **Ciri** 是一个完全基于 **Google ADK (Agent Development Kit)** 从零构建的现代化 AI Agent 系统。
+> 她的诞生不仅是为了提供一个强大的助手，更是为了**演示 Google ADK 的无限潜力**。
+> 通过 Ciri，你可以体验到 **Dynamic Skills (动态技能扩展)**、**Infinite Context (无限上下文)** 以及 **Scalable Swarm (大规模集群协作)** 等下一代 Agent 核心特性。
 
-## 环境要求
+---
 
-- Python 3.8+
-- `google-adk`
+## ✨ 项目愿景 (Project Vision)
 
-## 安装
+**Ciri** 旨在展示如何使用 Google ADK 构建一个**现代化**、**可扩展**且**具备“Vibe”** 的 AI 操作系统。我们希望通过这个开源项目，让更多开发者了解到 Google ADK 的强大之处，并激发大家去探索 Agentic AI 的未来。
 
-1. 克隆本项目到本地。
-2. 安装依赖：
+## ✨ 核心特性 (Key Features)
 
+### 🚀 1. Agent Swarm (集群智能)
+不再单打独斗。Ciri 实现了完整的 **Leader-Worker** 架构：
+- **动态扩缩容 (Auto-Scaling)**:  通过 `start_demo_swarm.bat` 一键启动 Leader 和多个 Worker 节点。
+- **负载均衡 (Load Balancing)**: Leader 智能根据 Worker 的忙闲状态分发任务。
+- **并行执行 (Parallelism)**: 使用 `dispatch_batch_tasks` 同时并行处理多个独立的复杂任务（如同时调研 5 个竞品）。
+- **上下文隔离 (Context Isolation)**: 将繁琐的试错步骤（CoT、Code Debugging）隔离在 Worker 节点，Leader 只接收最终结果，保持主上下文清爽。
+
+### 🧩 2. Dynamic Skills (动态技能架构)
+拒绝臃肿。Ciri 启动时**只携带最基础的元工具**，根据任务需求**即时 (Just-in-Time)** 加载所需技能：
+- **热插拔**: 无需重启，运行时动态挂载/卸载 Python 工具包。
+- **按需加载**: 用完即走，通过 `compactor` 自动卸载不常用技能，节省资源。
+- **支持广泛**: 涵盖文件操作、代码执行、网络搜索、数据库管理等。
+
+### 🧠 3. Infinite Context (无限上下文)
+基于 `compactor` 技能的**有损压缩技术**，让 Ciri 拥有"无限"的长期记忆：
+- **智能摘要**: 当上下文达到阈值（如 700 turn），自动触发 `AutoCompactAgent` 生成精炼摘要。
+- **无感切换**: 用户几乎感知不到压缩过程，但 Agent 依然记得之前的关键信息。
+- **Token 优化**: 始终保持在 LLM 的最佳性能窗口内运行。
+
+### ⚡ 4. Vibe Coding UI (现代化界面)
+- **TUI (终端界面)**: 极客风格的命令行界面，支持流式输出和实时状态监控。
+- **Web UI**: Google 风格的响应式 Web 界面，完美展示 **Interleaved Thinking (交错思考)** 过程——你可以实时看到 Ciri 在 "思考 -> 调工具 -> 拿结果 -> 再思考" 的完整心路历程。
+
+---
+
+## 🛠️ 快速开始 (Getting Started)
+
+### 环境要求
+- Windows / Linux / macOS
+- Python 3.10+
+- [Git](https://git-scm.com/)
+
+### 1. 安装依赖
 ```bash
+git clone https://github.com/your-repo/google_adk_agent.git
+cd google_adk_agent
 pip install -r requirements.txt
 ```
 
-或者直接安装 `google-adk`：
+### 2. 配置 API Key
+在项目根目录创建或修改 `private_key.yaml` (或其他配置文件)，填入你的 LLM API Key (推荐使用 DashScope Qwen 或 OpenAI)。
 
-```bash
-pip install google-adk
+### 3. 启动 Swarm 集群 (推荐)
+我们提供了一个一键启动脚本，会自动启动 1 个 Head Leader 和 4 个 Worker 节点：
+
+```cmd
+.\start_demo_swarm.bat
 ```
 
-## 配置
-
-项目主要配置在 `src/simple_agent.py` 中：
-
-- **LLM 配置**: 默认配置为使用 DashScope (阿里云) 的 Qwen 模型。
-  - `DASHSCOPE_API_KEY`: 需要替换为你自己的 API Key (代码中包含示例 Key，请勿在生产环境使用)。
-  - `model`: 指定模型名称，如 `openai/qwen3-32b`。
-- **MCP 服务**: 默认连接到 `http://localhost:9014/mcp`。请确保相应的 MCP 服务已启动。
-
-## 运行
-
-1. **启动 MCP 服务** (如果需要测试 MCP 功能):
-   请参考参数 MCP 项目的说明，启动容器服务和 mock service。
-
-2. **运行智能体**:
-
-```bash
-python -m src.simple_agent
-```
-
-## 代码结构
-
-- `src/simple_agent.py`: 主程序入口。定义了 LLM、Agent、Tools 以及运行逻辑。
-- `requirements.txt`: 项目依赖列表。
-- `模型服务curl测试`: 包含用于测试 LLM 服务的 curl 命令示例。
-
-## 示例功能
-
-在 `src/simple_agent.py` 的底部，有几个测试用例（部分被注释掉）：
-
-1. **简单工具测试**: 询问当前时间。
-2. **MCP 工具测试**: 查询工单参数修改记录。
-3. **参数修改草稿**: 生成参数修改建议。
-4. **生成工单**: 结合简单工具（时间）和 MCP 工具生成工单信息。
-
-你可以取消注释相应的代码块来运行不同的测试场景。
-
-## 注意事项
-
-- 代码中包含了一些硬编码的 API Key 和 URL，实际使用时请根据环境进行配置。
-- `nest_asyncio` 用于在 Jupyter Notebook 环境中运行，脚本运行时通常不需要。
-
-## Skills 架构详解
-
-本项目采用了动态技能加载架构 (`Dynamic Skills Architecture`)，允许 Agent 根据任务需求按需加载工具集。
-
-### 核心机制
-- **按需加载**: 初始状态下 Agent 仅拥有 `skill_load` 工具。
-- **动态挂载**: 当 Agent 决定使用某个技能时，调用 `skill_load(skill_id)`，系统会动态导入对应的 `tools.py` 并挂载到 Agent 实例。
-- **资源管理**: 配合 `compactor` 技能，可以在任务结束后卸载工具并压缩上下文，保持轻量化运行。
-
-### 可用技能清单
-1.  **codebase_search**: 代码库搜索工具，支持模糊搜索和精确查找。
-2.  **data_analyst**: 数据分析工具，提供 Python 代码执行环境 (REPL) 用于处理 CSV/Pandas 数据。
-3.  **bash**: 命令行执行工具，用于文件操作和系统命令。
-4.  **web_search**: 网络搜索工具，用于获取实时信息。
-5.  **compactor**: 上下文压缩工具，用于管理 Token 消耗和重置会话状态。
-6.  **param_mcp**: 参数 MCP 工具集成，通过 HTTP 连接与外部参数 MCP 服务交互，提供参数管理、工单生成等功能。
-7.  **dex**: 异步任务管理工具，支持长耗时任务的后台执行、状态追踪和多租户数据隔离。
+启动后，访问 **http://localhost:8000** 即可开始体验。
 
 ---
 
-## Compactor 技能深度解析
+## 🧩 核心技能详解 (Core Skills Deep Dive)
 
-`compactor` 是维持 Agent 长期运行的关键技能，负责在对话过长时对上下文进行"有损压缩"。
+### 1. Agent Team (Swarm Orchestrator)
+这是 Ciri 的"指挥官"技能。加载此技能后，Agent 获得指挥整个集群的能力。
 
-### 工作原理
-1.  **生成摘要**: 调用 LLM 对当前对话历史生成一段精炼的摘要 (Summary)。
-2.  **智能截断**: 
-    - 保留 System Message (维持人设和核心指令)。
-    - 保留当前的 Tool Call (即 `smart_compact` 的调用)，确保 Agent 能正确接收到工具执行结果。
-    - 插入一条 User 占位消息，包含摘要信息。
-    - 移除中间的所有历史消息。
-3.  **状态重置**: 卸载除 `skill_load` 外的所有临时工具。
+*   **`dispatch_task`**: 将单个复杂任务（如"写一个贪吃蛇游戏"）分派给空闲 Worker。
+*   **`dispatch_batch_tasks`**: 并行分派多个任务（如"同时分析 Apple、Google、Microsoft 的财报"）。
 
-### 排查与修复实录 (Debug Journey)
+**场景示例**:
+> **User**: "帮我写一个即时通讯软件，包括前端 React 和后端 Python。"
+> **Leader (Ciri)**: 
+> 1. 思考拆解任务。
+> 2. 调用 `dispatch_batch_tasks`:
+>    - Worker 8001: "编写 Python FastAPI 后端 websocket 接口"
+>    - Worker 8002: "编写 React 聊天页面组件"
+> 3. 收集结果并向用户汇报。
 
-在开发 `smart_compact` 工具时，我们遇到了几个棘手的技术问题，以下是详细的排查过程：
+### 2. Dynamic MCP (元工具)
+实现了 Model Context Protocol (MCP) 的动态加载。无需重启 Agent 即可连接任意 MCP 服务。
 
-#### 1. Event 结构访问错误
-- **现象**: 工具日志显示 `[WARN] 未找到当前 Tool Call`，导致截断逻辑被跳过。
-- **排查**: 打印 `Event` 对象结构后发现，ADK 的 `Event` 对象没有直接的 `role` 属性，`role` 实际上嵌套在 `content` 属性中。
-- **修复**: 将代码中的 `evt.role` 修改为 `evt.content.role` (并增加了空值检查)。
+*   **连接**: `connect_mcp(url="http://localhost:9014/mcp")`
+*   **特性**: 自动检测 SSE/HTTP 协议，智能处理认证 Header。
 
-#### 2. 占位符构造失败
-- **现象**: 日志显示 `[WARN] 无法构造占位 User 消息`。
-- **排查**: 占位符的构造依赖于从历史记录中克隆一个 System 消息作为模板。由于问题 1 中的 Role 识别错误，`kept_events` 列表为空，导致无法找到模板。
-- **修复**: 
-    - 修复 System 消息的收集逻辑。
-    - 增加了 Fallback 机制：如果没有 System 消息，则尝试使用历史记录中的第一条任意消息作为模板，并强制修改其 Role 为 `user`。
+![Dynamic MCP 架构](image/动态mcp-skill.png)
 
-#### 3. 截断不生效 (Persistence Issue)
-- **现象**: 工具日志显示 "已移除 14 条消息"，但在下一轮对话中，Event 数量依然未减少。
-- **排查**: 
-    - 最初怀疑是 `session` 对象未保存。
-    - 深入分析发现，Python 的对象引用机制是罪魁祸首。代码中使用 `session.events = new_events` 赋值了一个新列表。
-    - 然而，ADK 的 `Runner` 或底层框架可能持有原 `events` 列表的引用。简单的赋值操作只改变了 `session` 对象上的引用，并未改变 `Runner` 手中的列表。
-- **修复**: 采用**原地修改** (In-place Update) 策略。
-    ```python
-    # 错误写法: session.events = new_events
-    
-    # 正确写法: 原地清空并追加
-    if hasattr(session.events, 'clear') and hasattr(session.events, 'extend'):
-        session.events.clear()
-        session.events.extend(new_events)
-    else:
-        session.events[:] = new_events
-    ```
-    这样确保了所有持有该列表引用的对象都能感知到内容的变更。
+### 3. Compactor (记忆压缩)
+后台默默工作的"清洁工"。
+*   **触发机制**: 基于 Token 计数或对话轮数（Turn Count）。
+*   **工作流**: 
+    1. 暂停当前对话。
+    2. 启动子 Agent 对历史记录进行摘要。
+    3. 替换历史消息为 `[System Summary]` + `[Last few messages]`。
+    4. 恢复对话。
 
-#### 4. UnboundLocalError (Scope Issue)
-- **现象**: `main.py` 报错 `UnboundLocalError: local variable 'types' referenced before assignment`。
-- **排查**: 在 `run_agent` 函数内部的条件块中使用了 `from google.genai import types`。Python 的作用域规则决定了如果函数内有赋值（包括 import），该变量即被视为局部变量。当条件块未执行时，该局部变量未定义，导致后续引用全局同名模块时出错。
-- **修复**: 移除函数内部的 import，统一使用文件顶部的全局 import。
-
-#### 5. Runner 参数错误
-- **现象**: `AutoCompactAgent` 报错 `TypeError: Runner.__init__() got an unexpected keyword argument 'user_id'`。
-- **排查**: `Runner` 的构造函数签名已变更，不再接受 `user_id` 和 `session_id`。此外，`runner.run_async` 返回的是一个异步生成器，不能直接 await。
-- **修复**: 
-    - 修正 `Runner` 实例化代码。
-    - 使用 `async for` 遍历 `run_async` 的结果。
-
-#### 6. Session 持久化失效 (Deepcopy Trap) [CRITICAL]
-- **现象**: 即使使用了原地修改 (`clear` + `extend`)，`main.py` 中的自动压缩在下一轮对话中依然失效。
-- **排查**: 深入阅读 `InMemorySessionService` 源码，发现其 `get_session` 方法返回的是 Session 对象的**深拷贝 (deepcopy)**。
-    ```python
-    # in_memory_session_service.py
-    copied_session = copy.deepcopy(session)
-    return ... copied_session
-    ```
-    这意味着我们在 `main.py` 中拿到的 `session` 对象只是一个副本，对其做的任何修改（包括原地修改）都不会影响 `InMemorySessionService` 内部存储的真实数据。
-- **修复**: 
-    - 针对 `InMemorySessionService` 增加特殊处理逻辑。
-    - 绕过 `get_session` 接口，直接访问并修改 `session_service.sessions` 字典中的内部 Session 对象。
-    ```python
-    if isinstance(session_service, InMemorySessionService):
-        stored_session = session_service.sessions[app][user][id]
-        stored_session.events.clear()
-        stored_session.events.extend(new_events)
-    ```
-
-## Web 展示
-
-本项目提供了一个基于 FastAPI 的 Web 界面，支持流式对话和工具调用过程的直观展示。
-
-### 核心改进
-- **结构化流式输出**: 后端将文本、工具调用和工具结果封装为结构化 JSON 块，前端实时解析并渲染。
-- **工具结果折叠**: 为了提升阅读体验，所有的工具执行结果 (`Tool Result`) 默认折叠，用户可点击展开查看详情。
-- **响应式设计**: 采用 Google 风格的 UI 设计，适配不同屏幕尺寸。前端代码位于skills\adk_agent\static 。
-
-### 界面预览
-
-![Web 展示](image/web展示.png)
-*图：Web 界面展示，包含流式对话和折叠后的工具结果*
-
-### 启动 Web 服务
-
-```bash
-python -m skills.adk_agent.main_web_start
-```
-启动后访问 `http://localhost:8000` 即可开始体验。
+### 4. Dex (异步任务执行)
+专为长耗时任务设计。
+*   **功能**: 在后台独立进程中运行 Python 脚本或系统命令。
+*   **场景**: "帮我扫描整个 D 盘的 PDF 文件" -> Agent 提交任务给 Dex -> 立即返回 "已开始扫描，您可以继续问我别的问题" -> 任务在后台默默运行。
 
 ---
 
-## Interleaved Thinking (交错思考) 原理
+## 🎨 交互原理 (Interleaved Thinking)
 
-本项目支持 Agent 实现 "思考(Text) - 工具调用(Tool Call) - 工具结果(Tool Result)" 的交错输出效果。
+本项目完美支持并可视化了 **Interleaved Thinking** 模式。不同于传统的 "一次思考，一次行动"，Ciri 可以在单次回复中多次穿插思考和行动。
 
-### 核心机制
-- **结构化 Parts**: 底层模型（如 Gemini）返回的 `Content` 对象包含一个 `parts` 列表，其中可以混合包含 `TextPart`（思考/解释）和 `FunctionCallPart`（工具调用）。
-- **流式解析**: 在 `_process_event_stream` 中，系统会遍历 `parts` 列表，根据 Part 类型实时推送不同的数据块给前端。
-- **ReAct 循环**: 当模型输出包含 `function_call` 时，Runner 会执行工具并将结果反馈给模型，直到模型输出不再包含工具调用为止。
-
-### 代码实现原理图
 ![Interleaved Thinking 原理](image/interleaved_tool_call(agent交错思考)的代码原理/1767580311531.png)
-*图：Agent 交错思考与工具调用的执行流转原理*
 
 ---
 
-## 参数 MCP 技能集成详解
+## 🏗️ 架构概览 (Architecture)
 
-`param_mcp` 技能展示了如何将 ADK 的 `McpToolset` 对象集成到动态技能架构中，这是一个将对象类型工具（而非函数）集成到技能系统的典型案例。
+### SteeringSession & Registry
+*   **SteeringSession**: 每一个通过 Web/TUI 接入的用户会话，都在服务端由一个独立的 `SteeringSession` 对象管理，确保数据隔离。
+*   **Swarm Registry (`swarm_registry.db`)**: 一个轻量级的 SQLite 数据库，用于服务发现。Leader 和 Worker 启动时会自动注册自己的 URL 和能力，Leader 通过查询此表来感知集群状态。
 
-### 设计挑战
-
-与传统的函数类型工具不同，`McpToolset` 是一个对象，它包含了多个工具的集合。在技能框架中，工具加载是同步的，但 MCP 连接是异步的，这带来了以下挑战：
-
-1. **对象类型工具支持**: 原有的 `_load_skill_tools` 只支持 `callable` 类型的工具
-2. **异步初始化**: MCP toolset 的初始化涉及异步连接，需要在同步环境中处理
-3. **工具自动发现**: ADK 需要自动识别 `McpToolset` 对象并提取其中的工具
-
-### 实现方案
-
-#### 1. 扩展工具加载机制
-
-修改 `main.py` 和 `main_web_start.py` 中的 `_load_skill_tools` 函数，支持对象类型的工具：
-
-```python
-# 检查是否为 ADK 工具对象类型（如 McpToolset）
-is_tool_object = False
-try:
-    tool_type = type(tool)
-    type_name = tool_type.__name__
-    module_name = getattr(tool_type, '__module__', '')
-    is_tool_object = 'google.adk.tools' in module_name or 'Toolset' in type_name
-except:
-    pass
-
-if callable(tool) or is_tool_object:
-    my_agent.tools.append(tool)
-    # ...
+### 目录结构
 ```
-
-#### 2. 延迟初始化策略
-
-在 `tools.py` 中使用模块级全局变量和延迟初始化：
-
-```python
-_mcp_toolset = None
-
-def _create_mcp_toolset():
-    global _mcp_toolset
-    if _mcp_toolset is not None:
-        return _mcp_toolset
-    
-    # 创建 McpToolset 实例（同步创建，异步连接由 ADK 处理）
-    _mcp_toolset = McpToolset(
-        connection_params=StreamableHTTPConnectionParams(url=_mcp_url)
-    )
-    return _mcp_toolset
-```
-
-#### 3. ADK 自动工具发现
-
-当 `McpToolset` 对象被添加到 Agent 的 tools 列表时，ADK 框架会自动：
-- 调用 `get_tools()` 方法获取工具列表
-- 解析每个工具的名称、描述、参数定义
-- 将工具信息提供给 LLM，智能体可以根据工具描述智能选择和使用
-
-**关键优势**: 智能体无需手动查询工具列表，可以直接根据用户需求调用相应的工具。
-
-### 配置与使用
-
-1. **环境变量配置**（可选）:
-   ```bash
-   set MCP_URL=http://localhost:9014/mcp
-   ```
-
-2. **加载技能**:
-   ```
-   调用 skill_load("param_mcp")
-   ```
-
-3. **使用工具**:
-   加载后，MCP 服务提供的所有工具会自动注册到 Agent，可以直接使用。
-
-### 使用示例
-
-![参数 MCP 使用示例 1](image/mcp1.png)
-*图：查询工单参数修改记录*
-
-![参数 MCP 使用示例 2](image/mcp2.png)
-*图：生成参数修改草稿*
-
-![参数 MCP 使用示例 3](image/mcp3.png)
-*图：生成完整工单*
-
-### 技术要点
-
-- **对象类型工具支持**: 扩展了技能框架，支持将 ADK 工具对象（如 `McpToolset`）直接添加到工具列表
-- **异步处理**: 虽然 MCP 连接是异步的，但初始化是同步的，ADK 会在实际使用时处理异步连接
-- **错误处理**: 当 MCP 服务不可用时，会使用占位工具返回友好的错误提示
-- **工具发现**: ADK 自动发现机制确保智能体可以无缝使用 MCP 服务提供的所有工具
+google_adk_agent/
+├── src/                # 核心源码
+│   ├── adk_agent/      # Agent 逻辑 (Leader/Worker)
+│   └── shared/         # 共享库 (DB, Utils)
+├── skills/             # 技能插件目录 (按需加载)
+│   ├── agent_team/     # Swarm 技能
+│   ├── dynamic-mcp/    # MCP 动态加载技能
+│   └── ...
+├── image/              # 演示图片资源
+└── start_demo_swarm.bat # Swarm 启动脚本
 
 ---
 
-## Dynamic MCP Skill 深度解析
-
-`dynamic-mcp` 是一个**元工具**（Meta-Tool），实现了 Agent 的"自主扩张能力"——运行时动态发现并加载新的 MCP 工具，无需重启服务。
-
-### 设计理念
-
-**传统方式的问题**：
-- Agent 需要预先配置所有可能用到的工具
-- 添加新工具需要修改配置文件并重启服务
-- 工具列表庞大导致 Token 消耗高、LLM 选择困难
-
-**Dynamic MCP 的解决方案**：
-- **Just-in-Time Tooling**（即时工具化）：Agent 只在需要时才"下载"技能
-- **搜索驱动加载**：通过 Web Search 发现 MCP 服务的连接方式，然后动态挂载
-- **零配置扩展**：无需修改代码或配置，Agent 自主完成工具扩展
-
-### 架构图
-
-![Dynamic MCP Skill 架构](动态mcp-skill.png)
-
-### 核心机制
-
-#### 1. 双模式支持
-
-**远程模式 (Remote)**：
-- 连接 HTTP/SSE 方式提供的 MCP 服务
-- 支持智能认证检测（自动识别 Context7 等服务的特殊 header）
-- 创建 `StreamableHTTPConnectionParams` 并挂载到 `agent.tools`
-
-**本地模式 (Local)**：
-- 启动本地 MCP 进程（如 `npx @upstash/context7-mcp`）
-- 支持环境变量注入（如 API Key）
-- 创建 `StdioServerParameters` 并建立 stdio 通信管道
-
-#### 2. 智能认证检测
-
-针对不同 MCP 服务的认证方式，实现了智能适配：
-
-```python
-if "context7.com" in target_url.lower():
-    headers["CONTEXT7_API_KEY"] = api_key  # Context7 专属 header
-else:
-    headers["Authorization"] = f"Bearer {api_key}"  # 标准 Bearer Token
-```
-
-**支持的认证方式**：
-- Context7: `CONTEXT7_API_KEY` header（自定义）
-- 标准 MCP: `Authorization: Bearer` header（通用）
-
-#### 3. 工具发现验证机制
-
-**痛点**：ADK 的 `McpToolset` 工具发现是异步的，可能导致误导性的错误日志。
-
-**解决方案**：实现 `_verify_mcp_connection` 主动验证函数
-
-```python
-async def _verify_mcp_connection(toolset: McpToolset, timeout: int = 15) -> Tuple[bool, str]:
-    """主动触发工具发现并等待完成"""
-    # 1. 等待 ADK 完成异步工具发现（10秒）
-    await asyncio.sleep(10)
-    
-    # 2. 验证工具是否已加载
-    if hasattr(toolset, 'tools') and toolset.tools:
-        return True, f"成功发现 {len(tools)} 个工具: ..."
-    
-    # 3. 超时或失败处理
-    return False, "连接超时或认证失败"
-```
-
-**优势**：
-- ✅ 消除误导性的 `[ERROR] Failed to get tools` 日志
-- ✅ 仅在验证成功后才添加工具到 `agent.tools`
-- ✅ 提供友好的错误分类（401→认证失败，403→权限不足等）
-
-#### 4. 安全机制
-
-**命令白名单**（本地模式）：
-```python
-ALLOWED_LOCAL_COMMANDS = {"npx", "uvx", "node", "python", "python3"}
-```
-
-**参数注入防护**：
-```python
-def _is_safe_arg(arg: str) -> bool:
-    dangerous_chars = ['|', '>', '<', ';', '&', '`', '$(']
-    return not any(char in arg for char in dangerous_chars)
-```
-
-### 典型使用流程
-
-#### 场景：用户想用 Context7 查询文档
-
-```
-1. 用户请求：
-   "用 context7 查一下 fastmcp 库的文档，我的 API Key 是 ctx7sk-xxx"
-
-2. Agent 工作流：
-   Step 1: Web Search
-   └─ 查询 "context7 mcp server url"
-   └─ 发现：https://mcp.context7.com/mcp
-   
-   Step 2: Dynamic Load
-   └─ 调用 connect_mcp(
-        mode="remote",
-        source="https://mcp.context7.com/mcp",
-        api_key="ctx7sk-xxx"
-      )
-   └─ 验证连接（10秒）
-   └─ 返回：成功发现 2 个工具: resolve-library-id, query-docs
-   
-   Step 3: Use New Tools
-   └─ 调用 resolve_library_id(library_name="fastmcp")
-   └─ 调用 query_docs(library_id="/jlowin/fastmcp", query="usage")
-```
-
-### 实现要点
-
-#### 1. 依赖注入获取 Agent 实例
-
-```python
-def get_tools(agent, session_service, app_info) -> List:
-    """利用 ADK 的依赖注入机制获取 agent 实例"""
-    async def connect_mcp(...):
-        # 可以直接修改 agent.tools 列表
-        agent.tools.append(new_toolset)
-```
-
-#### 2. 去重检查避免重复加载
-
-```python
-# 检查是否已连接相同的服务
-for tool in agent.tools:
-    if isinstance(tool, McpToolset) and hasattr(tool, 'connection_params'):
-        if isinstance(tool.connection_params, StreamableHTTPConnectionParams):
-            if tool.connection_params.url.rstrip('/') == target_url.rstrip('/'):
-                return "无需重复连接：已连接到远程服务"
-```
-
-#### 3. 异步验证的同步集成
-
-虽然 `_verify_mcp_connection` 是异步函数，但可以在 `connect_mcp` 中直接 `await`，因为 `connect_mcp` 本身也是 async 函数：
-
-```python
-async def connect_mcp(...):
-    new_toolset = McpToolset(connection_params=connection_params)
-    
-    # 主动验证连接
-    success, message = await _verify_mcp_connection(new_toolset, timeout=15)
-    
-    if not success:
-        return f"[Error] {message}"
-    
-    agent.tools.append(new_toolset)
-    return f"[Success] {message}"
-```
-
-### 性能优化
-
-**用户修改的等待时间（10秒 + 15秒超时）**：
-- 内部等待：10 秒（让 ADK 完成异步工具发现）
-- 超时时间：15 秒（最大等待时间）
-- 正常情况下：约 10-12 秒完成验证
-
-**优化空间**：未来可支持自定义超时参数
-
-### 技术难点与解决方案
-
-| 难点           | 挑战                                             | 解决方案                                        |
-| -------------- | ------------------------------------------------ | ----------------------------------------------- |
-| 异步工具发现   | ADK 的工具发现是异步的，可能产生误导性错误日志   | 实现主动验证机制，等待发现完成后再返回          |
-| 多服务认证差异 | Context7 使用自定义 header，标准 MCP 使用 Bearer | 智能检测 URL 域名，自动选择正确的 header 名称   |
-| 本地命令安全   | 用户可能注入恶意命令                             | 白名单机制 + 参数字符过滤                       |
-| 连接失败诊断   | 错误原因不明确（网络、认证、超时？）             | 捕获异常并分类（401→认证失败，超时→网络问题等） |
-
-### 与 param_mcp 的对比
-
-| 特性     | param_mcp           | dynamic-mcp                    |
-| -------- | ------------------- | ------------------------------ |
-| 定位     | 静态 MCP 集成       | 动态 MCP 加载器                |
-| 配置方式 | 配置文件/环境变量   | 运行时搜索+加载                |
-| 适用场景 | 固定的业务 MCP 服务 | 临时需要的任意 MCP 服务        |
-| 工具数量 | 固定                | 无限扩展                       |
-| 典型用例 | 内部参数管理系统    | Context7、Exa、Brave Search 等 |
-
-### 扩展性
-
-未来可以轻松添加更多服务的支持：
-
-```python
-# 扩展认证检测
-if "context7.com" in url:
-    headers["CONTEXT7_API_KEY"] = api_key
-elif "exa.ai" in url:
-    headers["X-EXA-API-KEY"] = api_key
-elif "brave.com" in url:
-    headers["X-Subscription-Token"] = api_key
-else:
-    headers["Authorization"] = f"Bearer {api_key}"
-```
-
----
-
-## 使用 Dynamic MCP 加载自定义 MCP 服务
-
-本章节展示如何使用 `dynamic-mcp` skill 在运行时动态加载自定义的 MCP 服务（如 Docker 内运行的业务 MCP）。
-
-### 实战案例：加载 Docker 业务参数 MCP
-
-#### 场景描述
-
-您有一个运行在 Docker 容器中的自定义 MCP 服务器（`parameter_mcp_server_main`），通过端口映射暴露在本地 `http://127.0.0.1:9014/mcp`。传统方式需要在配置文件中预先定义，但使用 `dynamic-mcp` 可以在运行时动态加载。
-
-#### 使用步骤
-
-##### 1. 加载 dynamic-mcp Skill
-
-在 Web 界面或 CLI 中执行：
-```
-加载技能 dynamic-mcp
-```
-
-Agent 会自动将 `connect_mcp` 工具添加到工具列表。
-
-##### 2. 连接自定义 MCP 服务
-
-执行连接命令：
-```
-连接 mcp http://127.0.0.1:9014/mcp
-```
-
-Agent 会：
-1. 自动检测服务类型（HTTP/SSE）
-2. 添加必需的 Accept headers：`application/json, text/event-stream`
-3. 主动调用 `toolset.get_tools()` 触发工具发现
-4. 在 10 秒超时时间内验证连接
-5. 返回发现的工具列表
-
-##### 3. 使用新加载的工具
-
-连接成功后，Agent 自动获得该 MCP 服务提供的所有工具，可以直接使用：
-```
-查询工单参数修改记录
-生成参数修改草稿
-创建工单
-```
-
-### 效果展示
-
-#### 连接过程
-
-![连接自定义 MCP 服务](动态mcp加载自定义的mcp1.png)
-
-**关键输出**：
-```
-[DynamicMCP] 连接远程（无认证）: http://127.0.0.1:9014/mcp
-[DynamicMCP] 正在验证连接...
-[Success] remote MCP 工具加载成功！成功发现 5 个工具: ...
-```
-
-#### 工具使用
-
-![使用动态加载的工具](动态mcp加载自定义的mcp2.png)
-
-成功加载后，Agent 可以立即调用新工具完成业务任务。
-
-### 技术要点
-
-#### 1. SSE 协议兼容性
-
-许多自定义 MCP 服务使用 Server-Sent Events (SSE) 协议，要求客户端提供特定的 Accept headers：
-
-```python
-headers = {
-    "Accept": "application/json, text/event-stream",
-    "Content-Type": "application/json"
-}
-```
-
-`dynamic-mcp` skill 已自动处理这些 headers，无需手动配置。
-
-#### 2. 主动工具发现
-
-改进后的验证机制直接调用 ADK 的 `get_tools()` 方法：
-
-```python
-async def _verify_mcp_connection(toolset: McpToolset, timeout: int = 10):
-    # 直接触发工具发现，而非等待
-    tools = await asyncio.wait_for(toolset.get_tools(), timeout=timeout)
-    
-    if tools:
-        return True, f"成功发现 {len(tools)} 个工具: ..."
-    return False, "连接失败"
-```
-
-**优势**：
-- ✅ 主动触发，而非被动等待
-- ✅ 明确的成功/失败状态
-- ✅ 10 秒超时控制，快速失败
-
-#### 3. 智能错误诊断
-
-连接失败时提供友好的错误提示：
-
-| 错误类型       | 返回消息                                            |
-| -------------- | --------------------------------------------------- |
-| 超时           | `连接超时（10秒内未响应），请检查服务地址和端口`    |
-| 认证失败 (401) | `认证失败，请检查 API Key 是否正确`                 |
-| 权限不足 (403) | `访问被拒绝，请确认 API Key 权限`                   |
-| 连接错误       | `无法连接到 MCP 服务，请确认服务地址和端口是否正确` |
-
-#### 4. Docker 端口映射支持
-
-对于 Docker 内运行的 MCP 服务：
-```yaml
-# docker-compose.yml
-services:
-  mcp_server:
-    ports:
-      - "9014:5014"  # 外部端口:内部端口
-```
-
-使用外部映射端口连接：
-```
-连接 mcp http://127.0.0.1:9014/mcp  # ✅ 使用映射后的端口
-```
-
-### 常见问题
-
-#### Q1: 连接失败，显示 "Not Acceptable: Client must accept text/event-stream"
-
-**原因**：服务器要求 SSE headers，但旧版本的 `dynamic-mcp` 没有添加。
-
-**解决**：更新到最新版本的 `dynamic-mcp` skill（已包含 Accept headers 修复）。
-
-#### Q2: 测试脚本成功但 Agent 加载失败
-
-**原因**：Agent 服务未重启，仍在使用旧代码。
-
-**解决**：
-```bash
-# Windows
-taskkill /F /IM python.exe
-python -m skills.adk_agent.main_web_start_steering
-
-# Linux/Mac
-killall python
-python -m skills.adk_agent.main_web_start_steering
-```
-
-#### Q3: 如何验证 MCP 服务是否支持 Dynamic MCP
-
-使用 curl 测试：
-```bash
-curl -H "Accept: application/json, text/event-stream" \
-     -H "Content-Type: application/json" \
-     -X POST http://127.0.0.1:9014/mcp \
-     -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}},"id":1}'
-```
-
-如果返回 `{"jsonrpc":"2.0","id":1,"result":{...}}`，说明服务支持。
-
-### 与静态 MCP 集成的对比
-
-| 特性     | 静态 MCP (`param_mcp`) | Dynamic MCP (`dynamic-mcp`) |
-| -------- | ---------------------- | --------------------------- |
-| 配置方式 | 配置文件 + 重启服务    | 运行时命令                  |
-| 适用场景 | 固定的业务服务         | 临时或多变的服务            |
-| 扩展性   | 受限于配置             | 无限扩展                    |
-| 验证机制 | 启动时检查             | 连接时主动验证              |
-| 错误诊断 | 日志查看               | 实时友好提示                |
-
-### 最佳实践
-
-1. **优先使用 Dynamic MCP**：对于频繁变化或临时使用的 MCP 服务
-2. **结合静态配置**：核心业务 MCP 使用静态配置，临时服务使用动态加载
-3. **验证连接**：加载新服务后，先测试一个简单工具确认可用性
-4. **监控超时**：如果连接经常超时，考虑增加超时参数或检查网络
-
----
-
-## Dex 技能深度解析
-
-`dex` 是专门为**长耗时、异步执行场景**设计的任务管理技能。它允许 Agent 将复杂或耗时的指令（如模型微调、文件深度搜索、大数据处理）发送到后台执行，从而不阻塞当前的对话流。
-
-### 核心特性
-
-- **后台执行引擎**：支持 Windows (`DETACHED_PROCESS`) 和 Linux (`setsid`) 的真正后台化运行。
-- **严格隔离 (Multi-Tenant)**：
-    - **任务隔离**：`.dex/tasks/{user_id}/`。
-    - **日志隔离**：`.dex/logs/{user_id}/`。
-- **状态追踪**：任务经历 `pending` -> `running` -> `completed`/`failed` 的完整生命周期。
-- **中文字符优化**：通过环境变量强制 UTF-8 输出，完美解决 Windows 环境下的日志乱码问题。
-
-### 使用示例
-
-#### 示例 1：执行 Python 脚本 (如长耗时模拟任务)
-
-当需要运行一个可能持续数分钟的 Python 程序时：
-
-*   **用户指令**：*"请使用 Dex 帮我运行 MISC/long_task.py 脚本"*
-*   **执行流**：
-    1.  Agent 调用 `dex_create_task` 创建记录。
-    2.  Agent 调用 `dex_start_task(command="python MISC/long_task.py")`。
-    3.  任务在后台开始运行，Agent 立即返回确认信息。
-    4.  用户可随时通过 `dex_list_tasks` 或 `dex_get_task_details` 查看进度。
-
-#### 示例 2：执行非 Python 的自然语言指令 (文件搜索)
-
-Dex 也可以作为一个通用的 Shell 执行器处理非 Python 任务。
-
-*   **用户指令**：*"使用 DEX 技能，搜索 D 盘所有的 markdown 文件"*
-*   **执行流**：
-    1.  Agent 自动将请求转化为系统命令 `dir /s /b D:\*.md` (Windows)。
-    2.  Agent 通过 `dex_start_task` 在后台异步提交。
-    3.  **结果**：Agent 无需等待搜索完成即可处理其他请求。搜索完成后，所有匹配的文件路径都会被记录在专属的日志文件中，用户随时可以查阅。
-
----
-
-## 排查与修复实录 (Debug Journey)
-
-### TUI Client 工具调用显示问题修复
-
-**问题描述**: 在 TUI 客户端中，Agent 的 Tool Call（工具调用）和 Tool Result（工具结果）内容无法显示，界面上只看到思考过程，导致用户无法感知 Agent 的实际操作。
-
-**排查过程**:
-
-1.  **黑盒测试 (Black Box Testing)**:
-    *   最初怀疑是流式传输 (Streaming) 丢失了数据。
-    *   **排查手段**: 修改 `tui_client_light.py` 中的 `log_to_file` 函数，将所有接收到的 raw chunk 写入 `tui_debug_force.log`。
-    *   **发现**: 日志显示 `tool_call` 和 `tool_result` 的数据包完整到达了客户端。这排除了后端传输问题，定位为 **前端渲染问题**。
-
-2.  **UI 渲染分析 (Rendering Analysis)**:
-    *   检查 `MessageBlock` 组件。发现 `tool_call` 类型的消息块虽然被添加到了界面，但高度显计算为 0。
-    *   **原因**: Textual 框架在渲染空内容或仅包含特殊颜色标记的 Text 对象时，可能会将其折叠。
-    *   **干扰项**: 早期的代码在 `tool_call` 前面添加了 Emoji (🛠️)，这在某些终端下可能导致行高计算异常或被 Textual 的 Parser 误处理。
-
-3.  **修复方案 (The Fix)**:
-    *   **移除 Emoji**: 移除了 `MessageBlock` 中可能导致渲染不稳定的 Emoji 前缀。
-    *   **强制样式与内容**: 修改 `refresh_content` 方法，确保即使内容为空，也赋予明确的 `Renderable` 对象和样式颜色。
-    *   **样式调整**:
-        *   `tool_call`: 使用标准 `orange1` 颜色高亮。
-        *   `tool_result`: 使用 `grey70` 低调显示，并支持折叠。
-    *   **Sidebar 优化**: 顺带解决了侧边栏会话列表高度过高的问题，通过 `height: 1` 和 `margin-bottom: 1` 实现了紧凑且清晰的布局。
-
-**关键代码片段**:
-
-```python
-# tui_client_light.py - MessageBlock.refresh_content
-if self.block_type == "tool_call":
-    text_style = "orange1"  # 显式指定高亮颜色
-    # 确保没有 Emoji 干扰
-elif self.block_type == "tool_result":
-    text_style = "grey70"
-
-renderable = Text(full_text, style=text_style) 
-self.update(renderable) # 强制更新渲染对象
-```
-
-通过这一系列排查，我们从根本上修复了 TUI 的“隐形工具”Bug，并显著提升了界面的专业度和可用性。
+## 🤝 贡献 (Contributing)
+欢迎 Star, Fork, 提交 PR 贡献新的 Skill 或优化 Swarm 调度算法！让我们一起探索 Agentic AI 的无限可能。
+
+## 📄 License
+MIT License
