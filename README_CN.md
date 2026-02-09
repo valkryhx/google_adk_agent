@@ -137,9 +137,9 @@ cmd /c set PYTHONIOENCODING=utf-8 && python -m src.adk_agent.main_web_start_stee
 > 3. 收集结果并向用户汇报。
 
 **视频演示**:
-- [Part 1: Swarm 基础演示](https://www.youtube.com/watch?v=0zBrTGIcZWg&t=22s)
-- [Part 2: 进阶任务分发](https://www.youtube.com/watch?v=fUMOUpa8EnE)
-- [Part 3: 复杂场景处理](https://www.youtube.com/watch?v=vKHZRy6_53M)
+- [Part 1](https://www.youtube.com/watch?v=0zBrTGIcZWg&t=22s)
+- [Part 2](https://www.youtube.com/watch?v=fUMOUpa8EnE)
+- [Part 3](https://www.youtube.com/watch?v=vKHZRy6_53M)
 
 **Agent Smith 模式**:
 

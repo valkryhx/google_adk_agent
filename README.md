@@ -135,9 +135,9 @@ The "Commander" skill of Ciri. Loading this skill gives the Agent the ability to
 > 3. Collects results and reports to user.
 
 **Video Demos**:
-- [Part 1: Basic Swarm Operations](https://www.youtube.com/watch?v=0zBrTGIcZWg&t=22s)
-- [Part 2: Advanced Task Dispatch](https://www.youtube.com/watch?v=fUMOUpa8EnE)
-- [Part 3: Complex Scenario Handling](https://www.youtube.com/watch?v=vKHZRy6_53M)
+- [Part 1](https://www.youtube.com/watch?v=0zBrTGIcZWg&t=22s)
+- [Part 2](https://www.youtube.com/watch?v=fUMOUpa8EnE)
+- [Part 3](https://www.youtube.com/watch?v=vKHZRy6_53M)
 
 **The "Agent Smith" Implementation**:
 
