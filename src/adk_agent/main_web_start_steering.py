@@ -33,7 +33,7 @@ from src.adk_agent.config import AgentConfig, build_system_prompt
 import litellm
 from litellm import ContextWindowExceededError
 from google.genai import types
-from fastapi import FastAPI, Response, status
+from fastapi import FastAPI, Response, status, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -1557,6 +1557,156 @@ async def get_session_history(
                 })
     
     return {"messages": messages}
+
+# ==========================================
+# [新增] Swarm 上下文同步相关 API
+# ==========================================
+
+@app.post("/api/sessions/{session_id}/metadata")
+async def update_session_metadata(
+    session_id: str,
+    request: Request
+):
+    """
+    【任务血缘记录】接收来自 Leader 的元数据注入
+    在 Worker 节点的 session.state 中记录 leader_port, original_user_id 等信息
+    """
+    data = await request.json()
+    app_name = data.get("app_name", DEFAULT_APP_NAME)
+    user_id = data.get("user_id", DEFAULT_USER_ID)
+    metadata = data.get("metadata", {})
+    
+    try:
+        # 获取或创建 session
+        session = await session_service.get_session(
+            app_name=app_name,
+            user_id=user_id,
+            session_id=session_id
+        )
+        
+        if not session:
+            # 如果 session 不存在，创建一个新的
+            session = await session_service.create_session(
+                app_name=app_name,
+                user_id=user_id,
+                session_id=session_id
+            )
+        
+        # 更新 state，保留原有数据并合并新元数据
+        current_state = session.state if session.state else {}
+        current_state.update(metadata)
+        
+        # 保存更新后的 state
+        session.state = current_state
+        await session_service.save_session(session)
+        
+        print(f"[Swarm Metadata] ✅ Session {session_id} 元数据已更新: {metadata}")
+        return {"status": "success", "message": "Metadata updated"}
+        
+    except Exception as e:
+        print(f"[Swarm Metadata] ❌ 更新失败: {e}")
+        return {"status": "error", "message": str(e)}, 500
+
+
+@app.get("/api/context/leader_summary")
+async def get_leader_summary(
+    app_name: str = DEFAULT_APP_NAME,
+    user_id: str = DEFAULT_USER_ID,
+    limit: int = 1
+):
+    """
+    【跨节点上下文查询】获取当前节点上指定用户的最近会话摘要
+    供 Worker 节点调用,获取 Leader 节点的任务背景信息
+    """
+    try:
+        # 调试日志
+        print(f"[Leader Summary API] 收到请求: app_name={app_name}, user_id={user_id}, limit={limit}")
+        
+        # 查询最近的会话（使用关键字参数）
+        sessions_response = await session_service.list_sessions(app_name=app_name, user_id=user_id)
+        sessions = sessions_response.sessions if sessions_response else []
+        
+        print(f"[Leader Summary API] 查询到 {len(sessions) if sessions else 0} 个会话")
+        
+        if not sessions or len(sessions) == 0:
+            print(f"[Leader Summary API] 未找到会话，返回错误")
+            return {"error": "No sessions found"}
+        
+        # 取最新的 session
+        if limit == 1:
+            latest_session_meta = sessions[0]
+            print(f"[Leader Summary API] 处理单个会话: {latest_session_meta.id}")
+            
+            # ⚠️ 关键修复：list_sessions 只返回轻量级数据（不含 events）
+            # 需要用 get_session 重新加载完整会话数据
+            latest_session = await session_service.get_session(
+                app_name=app_name,
+                user_id=user_id,
+                session_id=latest_session_meta.id
+            )
+            
+            if not latest_session:
+                print(f"[Leader Summary API] ⚠️ get_session 返回空，使用轻量级 session")
+                latest_session = latest_session_meta
+            else:
+                print(f"[Leader Summary API] ✓ 完整会话已加载，events 数量: {len(latest_session.events) if latest_session.events else 0}")
+            
+            # 提取最近的对话消息
+            recent_messages = []
+            if latest_session.events:
+                for evt in latest_session.events[-100:]:  # 最多取 100 轮对话
+                    if hasattr(evt, 'content') and evt.content:
+                        role = evt.content.role if hasattr(evt.content, 'role') else 'unknown'
+                        
+                        # 提取文本内容
+                        text = ""
+                        if hasattr(evt.content, 'parts'):
+                            for part in evt.content.parts:
+                                if hasattr(part, 'text') and part.text:
+                                    text += part.text
+                        
+                        if text:
+                            recent_messages.append({
+                                "role": role,
+                                "text": text[:5000]  # 限制长度，避免摘要过长
+                            })
+            
+            # 格式化摘要
+            summary_lines = []
+            for msg in recent_messages:
+                prefix = "👤 用户" if msg["role"] == "user" else "🤖 助手"
+                summary_lines.append(f"{prefix}: {msg['text']}")
+            
+            result = {
+                "title": latest_session.state.get('title', 'Untitled') if latest_session.state else 'Untitled',
+                "session_id": latest_session.id,
+                "recent_summary": "\n".join(summary_lines),
+                "total_messages": len(latest_session.events) if latest_session.events else 0
+            }
+            
+            print(f"[Leader Summary API] 返回结果: {result.get('title', 'N/A')}, {result.get('total_messages', 0)} 条消息")
+            return result
+        else:
+            print(f"[Leader Summary API] 处理多个会话: limit={limit}")
+            # 返回多个会话的简要信息
+            result = {
+                "sessions": [
+                    {
+                        "session_id": s.id,
+                        "title": s.state.get('title', 'Untitled') if s.state else 'Untitled',
+                        "message_count": len(s.events)
+                    }
+                    for s in sessions[:limit]
+                ]
+            }
+            print(f"[Leader Summary API] 返回多会话格式")
+            return result
+            
+    except Exception as e:
+        print(f"[Swarm Context API] ❌ 查询失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
 
 @app.on_event("startup")
 async def startup_event():

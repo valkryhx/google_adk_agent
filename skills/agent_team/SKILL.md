@@ -38,6 +38,47 @@ description: Enables the agent to act as a Swarm Leader, dispatching tasks to re
 * 同时编写后端的 Controller 层、Service 层、Dao 层代码（如果它们接口已定）。
 * 对同一份代码进行 Security Review 和 Performance Review。
 
+### `sync_leader_context` (上下文同步)
+当你是 Worker 节点时，这个工具让你获取 Leader 或其他节点的任务背景信息。
+
+#### 主要功能：
+1. **自动检测 Leader**：在 Swarm 会话中自动识别 Leader 端口
+2. **手动指定端口**：明确指定要同步的节点（单个或多个）
+3. **多节点并发同步**：同时从多个节点获取上下文
+
+#### 使用方式：
+
+**1. 自动检测模式**（推荐）
+```python
+sync_leader_context(reason="需要汇总三家公司的调查结果")
+```
+系统会自动：
+- 从当前会话的 `app_name`（如 `swarm_from_8000`）解析 Leader = 8000
+- 或从会话 state 中读取 `leader_port`
+- 或查找最近的 Swarm 会话
+
+**2. 单端口模式**
+```python
+sync_leader_context(
+    reason="获取8000的任务背景",
+    leader_port=8000
+)
+```
+
+**3. 多端口模式** ⭐ 强大功能
+```python
+sync_leader_context(
+    reason="汇总Leader和所有Worker的状态",
+    leader_port=[8000, 8001, 8002]
+)
+```
+返回每个节点的上下文摘要，失败的节点会标记错误。
+
+#### 典型场景：
+* **Worker 汇总数据**：8002(Worker) 需要知道 8000(Leader) 的完整任务要求
+* **跨节点协作**：8003 想查看 8001 的调查结果进行对比
+* **任务验收**：Leader 同步所有 Worker 的执行状态
+
 ## 3. 使用策略 (Usage Strategy) - 请务必遵守！
 
 ### 规则一：具体的事情可以分派发给别的智能体
@@ -90,3 +131,63 @@ Worker 是你的"外部大脑"。
     `dispatch_task(task_instruction="运行报错缺少 flask，请安装依赖并修复代码", target_port=8001, sub_session_id="{Action 1 的 SessionID}")`
 
 6.  **Final Reply**: "博客系统已完成，由 Worker 8001 和 8002 协作构建。"
+
+### 场景：多节点数据汇总（使用 sync_leader_context）
+
+**User:** "帮我调查 Microsoft、Apple、Google 三家公司的最新动态，然后做成对比表格。"
+
+**Leader (You) - 在端口 8000:**
+1.  **思考**: 这是并发任务，需要用 `dispatch_batch_tasks`。
+    
+2.  **Action 1 (并发派发)**:
+    ```python
+    dispatch_batch_tasks(
+        tasks=[
+            "调查 Microsoft 的最新产品和财报",
+            "调查 Apple 的最新产品和财报",
+            "调查 Google 的最新产品和财报"
+        ],
+        common_context="科技巨头对比分析项目"
+    )
+    ```
+    * **Result**: "3 个任务已分派到节点 8001, 8002, 8003"
+
+3.  **回复用户**: "已派发调查任务，数据正在收集中。"
+
+---
+
+**Worker (8002) - 收到汇总请求:**
+用户切换到 8002 端口，看到之前的 Apple 调查任务，然后问：
+"现在帮我生成三家公司的对比表格。"
+
+**Worker (8002):**
+1.  **意识到**: 我只有 Apple 的数据，需要获取其他节点的信息。
+    
+2.  **Action 1 (同步 Leader 背景)**:
+    ```python
+    sync_leader_context(reason="获取完整任务要求和其他公司数据")
+    ```
+    * **Result**: 获得 8000(Leader) 的任务背景："调查 Microsoft、Apple、Google..."
+    
+3.  **Action 2 (同步其他 Worker)**:
+    ```python
+    sync_leader_context(
+        reason="收集其他 Worker 的调查结果",
+        leader_port=[8001, 8003]  # Microsoft 和 Google
+    )
+    ```
+    * **Result**: 
+      ```
+      ✅ 节点 8001: Microsoft调查 (8 条消息)
+      ✅ 节点 8003: Google调查 (7 条消息)
+      ```
+
+4.  **Action 3 (生成表格)**:
+    基于同步的上下文，生成完整的对比表格。
+
+5.  **Final Reply**: "已汇总三家公司数据并生成对比表格。"
+
+**关键点**：
+- Worker 8002 无需重新执行调查任务
+- 通过 `sync_leader_context` 直接获取其他节点的结果
+- 多端口同步 `[8001, 8003]` 并发执行，速度快

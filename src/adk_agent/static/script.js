@@ -125,7 +125,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // 调试日志：显示发送的参数
             const currentUserId = getUserId();
-            console.log('[发送请求] user_id:', currentUserId, 'session_id:', currentSessionId);
+
+            // 动态确定 app_name（如果是 Swarm 会话，使用对应的 app_name）
+            let appName = APP_NAME;
+            const storedIsSwarm = sessionStorage.getItem('current_is_swarm');
+            const storedLeaderPort = sessionStorage.getItem('current_leader_port');
+            if (storedIsSwarm === 'true' && storedLeaderPort) {
+                appName = `swarm_from_${storedLeaderPort}`;
+            }
+
+            console.log('[发送请求] user_id:', currentUserId, 'session_id:', currentSessionId, 'app_name:', appName);
 
             const response = await fetch('/api/chat', {
                 method: 'POST',
@@ -134,8 +143,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
                 body: JSON.stringify({
                     message: text,
-                    app_name: APP_NAME,
-                    user_id: currentUserId,  // 使用上面获取的
+                    app_name: appName,
+                    user_id: currentUserId,
                     session_id: currentSessionId
                 })
             });
@@ -644,11 +653,55 @@ document.addEventListener('DOMContentLoaded', () => {
     // 加载会话列表
     async function loadSessions() {
         try {
-            const response = await fetch(
-                `/api/sessions?app_name=${APP_NAME}&user_id=${getUserId()}`  // 动态获取
+            const currentUserId = getUserId();
+
+            // 同时查询个人对话和 Swarm 任务会话
+            const personalResponse = await fetch(
+                `/api/sessions?app_name=${APP_NAME}&user_id=${currentUserId}`
             );
-            const data = await response.json();
-            renderSessionList(data.sessions);
+            const personalData = await personalResponse.json();
+
+            console.log('[会话列表] 个人会话数:', personalData.sessions?.length || 0);
+
+            // 查询 Swarm 会话（尝试常见的 Leader 端口）
+            const swarmSessions = [];
+            const possibleLeaderPorts = [8000, 8001, 8002, 8003, 8004];
+
+            for (const port of possibleLeaderPorts) {
+                try {
+                    const swarmAppName = `swarm_from_${port}`;
+                    const swarmResponse = await fetch(
+                        `/api/sessions?app_name=${swarmAppName}&user_id=${currentUserId}`
+                    );
+                    const swarmData = await swarmResponse.json();
+
+                    if (swarmData.sessions && swarmData.sessions.length > 0) {
+                        console.log(`[会话列表] 找到 ${swarmData.sessions.length} 个 Swarm 会话 (app_name=${swarmAppName})`);
+
+                        // 标记为 Swarm 会话，leaderPort 从 app_name 解析
+                        swarmData.sessions.forEach(s => {
+                            s.isSwarm = true;
+                            s.leaderPort = port;  // 从 swarm_from_<port> 解析出的端口
+                        });
+                        swarmSessions.push(...swarmData.sessions);
+                    }
+                } catch (e) {
+                    // 忽略错误，继续查询下一个端口
+                    console.warn(`[会话列表] 查询 swarm_from_${port} 失败:`, e);
+                }
+            }
+
+            console.log('[会话列表] Swarm 会话总数:', swarmSessions.length);
+
+            // 合并会话列表
+            const allSessions = [
+                ...(personalData.sessions || []),
+                ...swarmSessions
+            ];
+
+            console.log('[会话列表] 总会话数:', allSessions.length);
+
+            renderSessionList(allSessions);
         } catch (e) {
             console.error('加载会话列表失败:', e);
         }
@@ -684,7 +737,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // 会话标题容器
             const titleSpan = document.createElement('span');
-            titleSpan.textContent = session.title || '新对话';
+
+            // 如果是 Swarm 会话，添加标记
+            if (session.isSwarm) {
+                const swarmBadge = document.createElement('span');
+                swarmBadge.textContent = `📋 `;
+                swarmBadge.style.marginRight = '4px';
+                swarmBadge.title = `来自 Leader Port ${session.leaderPort}`;
+                titleSpan.appendChild(swarmBadge);
+            }
+
+            const titleText = document.createTextNode(session.title || '新对话');
+            titleSpan.appendChild(titleText);
+
             titleSpan.style.flex = '1';
             titleSpan.style.overflow = 'hidden';
             titleSpan.style.textOverflow = 'ellipsis';
@@ -722,9 +787,11 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             item.dataset.sessionId = session.session_id;
+            item.dataset.isSwarm = session.isSwarm || false;
+            item.dataset.leaderPort = session.leaderPort || '';
 
             item.addEventListener('click', () => {
-                switchSession(session.session_id);
+                switchSession(session.session_id, session.isSwarm, session.leaderPort);
             });
 
             container.appendChild(item);
@@ -732,11 +799,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 切换会话
-    async function switchSession(sessionId) {
+    async function switchSession(sessionId, isSwarm = false, leaderPort = null) {
         const currentSessionId = getCurrentSessionId();
         if (sessionId === currentSessionId) return;
 
-        console.log('切换会话:', sessionId);
+        console.log('切换会话:', sessionId, isSwarm ? `(Swarm from ${leaderPort})` : '(个人对话)');
 
         // 清空聊天容器
         while (chatContainer.firstChild) {
@@ -746,11 +813,20 @@ document.addEventListener('DOMContentLoaded', () => {
         // 更新状态
         setCurrentSessionId(sessionId);
 
+        // 存储 Swarm 会话信息到 sessionStorage
+        if (isSwarm && leaderPort) {
+            sessionStorage.setItem('current_is_swarm', 'true');
+            sessionStorage.setItem('current_leader_port', leaderPort);
+        } else {
+            sessionStorage.removeItem('current_is_swarm');
+            sessionStorage.removeItem('current_leader_port');
+        }
+
         // 刷新列表高亮
         await loadSessions();
 
         // 加载历史消息
-        await loadSessionHistory(sessionId);
+        await loadSessionHistory(sessionId, isSwarm, leaderPort);
     }
 
     // 辅助函数: 检查 blocks 是否包含有效内容
@@ -761,10 +837,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 加载会话历史
-    async function loadSessionHistory(sessionId) {
+    async function loadSessionHistory(sessionId, isSwarm = false, leaderPort = null) {
         try {
+            // 动态确定 app_name
+            let appName = APP_NAME;
+            if (isSwarm && leaderPort) {
+                appName = `swarm_from_${leaderPort}`;
+            } else {
+                // 尝试从 sessionStorage 恢复
+                const storedIsSwarm = sessionStorage.getItem('current_is_swarm');
+                const storedLeaderPort = sessionStorage.getItem('current_leader_port');
+                if (storedIsSwarm === 'true' && storedLeaderPort) {
+                    appName = `swarm_from_${storedLeaderPort}`;
+                    isSwarm = true;
+                }
+            }
+
+            console.log(`[加载历史] session=${sessionId}, app_name=${appName}`);
+
             const response = await fetch(
-                `/api/sessions/${sessionId}/history?app_name=${APP_NAME}&user_id=${getUserId()}` // 动态获取
+                `/api/sessions/${sessionId}/history?app_name=${appName}&user_id=${getUserId()}`
             );
             const data = await response.json();
 
