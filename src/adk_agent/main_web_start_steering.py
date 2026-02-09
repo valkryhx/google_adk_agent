@@ -6,7 +6,7 @@ ADK Dynamic Skills Agent - 主入口 (多租户并发安全版)
 2. claudecode风格的steering实时文本打断增强：在流式输出循环中增加强制检查。
 3. AOP 拦截：使用 before_model/tool callback。
 
-python -m skills.adk_agent.main_web_start_steering
+python -m src.adk_agent.main_web_start_steering
 """
 
 import asyncio
@@ -111,13 +111,14 @@ worker_state = WorkerState()
 WORKER_LOCK = asyncio.Lock()
 
 # ==========================================
-# 2. SQLite 服务注册逻辑 (Service Discovery)
+# 2. agent team 的 SQLite 服务注册逻辑 (Service Discovery for agent team)
 # ==========================================
-REGISTRY_DB = "swarm_registry.db"
+REGISTRY_DB = "sqlite_db/swarm_registry.db"
 
 def init_registry_db():
     """初始化注册表数据库 (幂等操作)"""
     try:
+        os.makedirs(os.path.dirname(REGISTRY_DB), exist_ok=True)
         with sqlite3.connect(REGISTRY_DB, timeout=10.0) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS nodes (

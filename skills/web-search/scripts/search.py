@@ -26,24 +26,19 @@ except ImportError:
 def load_api_key():
     """Load Tavily API Key from private_key.yaml."""
     # Find project root (assuming script is deep in skills/...)
-    # Current script path: skills/adk_agent/.claude/skills/web-search/scripts/search.py
-    # Project root is 6 levels up
-    script_path = Path(__file__).resolve()
-    project_root = script_path.parents[6] 
-    
-    # Fallback: try to find private_key.yaml by walking up
-    current_dir = script_path.parent
-    while current_dir != current_dir.parent:
-        config_path = current_dir / "private_key.yaml"
+    # Current script path: skills/web-search/scripts/search.py
+    # Project root is 4 levels up
+    # Robustly find private_key.yaml by walking up from the script location   
+    current_path = Path(__file__).resolve()
+    for parent in [current_path] + list(current_path.parents):
+        config_path = parent / "private_key.yaml"
         if config_path.exists():
             try:
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
                     return config.get("tavily_api_key")
-            except Exception as e:
+            except Exception:
                 return None
-        current_dir = current_dir.parent
-    
     return None
 
 API_KEY = load_api_key() or os.environ.get("TAVILY_API_KEY")

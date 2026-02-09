@@ -97,6 +97,18 @@ The "Commander" skill of Ciri. Loading this skill gives the Agent the ability to
 >    - Worker 8002: "Write React chat page component"
 > 3. Collects results and reports to user.
 
+**Video Demos**:
+- [Part 1: Basic Swarm Operations](https://www.youtube.com/watch?v=0zBrTGIcZWg&t=22s)
+- [Part 2: Advanced Task Dispatch](https://www.youtube.com/watch?v=fUMOUpa8EnE)
+- [Part 3: Complex Scenario Handling](https://www.youtube.com/watch?v=vKHZRy6_53M)
+
+**The "Agent Smith" Implementation**:
+
+In the Google ADK Swarm, **every agent is "Agent Smith"**.
+- **Identical Capabilities**: Every node (Leader or Worker) runs the exact same code and possesses the full set of capabilities. There is no hard-coded "Master" node.
+- **Decentralized Access**: You can access the Swarm through **any port** (8000, 8001, 8002, etc.). The node you connect to automatically becomes the "Leader" for that session, commanding other idle nodes as "Workers".
+- **Standalone Mode**: If a node detects no other active peers in the `swarm_registry.db`, it silently falls back to working alone, ensuring reliability in any environment.
+
 ### 2. Dynamic MCP (Meta Tools)
 Implements dynamic loading of Model Context Protocol (MCP). Connect to any MCP service without restarting the Agent.
 

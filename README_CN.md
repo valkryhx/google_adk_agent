@@ -96,6 +96,18 @@ pip install -r requirements.txt
 >    - Worker 8002: "编写 React 聊天页面组件"
 > 3. 收集结果并向用户汇报。
 
+**视频演示**:
+- [Part 1: Swarm 基础演示](https://www.youtube.com/watch?v=0zBrTGIcZWg&t=22s)
+- [Part 2: 进阶任务分发](https://www.youtube.com/watch?v=fUMOUpa8EnE)
+- [Part 3: 复杂场景处理](https://www.youtube.com/watch?v=vKHZRy6_53M)
+
+**Agent Smith 模式**:
+
+在 Google ADK Swarm 中，**每一个 Agent 都是《黑客帝国》中的 "Smith"**。
+- **全息能力**: 集群中的每个节点（无论是 Leader 还是 Worker）都运行着完全相同的代码，拥有完整的能力全集。这里没有硬编码的"主节点"。
+- **去中心化接入**: 你可以从集群的 **任意端口** (8000, 8001, 8002...) 接入。你连接的那个节点会自动成为当前会话的 "Leader"，并指挥其他空闲节点作为 "Worker" 协同工作。
+- **单兵作战**: 如果节点在 `swarm_registry.db` 中发现没有其他活跃伙伴，它会无缝切换回单兵模式自己完成所有任务，确保在任何环境下都可用。
+
 ### 2. Dynamic MCP (元工具)
 实现了 Model Context Protocol (MCP) 的动态加载。无需重启 Agent 即可连接任意 MCP 服务。
 
