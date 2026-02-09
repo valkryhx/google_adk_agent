@@ -201,7 +201,7 @@ google_adk_agent/
 
 
 ## 🤝 贡献 (Contributing)
-欢迎 Star, Fork, 提交 PR 贡献新的 Skill 或优化 Swarm 调度算法！让我们一起探索 Agentic AI 的无限可能。
+欢迎 ⭐, Fork, 提交 PR 贡献新的 Skill 或优化 Swarm 调度算法！让我们一起探索 Agentic AI 的无限可能。
 
 ## 📄 License
 MIT License

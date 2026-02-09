@@ -195,7 +195,7 @@ google_adk_agent/
 
 
 ## 🤝 Contributing
-Welcome to Star, Fork, submit PRs to contribute new Skills or optimize Swarm scheduling algorithms! Let's explore the infinite possibilities of Agentic AI together.
+Welcome to ⭐, Fork, submit PRs to contribute new Skills or optimize Swarm scheduling algorithms! Let's explore the infinite possibilities of Agentic AI together.
 
 ## 📄 License
 MIT License
