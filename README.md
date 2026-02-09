@@ -21,6 +21,19 @@ Also, a huge shoutout to **Antigravity** — the ultimate **Vibe Coding IDE**. I
 
 ---
 
+## 📚 Implementation Deep Dive
+
+We have prepared precise documentation in `MISC/how-to/` to help you understand the core implementation of Ciri:
+
+*   **[Core Skills & Lazy Loading](MISC/how-to/import-skills.md)**: How we manage skills and the `get_tools` pattern.
+*   **[Context Compression](MISC/how-to/autocompactor-subagent.md)**: The `AutoCompactAgent` design.
+*   **[Steering & Control](MISC/how-to/steering-by-adk-callbacks.md)**: Real-time interruption using ADK callbacks.
+*   **[Programmatic Tool Calling](MISC/how-to/PTC-programmatic-tool-calling.md)**: Code as orchestration.
+*   **[Dex: Async Execution](MISC/how-to/dex.md)**: Handling long-running tasks.
+*   **[Agent-team Architecture](MISC/how-to/agent-team.md)**: The "Fracal Agent" design.
+
+---
+
 ## ✨ Project Vision
 
 **Ciri** aims to showcase how to build a **modern**, **scalable**, and **"Vibe"** AI operating system using Google ADK. We hope this open-source project will help more developers understand the power of Google ADK and inspire them to explore the future of Agentic AI.
@@ -38,7 +51,11 @@ No longer fighting alone. Ciri implements a complete **Leader-Worker** architect
 Refuse bloat. Ciri carries **only the most basic meta-tools** at startup, loading required skills **Just-in-Time** based on task needs:
 - **Hot-Pluggable**: No restart needed, dynamically mount/unmount Python toolkits at runtime.
 - **On-Demand Loading**: Use and go, automatically unmount unused skills via `compactor` to save resources.
-- **Wide Support**: Covers file operations, code execution, web search, database management, etc.
+*   **Wide Support**: Covers file operations, code execution, web search, database management, etc.
+*   **Extensible**: Create a `tools.py` in `skills/your_skill/`, and it's instantly available.
+
+> **⚠️ Developer Notice**: When creating new skills, it is strongly recommended to use the `def get_tools(*args, **kwargs) -> List:` function pattern (as seen in `skills/bash/tools.py`) instead of instantiating tools globally.
+> *   **Why?**: `get_tools` allows for deferred initialization, better error handling during loading, and access to runtime configuration if needed. It ensures tools are only created when the skill is actually loaded by the agent.
 
 ### 🧠 3. Infinite Context
 Based on **lossy compression technology** of the `compactor` skill, allowing Ciri to have "infinite" long-term memory:
@@ -50,6 +67,19 @@ Based on **lossy compression technology** of the `compactor` skill, allowing Cir
 - **TUI (Terminal Interface)**: Geek-style command-line interface supporting streaming output and real-time status monitoring.
 - **Web UI**: Google-style responsive Web interface, perfectly displaying the **Interleaved Thinking** process—you can see Ciri's complete mental journey of "Thinking -> Calling Tool -> Getting Result -> Thinking Again" in real-time.
 
+---
+
+---
+
+## 📸 Demo Showcase
+
+### 🤖 Single Agent Mode
+![Single Agent Demo](demo_images/single-agent-demo/6.png)
+
+### 👥 Agent Team Mode
+![Agent Team Demo](demo_images/agent-team-demo/ciri-agent-team-2.png)
+
+You can refer to [demo_images/agent-team-demo](demo_images/agent-team-demo) for more demo images.
 ---
 
 ## 🛠️ Getting Started
@@ -67,9 +97,16 @@ pip install -r requirements.txt
 ```
 
 ### 2. Configure API Key
-Create or modify `private_key.yaml` (or other config files) in the project root, filling in your LLM API Key (DashScope Qwen or OpenAI recommended).
+Create or modify `private_key.yaml` (or other config files) in the project root, filling in your LLM API Key (deepseek-v3.2 or stepfunc-3.5-flash or more advanced model recommended).
 
-### 3. Start Swarm Cluster (Recommended)
+### 3. Start Single Agent (Standard Mode)
+If you only need a single agent without the Swarm capabilities, you can run:
+```bash
+cmd /c set PYTHONIOENCODING=utf-8 && python -m src.adk_agent.main_web_start_steering_single_agent
+```
+This will start the standard Ciri agent on port 9000 (default).
+
+### 4. Start Swarm Cluster (Recommended)
 We provide a one-click startup script that automatically launches 1 Head Leader and 4 Worker nodes:
 
 ```cmd
@@ -104,7 +141,7 @@ The "Commander" skill of Ciri. Loading this skill gives the Agent the ability to
 
 **The "Agent Smith" Implementation**:
 
-In the Google ADK Swarm, **every agent is "Agent Smith"**.
+In the Google ADK Swarm, **every agent is "Agent Smith in Matrix"**.
 - **Identical Capabilities**: Every node (Leader or Worker) runs the exact same code and possesses the full set of capabilities. There is no hard-coded "Master" node.
 - **Decentralized Access**: You can access the Swarm through **any port** (8000, 8001, 8002, etc.). The node you connect to automatically becomes the "Leader" for that session, commanding other idle nodes as "Workers".
 - **Standalone Mode**: If a node detects no other active peers in the `swarm_registry.db`, it silently falls back to working alone, ensuring reliability in any environment.
@@ -130,14 +167,6 @@ The "Janitor" working silently in the background.
 Designed for long-running tasks.
 *   **Function**: Run Python scripts or system commands in an independent background process.
 *   **Scenario**: "Scan PDF files in the entire D drive for me" -> Agent submits task to Dex -> Immediately returns "Scan started, you can continue to ask me other questions" -> Task runs silently in the background.
-
----
-
-## 🎨 Interleaved Thinking
-
-This project perfectly supports and visualizes the **Interleaved Thinking** mode. Unlike the traditional "One Thought, One Action", Ciri can interweave thinking and action multiple times in a single response.
-
-![Interleaved Thinking Principle](image/interleaved_tool_call(agent交错思考)的代码原理/1767580311531.png)
 
 ---
 

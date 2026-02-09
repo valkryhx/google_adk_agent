@@ -2,6 +2,7 @@
 
 # Ciri: An AI Agent from scratch by vibe coding ⚡
 
+
 > **"Vibe Coding" Reimagined.**
 > 
 > **Ciri** 是一个完全基于 **Google ADK (Agent Development Kit)** 从零构建的现代化 AI Agent 系统。
@@ -24,6 +25,19 @@
 
 ---
 
+## 📚 实现原理解析 (Implementation Deep Dive)
+
+我们在 `MISC/how-to/` 目录下准备了详尽的文档，帮助你深入理解 Ciri 的核心实现逻辑：
+
+*   **[核心技能与懒加载](MISC/how-to/import-skills_CN.md)**: 我们如何管理技能以及 `get_tools` 模式，实现按需加载。
+*   **[上下文压缩](MISC/how-to/autocompactor-subagent_CN.md)**: `AutoCompactAgent` 的设计思路，如何做无感记忆管理。
+*   **[Steering 与控制](MISC/how-to/steering-by-adk-callbacks_CN.md)**: 基于 ADK 回调的 AOP 编程，实现实时中断机制。
+*   **[编程方式调用工具 (PTC)](MISC/how-to/PTC-programmatic-tool-calling_CN.md)**: 代码即编排，让 Agent 一次性完成复杂逻辑。
+*   **[Dex: 异步执行](MISC/how-to/dex_CN.md)**: 守护进程执行器，如何优雅地处理长耗时任务。
+*   **[Agent-team架构](MISC/how-to/agent-team_CN.md)**: "分形 Agent" (Fractal Agent) 设计哲学，以及去中心化的服务发现。
+
+---
+
 ## ✨ 核心特性 (Key Features)
 
 ### 🚀 1. Agent Swarm (集群智能)
@@ -38,6 +52,10 @@
 - **热插拔**: 无需重启，运行时动态挂载/卸载 Python 工具包。
 - **按需加载**: 用完即走，通过 `compactor` 自动卸载不常用技能，节省资源。
 - **支持广泛**: 涵盖文件操作、代码执行、网络搜索、数据库管理等。
+- **易扩展**: 在 `skills/your_skill/` 下创建 `tools.py` 即可直接使用。
+
+> **⚠️ 开发者注意**: 在创建新 Skill 时，强烈建议使用 `get_tools` 函数模式（参考 `skills/bash/tools.py`），而不是在模块顶层直接实例化工具。
+> *   **原因**: `get_tools` 支持延迟初始化，可以在 Skill 加载时捕获错误，并支持传入运行时配置。这确保了 Tool 对象仅在 Skill 被 Agent 真正加载时才创建，避免了全局副作用。
 
 ### 🧠 3. Infinite Context (无限上下文)
 基于 `compactor` 技能的**有损压缩技术**，让 Ciri 拥有"无限"的长期记忆：
@@ -49,6 +67,19 @@
 - **TUI (终端界面)**: 极客风格的命令行界面，支持流式输出和实时状态监控。
 - **Web UI**: Google 风格的响应式 Web 界面，完美展示 **Interleaved Thinking (交错思考)** 过程——你可以实时看到 Ciri 在 "思考 -> 调工具 -> 拿结果 -> 再思考" 的完整心路历程。
 
+---
+
+---
+
+## 📸 演示截图 (Demo Showcase)
+
+### 🤖 单智能体模式 (Single Agent Mode)
+![Single Agent Demo](demo_images/single-agent-demo/6.png)
+
+### 👥 智能体集群模式 (Agent Team Mode)
+![Agent Team Demo](demo_images/agent-team-demo/ciri-agent-team-2.png)
+
+查看 [demo_images/agent-team-demo](demo_images/agent-team-demo) 目录下的图片，了解更多 demo。
 ---
 
 ## 🛠️ 快速开始 (Getting Started)
@@ -66,9 +97,18 @@ pip install -r requirements.txt
 ```
 
 ### 2. 配置 API Key
-在项目根目录创建或修改 `private_key.yaml` (或其他配置文件)，填入你的 LLM API Key (推荐使用 DashScope Qwen 或 OpenAI)。
+在项目根目录创建或修改 `private_key.yaml` (或其他配置文件)，填入你的 LLM API Key (推荐使用 deepseek  或 stepfunc-3.5-flash 或 更高级模型)。
 
-### 3. 启动 Swarm 集群 (推荐)
+
+
+### 3. 启动单智能体 (Single Agent Mode)
+如果你不需要集群功能，想单独运行 Ciri，可以使用以下命令：
+```bash
+cmd /c set PYTHONIOENCODING=utf-8 && python -m src.adk_agent.main_web_start_steering_single_agent
+```
+这将启动标准版 Ciri Agent (默认端口 9000)。
+
+### 4. 启动 Swarm 集群 (推荐)
 我们提供了一个一键启动脚本，会自动启动 1 个 Head Leader 和 4 个 Worker 节点：
 
 ```cmd
@@ -130,13 +170,8 @@ pip install -r requirements.txt
 *   **功能**: 在后台独立进程中运行 Python 脚本或系统命令。
 *   **场景**: "帮我扫描整个 D 盘的 PDF 文件" -> Agent 提交任务给 Dex -> 立即返回 "已开始扫描，您可以继续问我别的问题" -> 任务在后台默默运行。
 
----
-
-## 🎨 交互原理 (Interleaved Thinking)
-
-本项目完美支持并可视化了 **Interleaved Thinking** 模式。不同于传统的 "一次思考，一次行动"，Ciri 可以在单次回复中多次穿插思考和行动。
-
-![Interleaved Thinking 原理](image/interleaved_tool_call(agent交错思考)的代码原理/1767580311531.png)
+> **⚠️ 开发者注意**: 在创建新 Skill 时，强烈建议使用 `def get_tools(*args, **kwargs) -> List:` 函数模式（参考 `skills/bash/tools.py`），而不是在模块顶层直接实例化工具。
+> *   **原因**: `get_tools` 支持延迟初始化，可以在 Skill 加载时捕获错误，并支持传入运行时配置。这确保了 Tool 对象仅在 Skill 被 Agent 真正加载时才创建，避免了全局副作用。
 
 ---
 
