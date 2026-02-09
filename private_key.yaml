@@ -1,0 +1,14 @@
+
+
+# NOTICE:liteLim needs an openai or vllm prefix before the llm model
+api_key: "YOUR_API_KEY"
+api_base: "your_llm_api" 
+model: "openai/your_model" 
+
+
+tavily_api_key: "YOUR_API_KEY"
+
+# not need
+#context7_api_key: "YOUR_API_KEY"
+
+
