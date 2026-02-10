@@ -5,6 +5,7 @@ import os
 import random
 import sqlite3
 import asyncio
+import time
 from typing import List, Optional
 
 # ==========================================
@@ -13,7 +14,9 @@ from typing import List, Optional
 # ==========================================
 # 配置与常量
 # ==========================================
-REGISTRY_DB = "sqlite_db/swarm_registry.db"
+# 使用基于文件的绝对路径，不依赖CWD
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REGISTRY_DB = os.path.join(_PROJECT_ROOT, "sqlite_db", "swarm_registry.db")
 CLUSTER_APP_NAME = "adk_universal_swarm"
 
 # 【关键】从环境变量获取当前节点端口，实现自我认知
@@ -26,26 +29,43 @@ CURRENT_NODE_PORT = int(os.environ.get("ADK_CURRENT_PORT", 0))
 
 def _get_active_workers() -> List[dict]:
     """
-    从 SQLite 注册表中获取活跃的 Worker 节点。
-    会自动排除当前节点自己（避免自己给自己派活导致死循环）。
+    [Dynamic Elasticity] 从 SQLite 注册表中获取活跃的 Worker 节点。
+    会自动排除当前节点自己，并过滤掉心跳超时的僵尸节点。
     """
     if not os.path.exists(REGISTRY_DB):
         return []
+    
+    # [Dynamic Elasticity] 定义超时阈值（15 秒没心跳就认为挂了）
+    HEARTBEAT_TIMEOUT = 15.0
+    current_time = time.time()
     
     try:
         # 使用 timeout 防止数据库锁竞争
         with sqlite3.connect(REGISTRY_DB, timeout=5.0) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT port, url FROM nodes WHERE status='active'")
+            cursor.execute("SELECT port, url, last_seen FROM nodes WHERE status='active'")
             rows = cursor.fetchall()
             
             workers = []
+            dead_ports = []
+            
             for row in rows:
-                # 【自我排除逻辑】
+                # [Dynamic Elasticity] 检查心跳
+                last_seen = row['last_seen'] or 0
+                if current_time - last_seen > HEARTBEAT_TIMEOUT:
+                    dead_ports.append(row['port'])
+                    continue
+
+                # 自我排除逻辑
                 if CURRENT_NODE_PORT and int(row['port']) == CURRENT_NODE_PORT:
                     continue 
                 workers.append({"port": row['port'], "url": row['url']})
+            
+            # 日志记录僵尸节点
+            if dead_ports:
+                print(f"[Swarm Discovery] 发现并忽略心跳超时节点: {dead_ports}")
+                
             return workers
     except Exception as e:
         print(f"[Swarm Discovery Error] {e}")
@@ -104,10 +124,12 @@ async def dispatch_task(
     active_workers = _get_active_workers()
     
     if not active_workers:
+        # [Dynamic Elasticity] 返回带有强烈暗示的指令，触发应急接管
         return (
-            f"【系统警告】集群中没有发现其他活跃节点（当前节点 Port {CURRENT_NODE_PORT} 是唯一的幸存者）。\n"
-            f"请不要再尝试分派任务。\n"
-            f"👉 立即使用你自己的本地工具（如 bash, file_editor,skill_load）亲自执行此任务,记住 你也是可动态能力加持的强大智能体。"
+            f"[SWARM SYSTEM ALERT] 集群全员离线！\n"
+            f"紧急协议已触发：你现在是唯一的执行者。\n"
+            f"立即停止调度，马上使用你本地的 Tool (bash/file_editor/python/skill_load) 亲自执行此任务！\n"
+            f"任务内容回顾：{task_instruction}"
         )
 
     # 2. 确定候选列表
@@ -173,12 +195,13 @@ async def dispatch_task(
             "session_id": use_session_id
         }
 
+        worker_failed_completely = False
         for attempt in range(max_retries + 1):
             try:
-                # [Optimized] Use separate timeouts for connect and read
-                # Connect: 3s (fast fail if node down)
-                # Read: 30s (shorter timeout to trigger retry earlier as requested)
-                timeout_config = httpx.Timeout(180.0, connect=3.0)
+                # [Dynamic Elasticity] 使用极短的连接超时实现快速失败 (Fast Fail)
+                # Connect: 2.0s (如果连不上，说明挂了)
+                # Read: 180.0s (如果连上了，给它时间执行任务)
+                timeout_config = httpx.Timeout(180.0, connect=2.0)
                 
                 async with httpx.AsyncClient(timeout=timeout_config) as client:
                     async with client.stream("POST", f"{worker_url}/api/chat", json=payload) as response:
@@ -227,11 +250,10 @@ async def dispatch_task(
                                 except: continue
                             
                             # 成功！返回结构化报告
-                            print(f"[Swarm] ✅ Worker {worker_port} 任务完成。")
+                            print(f"[Swarm] Worker {worker_port} 任务完成。")
                             
                             # [新增] 任务血缘记录：向 Worker 注入元数据
                             try:
-                                import time
                                 metadata = {
                                     "task_type": "swarm_worker",
                                     "leader_port": CURRENT_NODE_PORT,
@@ -249,45 +271,73 @@ async def dispatch_task(
                                             "metadata": metadata
                                         }
                                     )
-                                print(f"[Swarm] 📝 已注入任务血缘元数据到 Worker {worker_port}")
+                                print(f"[Swarm] 已注入任务血缘元数据到 Worker {worker_port}")
                             except Exception as e:
-                                print(f"[Swarm] ⚠️ 元数据注入失败: {e}")
+                                print(f"[Swarm] 元数据注入失败: {e}")
                             
                             # [Report] 任务完成 (Finish)
                             report('finish', {"worker_port": worker_port, "status": "success"})
                             
                             return (
-                                f"✅ [SWARM SUCCESS]\n"
-                                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                                f"🤖 执行节点: Worker Agent (Port {worker_port})\n"
-                                f"🆔 会话 ID : {use_session_id}\n"
-                                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                                f"📄 执行结果摘要:\n"
+                                f"[SWARM SUCCESS]\n"
+                                f"\n"
+                                f"执行节点: Worker Agent (Port {worker_port})\n"
+                                f"会话 ID : {use_session_id}\n"
+                                f"\n"
+                                f"执行结果摘要:\n"
                                 f"{final_report[:20000]}..."
-                                f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                                f"\n"
                             )
                         
                         # === 场景 C: 其他错误 ===
                         last_error = f"HTTP {response.status_code}"
             
-            except (httpx.ConnectError, httpx.TimeoutException, ConnectionRefusedError) as e:
-                print(f"[Swarm] ⚠️ 连接 Worker {worker_port} 失败 (Attempt {attempt+1}/{max_retries+1}): {e}")
+            # [Dynamic Elasticity] 情况一：连接被拒绝 (进程挂了/端口关闭) -> 立即移除，不再重试
+            except (httpx.ConnectError, ConnectionRefusedError) as e:
+                print(f"[Swarm] Worker {worker_port} 拒绝连接 (进程可能已结束): {e}")
+                # 恢复自愈核心: 立即从数据库移除死节点
+                _remove_dead_node(worker_port)
+                worker_failed_completely = True
+                last_error = f"Node {worker_port} Dead"
+                break  # 不要再试这个端口了
+
+            # [Dynamic Elasticity] 情况二：超时 (网络卡/负载高) -> 只是重试，不移除
+            except httpx.TimeoutException:
+                print(f"[Swarm] 连接 Worker {worker_port} 超时 (Attempt {attempt+1}/{max_retries+1})")
                 if attempt < max_retries:
-                    await asyncio.sleep(1) # 重试前等待
-                    continue
+                    await asyncio.sleep(1)
+                    continue  # 在同一个节点重试
                 else:
-                    # 只有在多次重试失败后，才考虑是否标记为离线（暂时注释掉自动移除，避免误杀）
-                    # _remove_dead_node(worker_port) 
-                    last_error = str(e)
+                    worker_failed_completely = True
+                    last_error = "Timeout"
+                    # 多次超时也不移除，依靠心跳机制被动清理，防止误杀
+            
             except Exception as e:
                 print(f"[Swarm] 未知错误: {e}")
+                worker_failed_completely = True
                 last_error = str(e)
-                break 
+                break
+        
+        # 如果这个 Worker 彻底挂了
+        if worker_failed_completely:
+            if target_port:
+                # 指定了目标，无法换人，报错
+                return f"【调度失败】目标 Worker {target_port} 无法连接，可能已离线。"
+            else:
+                print(f"[Swarm] 切换到下一个候选节点...")
+                continue
 
     # 5. 所有候选人都试过了，还是失败
-    msg = f"【调度失败】无法将任务分派给任何 Worker。Last Error: {last_error}"
-    report('fail', {"worker_port": 0, "error": msg}) # Port 0 means system/scheduler fail
-    return msg
+    msg = f"【调度失败】所有 Worker ({len(candidates)}个) 均无法连接或执行失败。Last Error: {last_error}"
+    report('fail', {"worker_port": 0, "error": msg})
+    # [Dynamic Elasticity] 返回强制接管指令
+    return (
+        f"{msg}\n"
+        f"\n"
+        f"[SYSTEM FALLBACK] 自动降级程序启动：外部资源不可用。\n"
+        f"你必须依靠自己完成任务。\n"
+        f"请立即调用你本地的 bash 或 file_editor 工具开始工作！"
+    )
 
 # ==========================================
 # [新增] 跨节点上下文同步工具

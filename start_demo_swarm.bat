@@ -15,7 +15,7 @@ cd /d %~dp0
 
 :: 1. 清理环境 (防止僵尸节点)
 echo [System] Cleaning up old registry for a fresh demo...
-if exist swarm_registry.db del swarm_registry.db
+if exist sqlite_db/swarm_registry.db del sqlite_db/swarm_registry.db
 if not exist logs mkdir logs
 
 echo.

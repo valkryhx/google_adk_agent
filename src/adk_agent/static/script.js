@@ -771,7 +771,7 @@ document.addEventListener('DOMContentLoaded', () => {
             deleteBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 if (confirm(`确认删除对话 "${session.title}" ? `)) {
-                    await deleteSession(session.session_id);
+                    await deleteSession(session.session_id, session.isSwarm, session.leaderPort);
                 }
             });
 
@@ -934,10 +934,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 删除会话
-    async function deleteSession(sessionId) {
+    async function deleteSession(sessionId, isSwarm = false, leaderPort = null) {
         try {
+            // 动态确定 app_name
+            let appName = APP_NAME;
+            if (isSwarm && leaderPort) {
+                appName = `swarm_from_${leaderPort}`;
+            }
+
+            console.log(`[删除会话] sessionId=${sessionId}, appName=${appName}`);
+
             const response = await fetch(
-                `/api/sessions/${sessionId}?app_name=${APP_NAME}&user_id=${getUserId()}`,  // 动态获取
+                `/api/sessions/${sessionId}?app_name=${appName}&user_id=${getUserId()}`,  // 动态获取
                 { method: 'DELETE' }
             );
 

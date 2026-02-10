@@ -111,14 +111,17 @@ worker_state = WorkerState()
 WORKER_LOCK = asyncio.Lock()
 
 # ==========================================
-# 2. agent team 的 SQLite 服务注册逻辑 (Service Discovery for agent team)
+# 2. SQLite 服务注册逻辑 (Service Discovery)
 # ==========================================
-REGISTRY_DB = "sqlite_db/swarm_registry.db"
+# 使用与 session DB 相同的路径策略，基于 __file__ 计算绝对路径，不依赖 CWD
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+REGISTRY_DB = os.path.join(_PROJECT_ROOT, "sqlite_db", "swarm_registry.db")
 
 def init_registry_db():
     """初始化注册表数据库 (幂等操作)"""
+    # 确保父目录存在，防止 unable to open database file 错误
+    os.makedirs(os.path.dirname(REGISTRY_DB), exist_ok=True)
     try:
-        os.makedirs(os.path.dirname(REGISTRY_DB), exist_ok=True)
         with sqlite3.connect(REGISTRY_DB, timeout=10.0) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS nodes (
@@ -152,6 +155,21 @@ def deregister_self():
         print(f"[Node-{node_config.port}] 👋 已退出 Swarm 集群")
     except Exception as e:
         print(f"[Node-{node_config.port}] ⚠️ 注销失败: {e}")
+
+async def heartbeat_daemon():
+    """[Dynamic Elasticity] 周期性更新心跳时间戳, 让 Leader 知道本节点还活着"""
+    print(f"[Heartbeat] 启动心跳守护进程 (Port {node_config.port})")
+    while True:
+        try:
+            await asyncio.sleep(5)
+            current_time = time.time()
+            with sqlite3.connect(REGISTRY_DB, timeout=2.0) as conn:
+                conn.execute(
+                    "UPDATE nodes SET last_seen = ? WHERE port = ?",
+                    (current_time, node_config.port)
+                )
+        except Exception as e:
+            print(f"[Heartbeat] 心跳更新失败: {e}")
 
 
 # ==========================================
@@ -960,6 +978,22 @@ class SessionManager:
             del self._sessions[key]
             print(f"[SessionManager] Removed session: {key}")
 
+    # def find_session(self, app_name_pattern: str, user_id: str, session_id: str) -> Optional[SteeringSession]:
+    #     """
+    #     [New] 支持 app_name="*" 的模糊查找
+    #     用于 Cancel 等操作，此时前端可能不知道确切的 app_name
+    #     """
+    #     if app_name_pattern == "*":
+    #         # 遍历寻找匹配 user_id 和 session_id 的会话
+    #         for key, session in self._sessions.items():
+    #             # key = (app_name, user_id, session_id)
+    #             if key[1] == user_id and key[2] == session_id:
+    #                  print(f"[SessionManager] Fuzzy found session: {key}")
+    #                  return session
+    #         return None
+    #     else:
+    #         return self.get(app_name_pattern, user_id, session_id)
+
 
 # 全局 SessionManager 实例
 session_manager: Optional[SessionManager] = None
@@ -1232,6 +1266,34 @@ async def chat_endpoint(request: ChatRequest, response: Response):
         print(f"[Node-{node_config.port}] ❌ 执行异常: {e}")
         return {"error": str(e)}
 
+# @app.post("/api/cancel")
+# async def cancel_endpoint(req: CancelRequest):
+#     """
+#     [新架构] 接收取消指令，通过 SessionManager 定位会话并发送中断信号
+#     """
+#     global session_manager
+    
+#     if session_manager is None:
+#         return {"status": "error", "message": "SessionManager not initialized"}
+    
+#     # 获取会话（不创建）
+#     # [Fix] 支持 app_name="*"，以解决 Leader 和 Worker 之间 app_name 可能不一致的问题
+#     session = session_manager.find_session(req.app_name, req.user_id, req.session_id)
+    
+#     # [Restored] 自动容错：如果精确查找失败且没用通配符，尝试全名空间搜索
+#     if session is None and req.app_name != "*":
+#         print(f"⚠️ [API] 精确查找失败 ({req.app_name})，尝试全局搜索...")
+#         session = session_manager.find_session("*", req.user_id, req.session_id)
+    
+#     if session is None:
+#         print(f"🛑 [API] 无法找到会话 -> {req.app_name}/{req.user_id}/{req.session_id}")
+#         return {"status": "error", "message": "Session not found"}
+    
+#     # 向会话的队列发送中断信号
+#     await session.queue.put("CANCEL")
+#     print(f"🛑 [API] 收到 Cancel 信号 -> {req.app_name}/{req.user_id}/{req.session_id}")
+#     return {"status": "success"}
+
 @app.post("/api/cancel")
 async def cancel_endpoint(req: CancelRequest):
     """
@@ -1356,7 +1418,7 @@ async def stop_remote_worker(request: StopWorkerRequest):
             # It is defined in tools.py.
             # I should define it here or hardcode it to match.
             
-            swarm_app_name = "adk_universal_swarm"
+            swarm_app_name = "adk_universal_swarm"  # #swarm_app_name = "*"
             leader_user_id = f"Agent_Node_{node_config.port}"
             
             print(f" -> Sending Cancel to {worker_url} for {swarm_app_name}/{leader_user_id}/{request.worker_session_id}")
@@ -1752,7 +1814,7 @@ async def get_leader_summary(
                 "title": latest_session.state.get('title', 'Untitled') if latest_session.state else 'Untitled',
                 "session_id": latest_session.id,
                 "app_name": latest_session.app_name, # 返回真实的 app_name 供调试
-                "recent_summary": "\n".join(summary_lines),
+                "recent_summary": " ".join(summary_lines),
                 "total_messages": len(latest_session.events) if latest_session.events else 0
             }
             return result
@@ -1766,12 +1828,21 @@ async def get_leader_summary(
         traceback.print_exc()
         return {"error": str(e)}
 
+#暂时没用到
+@app.get("/health")
+async def health_check():
+    """轻量级健康检查接口"""
+    if WORKER_LOCK.locked():
+        return {"status": "busy", "task": worker_state.current_task_summary}
+    return {"status": "ok", "port": node_config.port}
+
 @app.on_event("startup")
 async def startup_event():
     init_registry_db()
     await create_agent()
     register_self()
-    print(f"[Node-{node_config.port}] 🚀 服务已完全启动 (已加入 Swarm)")
+    asyncio.create_task(heartbeat_daemon())
+    print(f"[Node-{node_config.port}] 🚀 服务已完全启动 (已加入 Swarm, Heartbeat ON)")
 
 @app.get("/")
 async def root():
