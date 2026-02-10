@@ -234,7 +234,9 @@ class FullyCustomDbService(BaseSessionService):
     async def list_sessions(self, *, app_name: str, user_id: Optional[str] = None) -> ListSessionsResponse:
         async with self.async_session_factory() as db:
             async with db.begin():
-                stmt = select(self.DbSession).where(self.DbSession.app_name == app_name)
+                stmt = select(self.DbSession)
+                if app_name != "*":
+                    stmt = stmt.where(self.DbSession.app_name == app_name)
                 
                 if user_id is not None:
                     stmt = stmt.where(self.DbSession.user_id == user_id)

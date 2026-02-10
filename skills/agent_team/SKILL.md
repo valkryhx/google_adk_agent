@@ -38,46 +38,44 @@ description: Enables the agent to act as a Swarm Leader, dispatching tasks to re
 * 同时编写后端的 Controller 层、Service 层、Dao 层代码（如果它们接口已定）。
 * 对同一份代码进行 Security Review 和 Performance Review。
 
-### `sync_leader_context` (上下文同步)
-当你是 Worker 节点时，这个工具让你获取 Leader 或其他节点的任务背景信息。
+### `sync_task_context` (上下文同步)
+当你是 Worker 节点时，这个工具让你获取其他节点的完整任务背景信息。
 
 #### 主要功能：
-1. **自动检测 Leader**：在 Swarm 会话中自动识别 Leader 端口
-2. **手动指定端口**：明确指定要同步的节点（单个或多个）
-3. **多节点并发同步**：同时从多个节点获取上下文
+1. **基于 User ID 同步**：只需提供目标端口，自动使用当前用户的身份去查询，无需关心 App Name。
+2. **支持通配符查询**：内部自动使用 `app_name="*"`，无论目标节点运行的是 Leader 还是 Worker 任务，都能查到该用户的最新会话。
+3. **全量上下文获取**：返回完整的对话历史，不截断，确保你了解任务的所有细节。
 
 #### 使用方式：
 
-**1. 自动检测模式**（推荐）
+**1. 查询 Leader (向上同步)**
 ```python
-sync_leader_context(reason="需要汇总三家公司的调查结果")
-```
-系统会自动：
-- 从当前会话的 `app_name`（如 `swarm_from_8000`）解析 Leader = 8000
-- 或从会话 state 中读取 `leader_port`
-- 或查找最近的 Swarm 会话
-
-**2. 单端口模式**
-```python
-sync_leader_context(
-    reason="获取8000的任务背景",
-    leader_port=8000
+sync_task_context(
+    reason="获取User X在Leader节点的完整任务要求",
+    target_ports=[8000] 
 )
 ```
 
-**3. 多端口模式** ⭐ 强大功能
+**2. 查询同级 Worker (横向同步)**
 ```python
-sync_leader_context(
-    reason="汇总Leader和所有Worker的状态",
-    leader_port=[8000, 8001, 8002]
+sync_task_context(
+    reason="看看隔壁Agent 8003做了什么",
+    target_ports=[8003]
 )
 ```
-返回每个节点的上下文摘要，失败的节点会标记错误。
+
+**3. 多节点并发查询 (全局视野)**
+```python
+sync_task_context(
+    reason="汇总8000(Leader)的任务背景以及8001, 8003(Worker)的执行结果",
+    target_ports=[8000, 8001, 8003]
+)
+```
 
 #### 典型场景：
-* **Worker 汇总数据**：8002(Worker) 需要知道 8000(Leader) 的完整任务要求
-* **跨节点协作**：8003 想查看 8001 的调查结果进行对比
-* **任务验收**：Leader 同步所有 Worker 的执行状态
+* **Worker 领悟大局**：8002(Worker) 只接到了“写文件”的指令，它调用 `sync_task_context([8000])` 发现原来整个项目是“写一个博客系统”，于是它能更好地命名变量和注释。
+* **跨节点协作**：8003 负责写测试，它调用 `sync_task_context([8002])` 获取 8002 写的业务代码逻辑，从而由 AI 自动生成测试用例。
+* **任务验收**：Leader 调用 `sync_task_context([8001, 8002, 8003])` 获取所有人的最新进展，进行汇总报告。
 
 ## 3. 使用策略 (Usage Strategy) - 请务必遵守！
 
@@ -132,7 +130,7 @@ Worker 是你的"外部大脑"。
 
 6.  **Final Reply**: "博客系统已完成，由 Worker 8001 和 8002 协作构建。"
 
-### 场景：多节点数据汇总（使用 sync_leader_context）
+### 场景：多节点数据汇总（使用 sync_task_context）
 
 **User:** "帮我调查 Microsoft、Apple、Google 三家公司的最新动态，然后做成对比表格。"
 
@@ -165,21 +163,24 @@ Worker 是你的"外部大脑"。
     
 2.  **Action 1 (同步 Leader 背景)**:
     ```python
-    sync_leader_context(reason="获取完整任务要求和其他公司数据")
+    sync_task_context(
+        reason="获取User X在Leader节点的完整任务要求",
+        target_ports=[8000]
+    )
     ```
     * **Result**: 获得 8000(Leader) 的任务背景："调查 Microsoft、Apple、Google..."
     
 3.  **Action 2 (同步其他 Worker)**:
     ```python
-    sync_leader_context(
+    sync_task_context(
         reason="收集其他 Worker 的调查结果",
-        leader_port=[8001, 8003]  # Microsoft 和 Google
+        target_ports=[8001, 8003]  # Microsoft 和 Google
     )
     ```
     * **Result**: 
       ```
-      ✅ 节点 8001: Microsoft调查 (8 条消息)
-      ✅ 节点 8003: Google调查 (7 条消息)
+      ✅ 节点 8001: Microsoft调查 (完整上下文...)
+      ✅ 节点 8003: Google调查 (完整上下文...)
       ```
 
 4.  **Action 3 (生成表格)**:
@@ -189,5 +190,5 @@ Worker 是你的"外部大脑"。
 
 **关键点**：
 - Worker 8002 无需重新执行调查任务
-- 通过 `sync_leader_context` 直接获取其他节点的结果
+- 通过 `sync_task_context` 直接获取其他节点的结果 (全量)
 - 多端口同步 `[8001, 8003]` 并发执行，速度快

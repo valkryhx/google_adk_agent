@@ -741,9 +741,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // 如果是 Swarm 会话，添加标记
             if (session.isSwarm) {
                 const swarmBadge = document.createElement('span');
-                swarmBadge.textContent = `📋 `;
+                swarmBadge.textContent = '[Agent-Team-TASK] ';
                 swarmBadge.style.marginRight = '4px';
-                swarmBadge.title = `来自 Leader Port ${session.leaderPort}`;
+                swarmBadge.style.color = '#ff9800'; // Add orange color to make it distinct
+                swarmBadge.style.fontWeight = 'bold';
+                swarmBadge.title = `来自 Leader Port ${session.leaderPort || 'Unknown'}`;
                 titleSpan.appendChild(swarmBadge);
             }
 

@@ -292,161 +292,73 @@ async def dispatch_task(
 # ==========================================
 # [新增] 跨节点上下文同步工具
 # ==========================================
-async def sync_leader_context(
+async def sync_task_context(
     reason: str = "",
-    leader_port = None,  # 新增：可以是 int（单个）或 list[int]（多个）
+    target_ports = None,         # [改名] 明确表示“我要去问这些端口”
     _session_service = None,
     _app_info = None
 ) -> str:
     """
-    【Swarm 上下文同步工具】从一个或多个节点获取任务背景信息
+    【User-Centric 任务同步】基于用户身份，查询指定节点上的最新任务状态。
+    不再需要指定 Leader Port，只要 User ID 一致即可查到。
     
     Args:
-        reason: 同步原因说明（推荐填写，便于日志追踪）
-        leader_port: (可选) Leader 端口号
-            - int: 单个端口，如 8000
-            - list[int]: 多个端口，如 [8000, 8001]
-            - None: 自动检测
-        
-    使用场景：
-    1. Worker 节点需要获取 Leader 分派的原始任务背景
-    2. 汇总多个节点的上下文（如多个并行任务的结果）
-    3. 跨节点上下文共享
-    
-    示例：
-        # 自动检测 Leader
-        sync_leader_context(reason="需要汇总三家公司的数据")
-        
-        # 同步单个 Leader
-        sync_leader_context(reason="同步8000的任务", leader_port=8000)
-        
-        # 同步多个节点
-        sync_leader_context(
-            reason="汇总8000(Leader)和8001(Worker)的状态",
-            leader_port=[8000, 8001]
-        )
+        reason (str): 同步原因。
+        target_ports (int | List[int]): 你要查询的目标节点端口列表。
     """
     try:
-        # 1. 获取当前 session
-        current_session = await _session_service.get_session(
-            app_name=_app_info.get("app_name", ""),
-            user_id=_app_info.get("user_id", ""),
-            session_id=_app_info.get("session_id", "")
-        )
+        # 1. 获取当前用户身份 (这是唯一的通行证)
+        # 优先使用透传的 original_user_id (Worker模式)，如果没有则用当前的 (Leader/User模式)
+        current_user_id = _app_info.get("user_id", "unknown")
         
-        
-        # 2. 确定要同步的端口列表
-        original_user_id = _app_info.get("user_id", "unknown")
-        current_app_name = _app_info.get("app_name", "")
-        ports_to_sync = []
-        
-        # 处理 leader_port 参数（可以是 int、list 或 None）
-        if leader_port:
-            if isinstance(leader_port, list):
-                ports_to_sync = leader_port
-                print(f"[Swarm Sync] ✓ 使用手动指定的多个端口: {ports_to_sync}")
-            elif isinstance(leader_port, int):
-                ports_to_sync = [leader_port]
-                print(f"[Swarm Sync] ✓ 使用手动指定的端口: {leader_port}")
-            else:
-                return f"❌ leader_port 参数类型错误: {type(leader_port)}，应该是 int 或 list[int]"
-            
-            # 尝试从会话 state 获取 original_user_id
-            if current_session.state and 'original_user_id' in current_session.state:
-                original_user_id = current_session.state['original_user_id']
-        
-        # 自动检测单个端口（按优先级）
-        elif not ports_to_sync:
-            detected_port = None
-            
-            # 优先级1：当前会话的 state 中有 leader_port
-            if current_session.state and 'leader_port' in current_session.state:
-                detected_port = current_session.state['leader_port']
-                original_user_id = current_session.state.get('original_user_id', original_user_id)
-                print(f"[Swarm Sync] ✓ 从会话 state 获取 Leader={detected_port}")
-            
-            # 优先级2：从当前 app_name 直接解析
-            elif current_app_name and current_app_name.startswith("swarm_from_"):
-                try:
-                    detected_port = int(current_app_name.split("_")[-1])
-                    print(f"[Swarm Sync] ✓ 从 app_name '{current_app_name}' 解析出 Leader={detected_port}")
-                    
-                    if current_session.state and 'original_user_id' in current_session.state:
-                        original_user_id = current_session.state['original_user_id']
-                except (ValueError, IndexError) as e:
-                    print(f"[Swarm Sync] ⚠️ 无法从 app_name '{current_app_name}' 解析端口: {e}")
-            
-            # 优先级3：查找本节点上最近的 Swarm 会话
-            if not detected_port:
-                print(f"[Swarm Sync] ℹ️ 当前会话不是 Worker 任务，尝试查找最近的 Swarm 任务...")
-                
-                current_port = CURRENT_NODE_PORT
-                possible_leader_ports = [8000, 8001, 8002, 8003, 8004]
-                found_swarm_sessions = []
-                
-                for potential_leader in possible_leader_ports:
-                    if potential_leader == current_port:
-                        continue
-                    
-                    try:
-                        app_name_to_check = f"swarm_from_{potential_leader}"
-                        all_sessions = await _session_service.list_sessions(
-                            app_name=app_name_to_check,
-                            user_id=original_user_id
-                        )
-                        
-                        if all_sessions and len(all_sessions) > 0:
-                            for session in all_sessions:
-                                if session.state and 'leader_port' in session.state:
-                                    found_swarm_sessions.append({
-                                        'session': session,
-                                        'leader_port': session.state['leader_port'],
-                                        'app_name': app_name_to_check,
-                                        'created_at': session.created_at if hasattr(session, 'created_at') else 0
-                                    })
-                    except Exception as e:
-                        continue
-                
-                if found_swarm_sessions:
-                    found_swarm_sessions.sort(key=lambda x: x['created_at'], reverse=True)
-                    latest_swarm = found_swarm_sessions[0]
-                    
-                    detected_port = latest_swarm['leader_port']
-                    session = latest_swarm['session']
-                    original_user_id = session.state.get('original_user_id', original_user_id)
-                    
-                    print(f"[Swarm Sync] ✓ 找到最新的 Swarm 会话（app_name={latest_swarm['app_name']}），Leader={detected_port}")
-                    
-                    if len(found_swarm_sessions) > 1:
-                        other_leaders = [str(s['leader_port']) for s in found_swarm_sessions[1:3]]
-                        print(f"[Swarm Sync] ⚠️ 检测到多个 Swarm 会话，已选择最新的。其他 Leader: {', '.join(other_leaders)}")
-                        print(f"[Swarm Sync] 💡 建议：使用 leader_port=[8000, 8001] 同步多个节点")
-            
-            if detected_port:
-                ports_to_sync = [detected_port]
-            else:
-                return """ℹ️ 未找到 Leader 节点信息
+        # 尝试从 Session State 获取更准确的 original_user_id (如果存在)
+        # 这依然有必要，因为 Worker 自身的 user_id 可能被设为了 "Agent_Node_X"
+        try:
+            current_session = await _session_service.get_session(
+                app_name=_app_info.get("app_name", ""),
+                user_id=_app_info.get("user_id", ""),
+                session_id=_app_info.get("session_id", "")
+            )
+            if current_session and current_session.state:
+                current_user_id = current_session.state.get('original_user_id', current_user_id)
+        except:
+            pass # 容错，拿不到就用默认的
 
-提示：
-1. 当前会话不是从 Leader 分派的 Worker 任务
-2. 本节点上也没有找到最近的 Swarm 任务会话
-3. 建议手动指定端口: sync_leader_context(reason="...", leader_port=8000)
-"""
-        
-        print(f"[Swarm Sync] 🔄 开始同步 {len(ports_to_sync)} 个节点的上下文, 原因: {reason}")
-        
-        # 3. 并发同步多个节点
-        async def _sync_single_port(port):
-            """同步单个端口的辅助函数"""
+        # 2. 确定目标端口
+        targets = []
+        if target_ports:
+            # ✅ 新增：更稳健的类型兼容，因为 LLM 有时会把 list 传成 string "[8000]"
+            if isinstance(target_ports, str):
+                try:
+                    import json
+                    parsed = json.loads(target_ports)
+                    if isinstance(parsed, list): targets = parsed
+                    elif isinstance(parsed, int): targets = [parsed]
+                    else: targets = [int(p.strip()) for p in target_ports.split(',')]
+                except:
+                    # 最后的尝试：当做单个数字
+                    try: targets = [int(target_ports)]
+                    except: pass
+            elif isinstance(target_ports, list): targets = target_ports
+            elif isinstance(target_ports, int): targets = [target_ports]
+        else:
+            return "❌ 请指定 target_ports (你要查询的节点端口)。"
+
+        print(f"[Swarm Sync] 🆔 身份: {current_user_id}, 🎯 目标: {targets}")
+
+        # 3. 单节点查询逻辑
+        async def _sync_single_node(port):
             try:
-                leader_url = f"http://localhost:{port}"
+                target_url = f"http://localhost:{port}"
                 
                 async with httpx.AsyncClient(timeout=10.0) as client:
+                    # === [核心逻辑] 直接使用通配符 "*" ===
+                    # 含义：我是 User A，把我在你这儿不管什么名义下的最新任务给我
                     response = await client.get(
-                        f"{leader_url}/api/context/leader_summary",
+                        f"{target_url}/api/context/leader_summary",
                         params={
-                            "app_name": "dynamic_expert",
-                            "user_id": original_user_id,
+                            "app_name": "*",  # <--- 通配符魔法
+                            "user_id": current_user_id,
                             "limit": 1
                         }
                     )
@@ -455,81 +367,47 @@ async def sync_leader_context(
                         return {"port": port, "error": f"HTTP {response.status_code}"}
                     
                     data = response.json()
-                    
-                    if "error" in data:
-                        return {"port": port, "error": data['error']}
-                    
-                    if isinstance(data, list):
-                        return {"port": port, "error": "API 返回格式错误（list 而非 dict），请重启服务"}
-                    
-                    if not isinstance(data, dict):
-                        return {"port": port, "error": f"数据类型错误: {type(data)}"}
-                    
+                    if "error" in data: return {"port": port, "error": data['error']}
                     return {"port": port, "success": True, "data": data}
+
             except Exception as e:
                 return {"port": port, "error": str(e)}
+
+        # 4. 并发执行
+        results = await asyncio.gather(*[_sync_single_node(p) for p in targets])
         
-        # 并发执行所有同步
-        results = await asyncio.gather(*[_sync_single_port(port) for port in ports_to_sync])
+        # 5. 格式化输出
+        summary_parts = [
+            "【Swarm 任务上下文同步报告】",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"👤 用户身份: {current_user_id}",
+            f"🎯 目标节点: {targets}",
+            ""
+        ]
         
-        # 4. 格式化结果
-        if len(ports_to_sync) == 1:
-            # 单端口模式：简洁输出
-            res = results[0]
+        success_count = 0
+        for res in results:
+            port = res['port']
             if "error" in res:
-                return f"❌ 连接节点 {res['port']} 失败: {res['error']}"
-            
-            data = res["data"]
-            result = f"""
-【Leader 上下文同步成功】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🖥️  Leader 节点: http://localhost:{res['port']}
-👤 用户: {original_user_id}
-📋 任务标题: {data.get('title', 'Unknown')}
+                summary_parts.append(f"❌ 节点 {port}: {res['error']}")
+            else:
+                success_count += 1
+                data = res['data']
+                summary_parts.append(f"✅ 节点 (Port {port}): {data.get('title', 'Untitled')}")
+                # 摘要截取前 300 字符
+                summary_text = data.get('recent_summary', '无')
+                summary_parts.append(f"   摘要: {summary_text[:]}..." if len(summary_text) > 300 else f"   摘要: {summary_text}")
+                summary_parts.append("")
+        
+        summary_parts.append(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        summary_parts.append(f"同步成功率: {success_count}/{len(targets)}")
+        
+        return "\n".join(summary_parts)
 
-最近对话摘要:
-{data.get('recent_summary', '(无摘要)')}
-
-📊 总消息数: {data.get('total_messages', 0)}
-
-已同步完整上下文,你现在可以继续执行指令。
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-            print(f"[Swarm Sync] ✅ 同步成功,获得 {data.get('total_messages', 0)} 条消息")
-            return result.strip()
-        else:
-            # 多端口模式：汇总输出
-            summary_parts = [
-                "【多节点上下文同步完成】",
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-                f"👤 用户: {original_user_id}",
-                f"📡 同步节点数: {len(ports_to_sync)}",
-                ""
-            ]
-            
-            success_count = 0
-            for res in results:
-                port = res['port']
-                if "error" in res:
-                    summary_parts.append(f"❌ 节点 {port}: {res['error']}")
-                else:
-                    success_count += 1
-                    data = res['data']
-                    summary_parts.append(f"✅ 节点 {port}: {data.get('title', 'Untitled')} ({data.get('total_messages', 0)} 条消息)")
-                    summary_parts.append(f"   摘要: {data.get('recent_summary', '无')[:100]}...")
-                    summary_parts.append("")
-            
-            summary_parts.append(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            summary_parts.append(f"成功同步: {success_count}/{len(ports_to_sync)} 个节点")
-            
-            print(f"[Swarm Sync] ✅ 多节点同步完成: {success_count}/{len(ports_to_sync)}")
-            return "\n".join(summary_parts)
-    
     except Exception as e:
-        print(f"[Swarm Sync] ❌ 同步失败: {e}")
         import traceback
         traceback.print_exc()
-        return f"❌ 同步失败: {e}"
+        return f"❌ 系统异常: {e}"
 
 
 async def dispatch_batch_tasks(
@@ -628,14 +506,14 @@ def get_tools(agent, session_service, app_info, status_reporter=None):
     dbt.__doc__ = dispatch_batch_tasks.__doc__
     functools.update_wrapper(dbt, dispatch_batch_tasks)
     
-    # [新增] sync_leader_context 工具
-    slc = functools.partial(
-        sync_leader_context,
+    # [新增] sync_task_context 工具
+    stc = functools.partial(
+        sync_task_context,
         _session_service=session_service,
         _app_info=app_info
     )
-    slc.__name__ = "sync_leader_context"
-    slc.__doc__ = sync_leader_context.__doc__
-    functools.update_wrapper(slc, sync_leader_context)
+    stc.__name__ = "sync_task_context"
+    stc.__doc__ = sync_task_context.__doc__
+    functools.update_wrapper(stc, sync_task_context)
 
-    return [dt, dbt, slc]  # 返回3个工具
+    return [dt, dbt, stc]  # 返回3个工具
