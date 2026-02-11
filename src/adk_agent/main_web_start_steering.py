@@ -29,6 +29,7 @@ import argparse
 from src.adk_agent.core.manager import SkillManager
 from src.adk_agent.core.executor import execute_python_code
 from src.adk_agent.core.logger import AgentLogger, logger
+from src.adk_agent.core.simple_file_logger import default_logger as file_logger
 from src.adk_agent.config import AgentConfig, build_system_prompt
 import litellm
 from litellm import ContextWindowExceededError
@@ -44,7 +45,6 @@ from google.adk.agents import LlmAgent
 from src.shared.db.custom_table_db_service import FullyCustomDbService
 from google.adk.models.lite_llm import LiteLlm
 from src.adk_agent.auto_compact_agent import AutoCompactAgent
-
 
 # SessionKey = (app_name, user_id, session_id)
 SessionKey = Tuple[str, str, str]
@@ -640,6 +640,9 @@ class SteeringSession:
                 pending_runner_get = asyncio.create_task(runner_queue.get())
                 pending_stream_get = asyncio.create_task(self.stream_queue.get())
                 
+                # [Deduplication State]
+                processed_part_history = []
+                
                 while True:
                     # 等待任意一个队列有消息
                     done, pending = await asyncio.wait(
@@ -667,9 +670,42 @@ class SteeringSession:
                         else:
                             # 正常 Event
                             self.interruption_guard()
-                            chunks = _process_event_stream(result)
-                            for chunk in chunks:
-                                yield chunk
+                            
+                            # [Deduplication Logic]
+                            # Identify new parts by comparing with processed history
+                            evt_parts = []
+                            if hasattr(result, 'content') and result.content and hasattr(result.content, 'parts'):
+                                evt_parts = result.content.parts
+                                
+                            # Check for prefix match
+                            match_count = 0
+                            if processed_part_history and evt_parts:
+                                # Optimization: Only check if first part matches (Full Event scenario)
+                                if evt_parts[0] == processed_part_history[0]:
+                                    # Full event accumulation detected
+                                    for i in range(min(len(evt_parts), len(processed_part_history))):
+                                        if evt_parts[i] == processed_part_history[i]:
+                                            match_count += 1
+                                        else:
+                                            break
+                            
+                            # Filter new parts
+                            new_parts = evt_parts[match_count:]
+                            
+                            if new_parts:
+                                processed_part_history.extend(new_parts)
+                                chunks = _process_event_stream(result, parts_override=new_parts)
+                                for chunk in chunks:
+                                    yield chunk
+                            elif not evt_parts: 
+                                # If event has NO parts (e.g. pure tool call or metadata update), pass it through
+                                # But _process_event_stream checks for parts.
+                                # If it's a non-part event (like just tool_calls in some frameworks?), 
+                                # Google ADK events mainly communicate via parts.
+                                # If `result` has no content parts but is a valid event, _process_event_stream handles it via robust checks.
+                                chunks = _process_event_stream(result)
+                                for chunk in chunks:
+                                    yield chunk
 
                     # 2. 处理 Side-Channel 消息 (Swarm Log, Progress 等)
                     if pending_stream_get in done:
@@ -780,12 +816,18 @@ class SteeringSession:
                     session_id=self.session_id
                 )
                 print("\n\n***打印session events***\n===Session History Start===")
+                file_logger.info("\n\n***打印session events***\n===Session History Start===")
                 if updated_session and updated_session.events:
                     for event in updated_session.events:
                         if event.content and event.content.parts:
                             print(f"<{event.author}>: {event.content.parts}")
+                            file_logger.info(f"<{event.author}>: {event.content.parts}")
+                            file_logger.info('=='*10 + '\n')
                             print('=='*10 + '\n')
+                file_logger.info("=" * 60)
                 print("=" * 60)
+                file_logger.info("\n\n***打印session events***\n===Session History End===\n")
+                print("\n\n***打印session events***\n===Session History End===\n")
             except Exception as e:
                 print(f"[Warning] Failed to print session history: {e}")
             
@@ -1068,33 +1110,59 @@ async def create_agent(custom_config: AgentConfig = None):
     session_manager = SessionManager(config, session_service, sm, compactor_agent)
     print(f"[Node-{node_config.port}] ✅ 智能体就绪")
 
-def _process_event_stream(event):
-    """处理事件单独一个event 而不是整个事件流"""
+# def _process_event_stream(event):
+#     """处理事件单独一个event(注意event.content.parts可能包含多个part，所以event可以理解为流式输出的一段 可能包含多个类别的混合比如 though+text+fc) 而不是整个事件流"""
+#     chunks = []
+
+#     # [关键修复] 如果是最终响应事件，通常包含的是完整内容的汇总。
+#     # 我们已经在之前的流式事件中处理过这些 parts 了，所以在这里跳过常规处理，
+#     # 避免向前端发送重复的内容。
+#     is_final = hasattr(event, 'is_final_response') and event.is_final_response()
+
+def _process_event_stream(event, parts_override=None):
     chunks = []
+    
+    is_final = False
+    if hasattr(event, 'is_final_response'):
+        is_final = event.is_final_response()
 
-    # [关键修复] 如果是最终响应事件，通常包含的是完整内容的汇总。
-    # 我们已经在之前的流式事件中处理过这些 parts 了，所以在这里跳过常规处理，
-    # 避免向前端发送重复的内容。
-    is_final = hasattr(event, 'is_final_response') and event.is_final_response()
-
-    # 1. 侦察：这个包里有没有工具？
     has_tool = False
-    if not is_final and hasattr(event, 'content') and event.content and hasattr(event.content, 'parts'):
-        for part in event.content.parts:
+    has_thought = False
+
+    # 确定要处理的 parts
+    target_parts = parts_override if parts_override is not None else []
+    if parts_override is None:
+        if hasattr(event, 'content') and event.content and hasattr(event.content, 'parts'):
+            target_parts = event.content.parts
+
+    # 1. 预扫描 (使用 target_parts)
+    if not is_final and target_parts:
+        for part in target_parts:
+            # 只要这个 Event 里包含 function_call/response，标记 has_tool
+            # ... (logic same) ...
             if hasattr(part, 'function_call') and part.function_call:
                 has_tool = True
-                break
+                #break
+            
+            # 只要这个 Event 里包含 function_response，也标记 has_tool
+            if hasattr(part, 'function_response') and part.function_response:
+                has_tool = True
+
+            # 检查思考 (根据您的Log结构，thought是Part的一个属性)
+            # 只要这个 Event 里包含任何思考片段，就给整个 Event 发一张“免死金牌”
+            if hasattr(part, 'thought') and part.thought:
+                has_thought = True
 
     # 2. 处理 (仅在非最终响应时处理 parts)
-    if not is_final and hasattr(event, 'content') and event.content and hasattr(event.content, 'parts'):
-        for part in event.content.parts:
+    if not is_final and target_parts:
+        for part in target_parts:
             # [关键修正] 仅当当前包里有工具，且当前 part 是文本或思考过程时，才跳过。
             # 必须放行 function_call 和 function_response 自身。
             is_text_part = hasattr(part, 'text') and part.text
             is_tool_related = (hasattr(part, 'function_call') and part.function_call) or \
                               (hasattr(part, 'function_response') and part.function_response)
             
-            if has_tool and is_text_part and not is_tool_related:
+            if has_tool and is_text_part and not is_tool_related and not has_thought:
                 continue
 
             # 如果是文本
