@@ -32,7 +32,7 @@ body {
 
 /* Sidebar */
 .sidebar {
-    width: 260px;
+    width: 300px;
     background-color: var(--sidebar-bg);
     display: flex;
     flex-direction: column;
@@ -40,6 +40,7 @@ body {
     position: relative;
     min-width: 200px;
     max-width: 50vw;
+    flex-shrink: 0;
     transition: width 0.3s ease, padding 0.3s ease;
     /* 仅在点击菜单按钮(折叠)时起作用,拖拽会被 JS 实时覆盖 */
     overflow: hidden;
@@ -52,15 +53,20 @@ body {
 }
 
 .sidebar.collapsed {
-    width: 0 !important;
-    min-width: 0 !important;
-    padding: 0 !important;
-    margin: 0 !important;
+    width: 130px !important;
+    min-width: 130px !important;
+    max-width: 130px !important;
+    padding: 10px !important;
 }
 
-.sidebar.collapsed * {
-    display: none;
-    /* 彻底移除内容,防止占位 */
+.sidebar.collapsed>*:not(.sidebar-header) {
+    display: none !important;
+}
+
+.sidebar.collapsed .sidebar-header {
+    display: flex;
+    justify-content: flex-start;
+    padding-left: 10px;
 }
 
 .resize-handle {

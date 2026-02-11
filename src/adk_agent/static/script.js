@@ -953,17 +953,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error('删除失败');
             }
 
-            // 如果删除的是当前会话,创建新会话
+            // 如果删除的是当前会话, 清除状态并返回欢迎页面
             if (sessionId === getCurrentSessionId()) {
-                const newSessionId = await createNewSession();
-                if (newSessionId) {
-                    setCurrentSessionId(newSessionId);
-                    // 清空界面
-                    while (chatContainer.firstChild) {
-                        chatContainer.removeChild(chatContainer.firstChild);
-                    }
-                    showWelcomeScreen();
+                sessionStorage.removeItem('current_session_id');
+                // 清空界面
+                while (chatContainer.firstChild) {
+                    chatContainer.removeChild(chatContainer.firstChild);
                 }
+                showWelcomeScreen();
             }
 
             // 刷新列表
@@ -988,11 +985,32 @@ document.addEventListener('DOMContentLoaded', () => {
     if (userSelector) {
         // 设置初始选中值 (使用 sessionStorage 实现标签页隔离)
         const currentUserId = sessionStorage.getItem('user_id_override') || 'user_001';
+
+        // 如果当前 ID 不在预设选项中，动态添加它
+        const presetValues = Array.from(userSelector.options).map(opt => opt.value);
+        if (!presetValues.includes(currentUserId)) {
+            const newOpt = document.createElement('option');
+            newOpt.value = currentUserId;
+            newOpt.textContent = `用户: ${currentUserId}`;
+            // 插入到“自定义”之前
+            userSelector.insertBefore(newOpt, userSelector.querySelector('option[value="custom"]'));
+        }
         userSelector.value = currentUserId;
 
         // 监听切换事件
         userSelector.addEventListener('change', (e) => {
-            const newUserId = e.target.value;
+            let newUserId = e.target.value;
+
+            if (newUserId === 'custom') {
+                const customName = prompt('请输入自定义用户名 (例如: Jack):');
+                if (!customName || customName.trim() === '') {
+                    // 取消选择，恢复原值
+                    userSelector.value = currentUserId;
+                    return;
+                }
+                newUserId = customName.trim();
+            }
+
             console.log(`[切换用户] ${currentUserId} -> ${newUserId}`);
 
             // 更新用户ID (sessionStorage: 每个标签页独立)
@@ -1044,22 +1062,22 @@ document.addEventListener('DOMContentLoaded', () => {
             if (sidebar.classList.contains('collapsed')) {
                 sidebar.classList.remove('collapsed');
                 // 恢复宽度
-                sidebar.style.padding = ''; // 恢复 CSS 默认
-                sidebar.style.minWidth = ''; // 恢复 CSS 默认
-                const savedWidth = localStorage.getItem('sidebarWidth') || '260px';
+                const savedWidth = localStorage.getItem('sidebarWidth_v2') || '300px';
                 sidebar.style.width = savedWidth;
+                sidebar.style.minWidth = savedWidth;
+                sidebar.style.maxWidth = savedWidth;
             } else {
                 sidebar.classList.add('collapsed');
-                sidebar.style.width = '0px';
-                sidebar.style.padding = '0px'; // 确保彻底消失
-                sidebar.style.minWidth = '0px';
-                sidebar.style.maxWidth = '0px';
+                // 移除内联宽度限制，让 CSS 的 .collapsed 样式 (130px) 生效
+                sidebar.style.width = '';
+                sidebar.style.minWidth = '';
+                sidebar.style.maxWidth = '';
             }
         });
 
         // --- 2. 侧边栏调整大小逻辑 ---
         // 恢复保存的宽度
-        const savedWidth = localStorage.getItem('sidebarWidth');
+        const savedWidth = localStorage.getItem('sidebarWidth_v2');
         if (savedWidth) {
             sidebar.style.width = savedWidth;
             sidebar.style.minWidth = savedWidth;
@@ -1099,7 +1117,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.body.style.userSelect = '';
 
                 // 保存宽度
-                localStorage.setItem('sidebarWidth', sidebar.style.width);
+                localStorage.setItem('sidebarWidth_v2', sidebar.style.width);
             }
         });
     }
