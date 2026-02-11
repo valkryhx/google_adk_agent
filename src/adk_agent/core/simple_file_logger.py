@@ -136,6 +136,13 @@ class SimpleFileLogger:
     def flush(self):
         """退出时确保所有日志写入（本模块是实时写入，此方法保留兼容性）"""
         pass
+        
+    def configure(self, log_file: str):
+        """重新配置日志文件路径"""
+        with self._lock:
+            self.log_file = log_file
+            # 确保新目录存在
+            os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
 
 
 # ============================================

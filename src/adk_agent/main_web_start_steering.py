@@ -1939,6 +1939,15 @@ if __name__ == "__main__":
     
     node_config.port = args.port
     
+    # [新增] 启动时根据端口配置独立日志文件
+    try:
+        from src.adk_agent.core.simple_file_logger import default_logger as file_logger
+        new_log_path = f"logs/agent_{args.port}.log"
+        file_logger.configure(new_log_path)
+        print(f"[System] Logger redirected to: {new_log_path}")
+    except Exception as e:
+        print(f"[System] ⚠️ Failed to redirect logger: {e}")
+    
     # 【核心】注入环境变量，解耦工具
     os.environ["ADK_CURRENT_PORT"] = str(args.port)
     
