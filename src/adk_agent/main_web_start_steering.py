@@ -301,8 +301,7 @@ class SteeringSession:
         import functools
         
         tool_files = [
-            os.path.join(self.config.skills_path, skill_id, "tools.py"),
-            os.path.join(self.skill_manager.base_path, ".claude/skills", skill_id, "tools.py")
+            os.path.join(self.config.skills_path, skill_id, "tools.py")
         ]
         
         loaded_tools = []
@@ -328,11 +327,20 @@ class SteeringSession:
                         })
                         
                         try:
-                            # 尝试传入 status_reporter
-                            tools = module.get_tools(*common_args, status_reporter=self.report_swarm_event)
+                            # 尝试传入 status_reporter 和 interruption_queue
+                            # [Fix] 注入 interruption_queue 以支持工具级中断 (如 bash)
+                            tools = module.get_tools(
+                                *common_args, 
+                                status_reporter=self.report_swarm_event,
+                                interruption_queue=self.queue
+                            )
                         except TypeError:
-                            # 如果报错 (unexpected keyword argument), 则回退到旧调用
-                            tools = module.get_tools(*common_args)
+                            # 如果报错 (unexpected keyword argument), 尝试只传 status_reporter
+                            try:
+                                tools = module.get_tools(*common_args, status_reporter=self.report_swarm_event)
+                            except TypeError:
+                                # 还不行，回退到旧调用
+                                tools = module.get_tools(*common_args)
                             
                         if tools:
                             # 绑定 interruption_guard

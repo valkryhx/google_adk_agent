@@ -14,7 +14,7 @@ from typing import Tuple, Optional, List, Dict, Any
 class SkillManager:
     """技能管理器：实现 SKILL.md 的懒解析"""
 
-    def __init__(self, base_path: str = "./.claude/skills"):
+    def __init__(self, base_path: str = "./skills"):
         """
         初始化技能管理器
         

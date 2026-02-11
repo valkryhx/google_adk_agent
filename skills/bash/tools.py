@@ -449,6 +449,33 @@ bash_TOOLS = {
 }
 
 
+
 def get_tools(*args, **kwargs) -> List:
     """返回所有 Bash 工具函数列表"""
-    return list(bash_TOOLS.values())
+    tools = list(bash_TOOLS.values())
+    
+    # 检查是否传入了 interruption_queue
+    if 'interruption_queue' in kwargs:
+        queue = kwargs['interruption_queue']
+        
+        # 找到 bash 函数并进行部分绑定
+        # 注意: 我们需要替换列表中的 original bash function with the bound one
+        # 但 dict.values() 返回的是新列表，修改它不会影响 bash_TOOLS
+        # 所以我们直接构建一个新的工具列表
+        
+        bound_tools = []
+        for tool in tools:
+            if tool.__name__ == 'bash':
+                # 使用 partial 绑定 interruption_queue
+                import functools
+                bound_bash = functools.partial(bash, interruption_queue=queue)
+                
+                # 关键: 恢复元数据, 否则 Agent 无法识别工具名称和文档
+                bound_bash.__name__ = bash.__name__
+                bound_bash.__doc__ = bash.__doc__
+                bound_tools.append(bound_bash)
+            else:
+                bound_tools.append(tool)
+        return bound_tools
+        
+    return tools

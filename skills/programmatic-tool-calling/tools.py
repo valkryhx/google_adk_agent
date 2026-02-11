@@ -7,19 +7,23 @@ from typing import List, Any
 # Adapt path to import from core
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # 假设 agent_root 是 skills/adk_agent 的父目录
-# 目录结构: skills/adk_agent/.claude/skills/programmatic-tool-calling/tools.py
-# 需要回退4层到 skills/ 前面，或者是直接找到 adk_agent 的位置
-agent_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+# 目录结构: skills/programmatic-tool-calling/tools.py
+# 需要回退2层到 skills/ 前面，即项目根目录
+agent_root = os.path.dirname(os.path.dirname(current_dir))
 if agent_root not in sys.path:
     sys.path.insert(0, agent_root)
 
 # Import the new async executor
-from core.executor import execute_async_python_code
+try:
+    from src.adk_agent.core.executor import execute_async_python_code
+except ImportError:
+    # Fallback if run from different context
+    from core.executor import execute_async_python_code
 
 # Global references to injected services
 _AGENT_REF = None
 
-async def run_programmatic_task(code: str) -> str:
+async def run_programmatic_task(code: str, **kwargs) -> str:
     """
     通过编写 Python 代码来执行任务。
     可以在代码中使用 `await call_tool("工具名", 参数=值)` 来调用 Agent 的其他工具。
@@ -77,7 +81,7 @@ async def run_programmatic_task(code: str) -> str:
     return await execute_async_python_code(code, context)
 
 
-def get_tools(agent, session_service, app_info) -> List:
+def get_tools(agent, session_service, *args, **kwargs) -> List:
     """
     Factory method to initialize the tool with Agent access.
     """
