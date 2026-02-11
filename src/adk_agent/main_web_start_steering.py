@@ -1799,7 +1799,7 @@ async def get_leader_summary(
             # 提取最近的对话消息 (保持原样)
             recent_messages = []
             if latest_session.events:
-                for evt in latest_session.events[:]:
+                for evt in latest_session.events[-100:]:
                     if hasattr(evt, 'content') and evt.content:
                         role = evt.content.role if hasattr(evt.content, 'role') else 'unknown'
                         text = ""

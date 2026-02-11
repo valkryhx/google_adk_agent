@@ -444,9 +444,9 @@ async def sync_task_context(
                 success_count += 1
                 data = res['data']
                 summary_parts.append(f"✅ 节点 (Port {port}): {data.get('title', 'Untitled')}")
-                # 摘要截取前 300 字符
+                # 摘要截取后 5000 字符 (关注最新进展)
                 summary_text = data.get('recent_summary', '无')
-                summary_parts.append(f"   摘要: {summary_text[:]}..." if len(summary_text) > 300 else f"   摘要: {summary_text}")
+                summary_parts.append(f"   摘要: ...{summary_text[-5000:]}" if len(summary_text) > 5000 else f"   摘要: {summary_text}")
                 summary_parts.append("")
         
         summary_parts.append(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
