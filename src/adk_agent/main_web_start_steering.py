@@ -6,7 +6,7 @@ ADK Dynamic Skills Agent - 主入口 (多租户并发安全版)
 2. claudecode风格的steering实时文本打断增强：在流式输出循环中增加强制检查。
 3. AOP 拦截：使用 before_model/tool callback。
 
-python -m src.adk_agent.main_web_start_steering
+python -m src.adk_agent.main_web_start_steering  [--port 8000]
 """
 
 import asyncio

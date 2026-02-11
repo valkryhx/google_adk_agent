@@ -23,6 +23,7 @@ description: Enables the agent to act as a Swarm Leader, dispatching tasks to re
 
 ### `dispatch_batch_tasks` (并发神器)
 当你有多个**互不依赖**的任务时，必须使用此工具，而不是连续调用 `dispatch_task`。
+**注意**：`common_context` 参数同样需要遵循【规则六】，包含原始需求和当前进度，确保所有并发 Worker 都能独立理解任务全貌。
 
 * ❌ **低效做法**：
     1. Call `dispatch_task("查 A 公司")` -> 等待 30s
@@ -107,6 +108,19 @@ Worker 是你的"外部大脑"。
 * 你**必须**立即切换身份，调用你本地的 `skill_load`、`bash`、`file_editor` 或 `python` 等各类你能用到的工具，**亲自执行**该任务。
 * **原则**：任务的完成是最高优先级，无论是别人做还是你做。不要抱怨资源不足，直接动手解决问题。
   
+### 规则六：【重要】上下文全量传递 (Critical Context Propagation)
+**容灾与协作的核心规则**：Leader 不仅要分派工作，还要负责让 Worker 拥有“全局视野”。
+* 当你调用 `dispatch_task` 或 `dispatch_batch_tasks` 时，`context_info` 参数**必须**包含以下三部分信息（如果知道的话）：
+    1.  **【原始需求】**：用户最开始说了什么？(User Original Request)
+    2.  **【已完成进度】**：团队已经做完了什么？(Completed Steps/History)
+    3.  **【当前任务目标】**：本次派发的任务是为了解决什么问题？(Current Goal)
+    
+* **为什么？**
+    *   **防止 Leader 单点故障**：如果 Leader 挂了，Worker 看到 context_info 里的【原始需求】和【已完成进度】，就能立刻通过 `dispatch_task` 变身为新的 Leader 继续指挥，而不会迷失方向。
+    *   **提升 Worker 智能**：知道“我们已经做完了A和B”，Worker 在做 C 时就不会重复造轮子。
+    
+* **格式范例**：
+    `context_info="【原始需求】用户想做一个贪吃蛇游戏\n【已完成进度】Worker-8001已完成各个模块的代码编写\n【当前目标】请你负责运行测试并修复Bug"`  
 
 ## 4. 最佳实践示例 (Examples)
 
@@ -121,11 +135,11 @@ Worker 是你的"外部大脑"。
     * 子任务 3: 测试运行
 
 2.  **Action 1 (派发后端)**:
-    `dispatch_task(task_instruction="编写一个基本的 Flask app.py，包含首页路由", context_info="项目：博客系统")`
+    `dispatch_task(task_instruction="编写一个基本的 Flask app.py，包含首页路由", context_info="【原始需求】帮我用 Flask 写一个博客系统\n【已完成进度】刚开始，尚未有文件生成\n【当前目标】完成后端基础框架")`
     * **Result**: "Worker 8001 完成。文件已写入 ./app.py"
 
 3.  **Action 2 (派发前端)**:
-    `dispatch_task(task_instruction="编写 templates/index.html，简单的博客首页", context_info="基于 Flask")`
+    `dispatch_task(task_instruction="编写 templates/index.html，简单的博客首页", context_info="【原始需求】帮我用 Flask 写一个博客系统\n【已完成进度】Worker-8001 正在写 app.py\n【当前目标】完成前端页面")`
     * **Result**: "Worker 8002 完成。文件已写入 ./templates/index.html"
 
 4.  **Action 3 (Review & Test - 此时可以自己做，也可以派发)**:
@@ -136,6 +150,27 @@ Worker 是你的"外部大脑"。
     `dispatch_task(task_instruction="运行报错缺少 flask，请安装依赖并修复代码", target_port=8001, sub_session_id="{Action 1 的 SessionID}")`
 
 6.  **Final Reply**: "博客系统已完成，由 Worker 8001 和 8002 协作构建。"
+
+### 场景：并行搜索与信息汇总 (Parallel Execution with Rule 6)
+
+**User:** "帮我查一下 Google 和 Microsoft 的最新 AI 进展，并对比一下。"
+
+**Leader (You):**
+1.  **思考**: 这是两个独立的搜索任务，可以使用 `dispatch_batch_tasks` 并行加速。
+
+2.  **Action (并发派发)**:
+    ```python
+    dispatch_batch_tasks(
+        tasks=[
+            "搜索 Google 的最新 AI 进展 (Gemini, Bard 等)",
+            "搜索 Microsoft 的最新 AI 进展 (Copilot, Bing Chat 等)"
+        ],
+        common_context="【原始需求】用户想对比 Google 和 Microsoft 的最新 AI 进展\n【已完成进度】刚开始，正在进行并行信息收集\n【当前目标】快速获取两家公司的最新情报"
+    )
+    ```
+    * **Result**: "2 个任务已分派... Worker A 正在搜 Google... Worker B 正在搜 Microsoft..."
+
+3.  **后续**: 等收到两个 Worker 的回复后，你自己汇总并生成对比报告。
 
 ### 场景：多节点数据汇总（使用 sync_task_context）
 
@@ -152,7 +187,7 @@ Worker 是你的"外部大脑"。
             "调查 Apple 的最新产品和财报",
             "调查 Google 的最新产品和财报"
         ],
-        common_context="科技巨头对比分析项目"
+        common_context="【原始需求】帮我调查 Microsoft、Apple、Google 三家公司的最新动态，然后做成对比表格\n【已完成进度】无，这是第一步\n【当前目标】并行收集三家公司的信息"
     )
     ```
     * **Result**: "3 个任务已分派到节点 8001, 8002, 8003"
