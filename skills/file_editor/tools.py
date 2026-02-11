@@ -294,5 +294,6 @@ async def file_editor(
     return result.output
 
 # 适配 ADK 加载协议
-def get_tools(agent, session_service, app_info):
+#def get_tools(agent, session_service, app_info):
+def get_tools(*args, **kwargs) -> List:
     return [file_editor]
