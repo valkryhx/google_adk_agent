@@ -100,6 +100,18 @@ async def dispatch_task(
 ) -> str:
     print(f"[DEBUG] dispatch_task called. reporter type: {type(_status_reporter)}")
     print(f"[DEBUG] dispatch_task called with reporters={_status_reporter}")
+    # [New] 非侵入式打标：通过 status_reporter 发送信号
+    if _status_reporter:
+        try:
+            # 发送特定的元数据更新信号
+            await _status_reporter("update_session_state", {
+                "task_type": "swarm_leader",
+                "swarm_mode": "single_dispatch"
+            })
+            print(f"[Swarm Leader] Sent session tagging signal (Single)")
+        except Exception as e:
+            print(f"[Swarm Leader] Failed to send tagging signal: {e}")
+
     """
     【集群指挥官核心工具】将任务分发给 Swarm 集群中的其他智能体。
     
@@ -479,6 +491,18 @@ async def dispatch_batch_tasks(
         priority (str): 优先级 (NORMAL/URGENT)。
     """
     
+    # [New] 非侵入式打标：通过 status_reporter 发送信号
+    if _status_reporter:
+        try:
+            await _status_reporter("update_session_state", {
+                "task_type": "swarm_leader",
+                "swarm_mode": "batch_dispatch",
+                "active_workers": len(tasks)
+            })
+            print(f"[Swarm Leader] Sent session tagging signal (Batch)")
+        except Exception as e:
+            print(f"[Swarm Leader] Failed to send tagging signal: {e}")
+
     if not tasks:
         return "【系统提示】任务列表为空，未执行任何操作。"
 
@@ -520,10 +544,11 @@ async def dispatch_batch_tasks(
     print(f"[Swarm Batch] ✅ {len(tasks)} 个任务全部完成。")
     return final_report
 
-def get_tools(agent, session_service, app_info, status_reporter=None):
+def get_tools(agent, session_service, app_info, status_reporter=None, **kwargs):
     """
     Factory function to create tools with injected dependencies.
     Accepted status_reporter to enable real-time side-channel streaming.
+    **kwargs for forward compatibility.
     """
     import functools
     

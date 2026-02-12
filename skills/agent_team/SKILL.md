@@ -40,7 +40,7 @@ description: Enables the agent to act as a Swarm Leader, dispatching tasks to re
 * 对同一份代码进行 Security Review 和 Performance Review。
 
 ### `sync_task_context` (上下文同步)
-当你是 Worker 节点时，这个工具让你获取其他节点的完整任务背景信息。
+这个工具可以让你获取其他节点的完整任务背景与执行进度信息，当你使用这个工具获取到其他节点的上下文后，必须将完整的各个任务上下文信息返回给用户。
 
 #### 主要功能：
 1. **基于 User ID 同步**：只需提供目标端口，自动使用当前用户的身份去查询，无需关心 App Name。

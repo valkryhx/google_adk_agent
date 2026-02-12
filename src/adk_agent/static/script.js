@@ -749,6 +749,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 titleSpan.appendChild(swarmBadge);
             }
 
+            // [Fix] 不使用 else if，允许同时显示 Leader 标记
+            if (session.task_type === 'swarm_leader') {
+                const leaderBadge = document.createElement('span');
+                leaderBadge.textContent = '[Agent-Team-LEADER] ';
+                leaderBadge.style.marginRight = '4px';
+                leaderBadge.style.color = '#9c27b0'; // Purple for Leader
+                leaderBadge.style.fontWeight = 'bold';
+                titleSpan.appendChild(leaderBadge);
+            }
+
             const titleText = document.createTextNode(session.title || '新对话');
             titleSpan.appendChild(titleText);
 

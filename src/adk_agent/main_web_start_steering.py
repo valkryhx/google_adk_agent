@@ -209,6 +209,7 @@ class SteeringSession:
         
         # [新特性] 旁路事件流队列 (用于 Swarm 实时状态汇报)
         self.stream_queue = asyncio.Queue()
+        self._current_session = None # [New] 跟踪当前正在执行任务的 Session 对象
 
         # 创建会话专属的 Agent（内部会创建自己的 compactor）
         self.agent = self._create_agent()
@@ -220,6 +221,13 @@ class SteeringSession:
         供 Tool 调用的回调函数，用于实时汇报 Swarm 状态。
         消息会被放入 stream_queue，最终合并到 HTTP SSE 流中推给前端。
         """
+        # [New] 处理内部状态更新信号 (非侵入式打标核心)
+        if event_type == "update_session_state" and self._current_session:
+            if not self._current_session.state: self._current_session.state = {}
+            self._current_session.state.update(payload)
+            print(f"[Steering] Session {self.session_id} state updated via signal: {payload}")
+            return # 信号已处理，无需推送到 UI
+
         print(f"[SteeringSession] Reporting Event: {event_type}")
         event = {
             "type": "swarm_event",
@@ -522,6 +530,8 @@ class SteeringSession:
                 user_id=self.user_id, 
                 session_id=self.session_id
             )
+            # [New] 为 Status Reporter 绑定当前会话对象
+            self._current_session = session 
             print(f"[调试] get_session 返回: app_name={self.app_name}, user_id={self.user_id}, session_id={self.session_id}, session存在={session is not None}")
             if session and hasattr(session, 'events'):
                 print(f"[调试] session.events数量={len(session.events)}")
@@ -808,6 +818,35 @@ class SteeringSession:
                 print(f"\n[ERROR] 执行出错: {e}")
         
         finally:
+            # [Fix] 最后强制保存一次，但必须先 Reload 以防止覆盖 Runner 写入的 Events
+            if self._current_session:
+                try:
+                    # 1. 重新从 DB 加载最新 Session (包含 Runner 写入的 events)
+                    # 因为 Runner 是独立实例运行的，它写入的 event 不会实时同步到 self._current_session
+                    latest_session = await self.session_service.get_session(
+                        self.app_name, self.user_id, self.session_id
+                    )
+                    
+                    if latest_session:
+                        # 2. 将 _current_session 中捕获的 metadata (tags) 合并过去
+                        # 重点保留 tool 产生的 state 变更 (如 task_type)
+                        if self._current_session.state:
+                            if not latest_session.state: latest_session.state = {}
+                            latest_session.state.update(self._current_session.state)
+                        
+                        # 3. 保存合并后的 Session
+                        await self.session_service.save_session(latest_session)
+                        print(f"[Steering] Merged tags and saved session {self.session_id} (Events: {len(latest_session.events)})")
+                    else:
+                        # Fallback: 如果读不到，就只能存旧的了 (极少见)
+                        await self.session_service.save_session(self._current_session)
+                        print(f"[Steering] Fallback saved session {self.session_id}")
+
+                except Exception as e:
+                    print(f"[Warning] Final session save failed: {e}")
+            
+            self._current_session = None
+
             # 打印 Session History（调试用）
             try:
                 updated_session = await self.session_service.get_session(
@@ -1575,6 +1614,9 @@ async def get_sessions(
         sessions.append({
             "session_id": s.id,
             "title": title,
+            "app_name": s.app_name,
+            "user_id": s.user_id,
+            "task_type": s.state.get('task_type') if hasattr(s, 'state') and s.state else None,
             "message_count": message_count,
             "created_at": created_at,
             "updated_at": updated_at
