@@ -784,13 +784,22 @@ class SteeringSession:
                                 response_parts.append(types.Part(function_response=func_response))
                             
                             # 插入为 model role 的 event
-                            response_content = types.Content(role='model', parts=response_parts)
-                            response_event = Event(author='model', content=response_content)
+                            # [Fix] Role 必须是 'user'，因为这是喂给模型的“输入数据”
+                            response_content = types.Content(role='user', parts=response_parts)
+                            
+                            # [Fix] Author 最好用当前 Agent 的名字
+                            current_agent_name = self.config.name if self.config.name else "unknown_agent"
+                            response_event = Event(author=current_agent_name, content=response_content)
                             session.events.append(response_event)
                             print(f"[System] 已补全 {len(pending_calls)} 个 FunctionResponse")
                     
                     # 插入中断标记(system 消息)
-                    stop_content = types.Content(role="system", parts=[types.Part(text="[System] 用户主动中断了当前对话。")])
+                    # [Fix] 把 role 改为 'user'，让模型把它当成对话流中的显式指令
+                    stop_content = types.Content(
+                        role="user", 
+                        parts=[types.Part(text="[注意] 用户主动中断了当前对话。")]
+                    )
+                    # Author 依然可以是 'system'
                     stop_event = Event(author="system", content=stop_content)
                     
                     if session and hasattr(session, 'events'):
@@ -940,6 +949,10 @@ class SteeringSession:
                         placeholder_user_evt.content.parts = [
                             types.Part(text=f"[System] Context cleared. Summary of previous conversation:\n{summary}")
                         ]
+                        
+                    # [Fix] 显式修正 Author
+                    if hasattr(placeholder_user_evt, 'author'):
+                        placeholder_user_evt.author = "AutoCompactAgent"
                 
                 if placeholder_user_evt:
                     new_events = system_events + [placeholder_user_evt]
