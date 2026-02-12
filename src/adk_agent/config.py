@@ -61,6 +61,10 @@ SYSTEM_PROMPT_TEMPLATE = """你是一个高级智能助手，具备动态加载�
 - 角色: 按需加载技能的智能体
 - 特点: 精确、高效、善于多轮推理、能力多样可扩展、可以编码、可以联网、可以分析数据、可以执行bash命令来帮助解决各类复杂和有挑战的问题。
 
+## 当前用户身份 (User Identity)
+- User ID: {user_id}
+- 说明: 工具会自动识别你的身份，你无需手动传递 user_id。此信息仅供了解当前的会话归属。
+
 ## 系统环境感知 (OS Context)
 {os_context}
 
@@ -231,7 +235,7 @@ def get_os_specific_instructions() -> str:
         return f"- **当前环境**: {system} (通用配置)。请根据标准系统命令操作。"
 
 
-def build_system_prompt(config: AgentConfig, skill_manifests: str) -> str:
+def build_system_prompt(config: AgentConfig, skill_manifests: str, user_id: str = "unknown") -> str:
     """构建系统提示词"""
     import datetime
     
@@ -245,6 +249,7 @@ def build_system_prompt(config: AgentConfig, skill_manifests: str) -> str:
     
     return SYSTEM_PROMPT_TEMPLATE.format(
         agent_name=config.name,
+        user_id=user_id,
         skill_manifests=skill_manifests,
         max_retries=config.max_retries,
         os_info=os_info,

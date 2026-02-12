@@ -239,7 +239,10 @@ class FullyCustomDbService(BaseSessionService):
                     stmt = stmt.where(self.DbSession.app_name == app_name)
                 
                 if user_id is not None:
+                    # print(f"🔍 [DB] filtering by user_id: {user_id}")
                     stmt = stmt.where(self.DbSession.user_id == user_id)
+                else:
+                    print(f"⚠️ [DB] list_sessions called without user_id! Returning ALL sessions for app: {app_name}")
                 
                 # 按更新时间倒序排列
                 stmt = stmt.order_by(self.DbSession.updated_at.desc())

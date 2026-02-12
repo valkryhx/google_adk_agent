@@ -242,7 +242,7 @@ class SteeringSession:
 
     def _create_agent(self) -> LlmAgent:
         """创建会话专属的 LlmAgent 实例"""
-        system_prompt = build_system_prompt(self.config, self.skill_manager.get_discovery_manifests())
+        system_prompt = build_system_prompt(self.config, self.skill_manager.get_discovery_manifests(), user_id=self.user_id)
         
         llm_model = LiteLlm(
             model=self.config.model, 
@@ -307,6 +307,9 @@ class SteeringSession:
         """加载技能工具到当前 agent"""
         import importlib.util
         import functools
+        
+        # [Security] Verify user_id before binding
+        print(f"[{self.key}] Loading tools for {skill_id} with User ID: {self.user_id}")
         
         tool_files = [
             os.path.join(self.config.skills_path, skill_id, "tools.py")
@@ -1436,27 +1439,28 @@ async def cancel_endpoint(req: CancelRequest):
     # 1. 尝试使用提供的参数精确查找
     session = session_manager.get(req.app_name, req.user_id, req.session_id)
     
-    # 2. [新增] 容错逻辑：如果没找到，尝试忽略 app_name 全局搜索
-    # 场景：Swarm Worker 任务的 app_name 是 'swarm_from_8000'，但前端可能传了 'dynamic_expert'
+    # 2. [强化] 容错逻辑：分层搜索
+    # 场景：Swarm Worker 任务的 app_name/user_id 组合可能与前端传过来的不一致
     if session is None:
-        print(f"⚠️ [API] 精确查找失败 -> {req.app_name}/{req.user_id}/{req.session_id}，尝试全局搜索...")
+        print(f"[API] Cancel: exact match failed -> {req.app_name}/{req.user_id}/{req.session_id}")
         
-        # 遍历所有 app_name 下的该 user_id
-        # session_manager.sessions 结构: {app_name: {user_id: {session_id: session}}}
-        # 注意：需要访问 session_manager 的内部结构，这违反了封装但为了修复 bug 必须这样做
-        # 或者 session_manager 应该提供 find_session_by_id 接口。这里直接遍历。
-        
-        found_app_name = None
+        # 2a. 先尝试只匹配 user_id + session_id (忽略 app_name)
         for (a_name, u_id, s_id), sess in session_manager._sessions.items():
             if u_id == req.user_id and s_id == req.session_id:
                 session = sess
-                found_app_name = a_name
+                print(f"[API] Cancel: found via user_id+session_id match (app_name was '{a_name}')")
                 break
         
-        if session:
-            print(f"✅ [API] 全局搜索成功！在 '{found_app_name}' 下找到会话")
-        else:
-            print(f"🛑 [API] 全局搜索也未找到会话 -> {req.session_id}")
+        # 2b. 最终兜底：只按 session_id 查找 (session_id 是全局唯一的 UUID)
+        if session is None:
+            for (a_name, u_id, s_id), sess in session_manager._sessions.items():
+                if s_id == req.session_id:
+                    session = sess
+                    print(f"[API] Cancel: found via session_id-only match (was '{a_name}/{u_id}')")
+                    break
+        
+        if session is None:
+            print(f"[API] Cancel: all search strategies failed for session_id={req.session_id}")
             return {"status": "error", "message": "Session not found"}
     else:
         print(f"✅ [API] 精确查找成功 -> {req.app_name}")
@@ -1498,64 +1502,22 @@ async def stop_remote_worker(request: StopWorkerRequest):
     import httpx
     async with httpx.AsyncClient() as client:
         try:
-            # The worker expects a CancelRequest with app_name, user_id, session_id
-            # Note: The worker's session_id is specific to that task (sub-session)
+            # [Critical Fix] dispatch_task 发送给 Worker 的参数是：
+            #   app_name = f"swarm_from_{CURRENT_NODE_PORT}"   (Leader 端口)
+            #   user_id  = _original_user_id                   (人类用户 ID，如 "dwh")
+            #   session_id = use_session_id                    (如 "sub_87207465")
+            # 所以 cancel 请求必须用一模一样的参数，Worker 才能找到对应的会话。
             
-            # Define CLUSTER_APP_NAME locally or use hardcoded value
-            CLUSTER_APP_NAME = "adk_universal_swarm"
+            swarm_app_name = f"swarm_from_{node_config.port}"  # 与 dispatch_task 一致
+            human_user_id = request.user_id                     # 前端传来的真实人类用户 ID
             
-            payload = {
-                "app_name": CLUSTER_APP_NAME, # Should match what dispatch_task uses
-                "user_id": f"Agent_Node_{node_config.port}", # Should match dispatch_task caller_id
-                "session_id": request.worker_session_id
-            }
-            # Actually, dispatch_task uses:
-            # app_name=CLUSTER_APP_NAME ("adk_universal_swarm")
-            # user_id=f"Agent_Node_{CURRENT_NODE_PORT}"
-            # session_id=use_session_id
-            
-            # Since the worker validates (app_name, user_id, session_id) tuple for the session,
-            # we must match EXACTLY what dispatch_task sent.
-            # However, the user calling this API is the *human via browser*.
-            # The provided request.app_name/user_id are the HUMAN's.
-            # But the worker is working for the AGENT (Leader).
-            
-            # LUCKILY, `dispatch_task` in tools.py uses:
-            # "app_name": CLUSTER_APP_NAME
-            # "user_id": caller_id  (Agent_Node_X)
-            # "session_id": use_session_id
-            
-            # The frontend calls /api/stop_worker with:
-            # worker_session_id (which IS use_session_id from the init event)
-            
-            # So here we must reconstruct the credentials the Leader used to talk to the Worker.
-            # We know CLUSTER_APP_NAME is "adk_universal_swarm" (defined in tools.py, but not imported here?)
-            # Wait, CLUSTER_APP_NAME is in existing code? No.
-            # But the worker code (main_web_start_steering.py) runs on the worker too.
-            # It just checks if session matches.
-            
-            # Let's verify what dispatch_task sends.
-            # tools.py: 
-            # CLUSTER_APP_NAME = "adk_universal_swarm"
-            # user_id = f"Agent_Node_{CURRENT_NODE_PORT}"
-            
-            # So in this /api/stop_worker (running on Leader), we need to emulate that.
-            # We need to access node_config.port to construct user_id.
-            
-            # Correction: This file (main_web_start_steering.py) doesn't have CLUSTER_APP_NAME defined.
-            # It is defined in tools.py.
-            # I should define it here or hardcode it to match.
-            
-            swarm_app_name = "adk_universal_swarm"  # #swarm_app_name = "*"
-            leader_user_id = f"Agent_Node_{node_config.port}"
-            
-            print(f" -> Sending Cancel to {worker_url} for {swarm_app_name}/{leader_user_id}/{request.worker_session_id}")
+            print(f" -> Sending Cancel to {worker_url} for {swarm_app_name}/{human_user_id}/{request.worker_session_id}")
 
             resp = await client.post(
                 f"{worker_url}/api/cancel",
                 json={
                     "app_name": swarm_app_name,
-                    "user_id": leader_user_id,
+                    "user_id": human_user_id,
                     "session_id": request.worker_session_id
                 },
                 timeout=5.0
@@ -1876,88 +1838,142 @@ async def update_session_metadata(
         return {"status": "error", "message": str(e)}, 500
 
 
+@app.get("/api/context/user_sessions")
+async def get_user_sessions(
+    user_id: str = DEFAULT_USER_ID
+):
+    """
+    [轻量级] 列出该用户名下的所有会话摘要（不含完整对话历史）。
+    用于广播发现模式：从任意节点查看"我在这个节点上有哪些任务"。
+    """
+    try:
+        sessions_response = await session_service.list_sessions(app_name="*", user_id=user_id)
+        sessions = sessions_response.sessions if sessions_response else []
+        
+        if not sessions:
+            return {"sessions": [], "count": 0}
+        
+        result = []
+        for s in sessions:
+            task_type = None
+            title = "Untitled"
+            if hasattr(s, 'state') and s.state:
+                title = s.state.get('title', 'Untitled')
+                task_type = s.state.get('task_type', None)
+            
+            updated_at = None
+            if hasattr(s, '_db_updated_at') and s._db_updated_at:
+                updated_at = s._db_updated_at.isoformat()
+            
+            result.append({
+                "session_id": s.id,
+                "app_name": s.app_name,
+                "title": title,
+                "task_type": task_type,
+                "updated_at": updated_at
+            })
+        
+        return {"sessions": result, "count": len(result)}
+    except Exception as e:
+        print(f"[User Sessions API] Error: {e}")
+        return {"sessions": [], "count": 0, "error": str(e)}
+
+
 @app.get("/api/context/leader_summary")
 async def get_leader_summary(
     app_name: str = DEFAULT_APP_NAME,
     user_id: str = DEFAULT_USER_ID,
+    session_id: str = None,
     limit: int = 1
 ):
     """
-    【跨节点上下文查询】支持 app_name="*" 进行全名空间搜索
+    [跨节点上下文查询] 支持两种模式：
+    1. 精准模式: 传入 session_id，直接查询该会话的完整对话
+    2. 最新模式: 不传 session_id，查最新会话 (fallback)
     """
     try:
-        # 调试日志
-        print(f"[Leader Summary API] 收到请求: app_name={app_name}, user_id={user_id}")
+        print(f"[Leader Summary API] 收到请求: app_name={app_name}, user_id={user_id}, session_id={session_id}, limit={limit}")
         
-        # 1. 查询最近的会话 (这里 app_name 可能是 "*")
-        sessions_response = await session_service.list_sessions(app_name=app_name, user_id=user_id)
-        sessions = sessions_response.sessions if sessions_response else []
+        target_session = None
         
-        if not sessions or len(sessions) == 0:
-            print(f"[Leader Summary API] 未找到会话")
-            return {"error": "No sessions found"}
-        
-        # 取最新的 session
-        if limit == 1:
-            latest_session_meta = sessions[0]
+        # === 模式 1: 精准查询 (有 session_id) ===
+        if session_id:
+            # 如果 app_name 不是通配符，先尝试直接用它查
+            if app_name != "*":
+                target_session = await session_service.get_session(
+                    app_name=app_name, user_id=user_id, session_id=session_id
+                )
             
-            # === [关键修改开始] ===
-            # 因为 list_sessions 可能用了 "*" 查出来的，
-            # 我们必须用查出来的真实 app_name 去调用 get_session 加载详情
-            real_app_name = latest_session_meta.app_name
-            real_session_id = latest_session_meta.id
+            # 如果直接查失败（或 app_name 是通配符），用 list_sessions 全局扫描
+            if not target_session:
+                print(f"[Leader Summary API] 精准查找: 全局搜索 session_id={session_id}...")
+                all_sessions_resp = await session_service.list_sessions(app_name="*", user_id=user_id)
+                for s in (all_sessions_resp.sessions if all_sessions_resp else []):
+                    if s.id == session_id:
+                        target_session = await session_service.get_session(
+                            app_name=s.app_name, user_id=user_id, session_id=session_id
+                        )
+                        if target_session:
+                            print(f"[Leader Summary API] 全局搜索成功! 在 '{s.app_name}' 下找到")
+                        break
+            
+            if not target_session:
+                return {"error": f"Session {session_id} not found for user {user_id}"}
+        
+        # === 模式 2: 最新模式 (无 session_id, fallback) ===
+        else:
+            sessions_response = await session_service.list_sessions(app_name=app_name, user_id=user_id)
+            sessions = sessions_response.sessions if sessions_response else []
+            
+            if not sessions:
+                return {"error": "No sessions found"}
+            
+            latest_meta = sessions[0]
+            real_app_name = latest_meta.app_name
+            real_session_id = latest_meta.id
             
             print(f"[Leader Summary API] 锁定最新会话: {real_app_name} / {real_session_id}")
             
-            latest_session = await session_service.get_session(
-                app_name=real_app_name, # <--- 使用真实的 app_name
-                user_id=user_id,
-                session_id=real_session_id
+            target_session = await session_service.get_session(
+                app_name=real_app_name, user_id=user_id, session_id=real_session_id
             )
-            # === [关键修改结束] ===
-            
-            if not latest_session:
-                latest_session = latest_session_meta
-            
-            # 提取最近的对话消息 (保持原样)
-            recent_messages = []
-            if latest_session.events:
-                for evt in latest_session.events[-100:]:
-                    if hasattr(evt, 'content') and evt.content:
-                        role = evt.content.role if hasattr(evt.content, 'role') else 'unknown'
-                        text = ""
-                        if hasattr(evt.content, 'parts'):
-                            for part in evt.content.parts:
-                                if hasattr(part, 'text') and part.text:
-                                    text += part.text
-                        if text:
-                            recent_messages.append({
-                                "role": role,
-                                "text": text[:]
-                            })
-            
-            summary_lines = []
-            for msg in recent_messages:
-                prefix = "👤 用户" if msg["role"] == "user" else "🤖 助手"
-                summary_lines.append(f"{prefix}: {msg['text']}")
-            
-            result = {
-                "title": latest_session.state.get('title', 'Untitled') if latest_session.state else 'Untitled',
-                "session_id": latest_session.id,
-                "app_name": latest_session.app_name, # 返回真实的 app_name 供调试
-                "recent_summary": " ".join(summary_lines),
-                "total_messages": len(latest_session.events) if latest_session.events else 0
-            }
-            return result
-        else:
-            # (处理多个会话的逻辑保持原样，如果有的话)
-            return {"sessions": [{"id": s.id} for s in sessions[:limit]]}
+            if not target_session:
+                target_session = latest_meta
+        
+        # === 统一: 提取对话摘要 ===
+        recent_messages = []
+        if target_session.events:
+            for evt in target_session.events[-100:]:
+                if hasattr(evt, 'content') and evt.content:
+                    role = evt.content.role if hasattr(evt.content, 'role') else 'unknown'
+                    text = ""
+                    if hasattr(evt.content, 'parts'):
+                        for part in evt.content.parts:
+                            if hasattr(part, 'text') and part.text:
+                                text += part.text
+                    if text:
+                        recent_messages.append({"role": role, "text": text})
+        
+        summary_lines = []
+        for msg in recent_messages:
+            prefix = "User" if msg["role"] == "user" else "Assistant"
+            summary_lines.append(f"{prefix}: {msg['text']}")
+        
+        result = {
+            "title": target_session.state.get('title', 'Untitled') if target_session.state else 'Untitled',
+            "session_id": target_session.id,
+            "app_name": target_session.app_name,
+            "recent_summary": " ".join(summary_lines),
+            "total_messages": len(target_session.events) if target_session.events else 0
+        }
+        return result
             
     except Exception as e:
-        print(f"[Swarm Context API] ❌ 查询失败: {e}")
+        print(f"[Swarm Context API] Error: {e}")
         import traceback
         traceback.print_exc()
         return {"error": str(e)}
+
 
 #暂时没用到
 @app.get("/health")

@@ -71,6 +71,37 @@ def _get_active_workers() -> List[dict]:
         print(f"[Swarm Discovery Error] {e}")
         return []
 
+def _get_all_nodes(include_self=True) -> List[dict]:
+    """
+    获取所有在线节点（含或不含自身），用于广播查询。
+    与 _get_active_workers 的区别：不排除自身节点。
+    """
+    if not os.path.exists(REGISTRY_DB):
+        return []
+    
+    HEARTBEAT_TIMEOUT = 15.0
+    current_time = time.time()
+    
+    try:
+        with sqlite3.connect(REGISTRY_DB, timeout=5.0) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT port, url, last_seen FROM nodes WHERE status='active'")
+            rows = cursor.fetchall()
+            
+            nodes = []
+            for row in rows:
+                last_seen = row['last_seen'] or 0
+                if current_time - last_seen > HEARTBEAT_TIMEOUT:
+                    continue
+                if not include_self and CURRENT_NODE_PORT and int(row['port']) == CURRENT_NODE_PORT:
+                    continue
+                nodes.append({"port": row['port'], "url": row['url']})
+            return nodes
+    except Exception as e:
+        print(f"[Swarm Discovery Error] _get_all_nodes: {e}")
+        return []
+
 def _remove_dead_node(port: int):
     """
     【自愈机制】惰性清理：当发现节点无法连接时，将其从注册表中移除。
@@ -120,6 +151,8 @@ async def dispatch_task(
 
     Args:
         task_instruction (str): 给 Worker 的具体任务指令。请清晰、明确。
+                                ⚠️ [禁止] 不要用此工具来“询问状态”或“获取进度”！
+                                如需获取对方状态，请直接使用 `sync_task_context` 工具。
         context_info (str): 任务背景信息（如之前的代码片段、需求文档摘要）。
         target_port (int, optional): 指定发送给哪个端口的 Worker。
                                      - 如果是新任务，留空 (None)，系统会自动选择空闲节点。
@@ -166,7 +199,7 @@ async def dispatch_task(
         f"4. 遇到错误直接汇报错误原因。"
     )
     
-    full_message = f"【背景】\n{context_info}\n\n【任务】\n{task_instruction}{system_instruction_injection}"
+    full_message = f"【背景】\n[本次任务的Leader节点: Node {CURRENT_NODE_PORT}]\n{context_info}\n\n【任务】\n{task_instruction}{system_instruction_injection}"
     
     # 处理紧急抢占标记
     if priority.upper() == "URGENT":
@@ -356,25 +389,29 @@ async def dispatch_task(
 # ==========================================
 async def sync_task_context(
     reason: str = "",
-    target_ports = None,         # [改名] 明确表示“我要去问这些端口”
+    target_ports = None,         # None=广播所有节点, int/List[int]=定向查询
+    session_id: str = None,      # [新增] 精准模式：指定会话ID直接查看详情
     _session_service = None,
     _app_info = None
 ) -> str:
     """
-    【User-Centric 任务同步】基于用户身份，查询指定节点上的最新任务状态。
-    不再需要指定 Leader Port，只要 User ID 一致即可查到。
-    
+    [三模式任务同步] 查询集群中的任务状态。
+
+    三种使用模式（自动判断）：
+    1. broadcast (广播发现): target_ports=None -> 自动发现所有在线节点，列出你名下的所有任务
+    2. targeted (定向查询): target_ports=[8000,8001] -> 只查指定节点上你的任务
+    3. precise (精准查看): target_ports=8001, session_id="abc123" -> 按会话ID查看完整对话详情
+
     Args:
-        reason (str): 同步原因。
-        target_ports (int | List[int]): 你要查询的目标节点端口列表。
+        reason (str): 同步原因（如"查看进度"、"确认子任务完成"）。
+        target_ports (int | List[int], optional): 目标节点端口。不传则广播查询所有在线节点。
+        session_id (str, optional): 精准查询的会话ID。传入后将获取完整对话历史而非摘要列表。
     """
     try:
-        # 1. 获取当前用户身份 (这是唯一的通行证)
-        # 优先使用透传的 original_user_id (Worker模式)，如果没有则用当前的 (Leader/User模式)
+        # 1. 获取当前用户身份
         current_user_id = _app_info.get("user_id", "unknown")
         
-        # 尝试从 Session State 获取更准确的 original_user_id (如果存在)
-        # 这依然有必要，因为 Worker 自身的 user_id 可能被设为了 "Agent_Node_X"
+        # 尝试从 Session State 获取更准确的 original_user_id (Worker模式兼容)
         try:
             current_session = await _session_service.get_session(
                 app_name=_app_info.get("app_name", ""),
@@ -383,93 +420,166 @@ async def sync_task_context(
             )
             if current_session and current_session.state:
                 current_user_id = current_session.state.get('original_user_id', current_user_id)
-        except:
-            pass # 容错，拿不到就用默认的
+        except Exception:
+            pass
 
         # 2. 确定目标端口
         targets = []
+        query_mode = "broadcast"  # 默认广播
+
         if target_ports:
-            # ✅ 新增：更稳健的类型兼容，因为 LLM 有时会把 list 传成 string "[8000]"
+            # LLM 输入类型兼容处理
             if isinstance(target_ports, str):
                 try:
-                    import json
                     parsed = json.loads(target_ports)
-                    if isinstance(parsed, list): targets = parsed
+                    if isinstance(parsed, list): targets = [int(p) for p in parsed]
                     elif isinstance(parsed, int): targets = [parsed]
                     else: targets = [int(p.strip()) for p in target_ports.split(',')]
-                except:
-                    # 最后的尝试：当做单个数字
+                except Exception:
                     try: targets = [int(target_ports)]
-                    except: pass
-            elif isinstance(target_ports, list): targets = target_ports
+                    except Exception: pass
+            elif isinstance(target_ports, list): targets = [int(p) for p in target_ports]
             elif isinstance(target_ports, int): targets = [target_ports]
+            
+            query_mode = "precise" if session_id else "targeted"
         else:
-            return "❌ 请指定 target_ports (你要查询的节点端口)。"
+            # 广播模式：从注册表发现所有在线节点
+            all_nodes = _get_all_nodes(include_self=True)
+            if not all_nodes:
+                return "[Sync] 无法发现任何在线节点。请检查集群状态或指定 target_ports。"
+            targets = [int(n['port']) for n in all_nodes]
 
-        print(f"[Swarm Sync] 🆔 身份: {current_user_id}, 🎯 目标: {targets}")
+        print(f"[Swarm Sync] 模式: {query_mode}, 身份: {current_user_id}, 目标: {targets}")
 
         # 3. 单节点查询逻辑
-        async def _sync_single_node(port):
+        async def _query_node_sessions(port):
+            """轻量级：列出该节点上用户的所有会话"""
             try:
-                target_url = f"http://localhost:{port}"
-                
                 async with httpx.AsyncClient(timeout=10.0) as client:
-                    # === [核心逻辑] 直接使用通配符 "*" ===
-                    # 含义：我是 User A，把我在你这儿不管什么名义下的最新任务给我
                     response = await client.get(
-                        f"{target_url}/api/context/leader_summary",
-                        params={
-                            "app_name": "*",  # <--- 通配符魔法
-                            "user_id": current_user_id,
-                            "limit": 1
-                        }
+                        f"http://localhost:{port}/api/context/user_sessions",
+                        params={"user_id": current_user_id}
                     )
-                    
                     if response.status_code != 200:
                         return {"port": port, "error": f"HTTP {response.status_code}"}
-                    
                     data = response.json()
-                    if "error" in data: return {"port": port, "error": data['error']}
-                    return {"port": port, "success": True, "data": data}
-
+                    return {"port": port, "success": True, "sessions": data.get("sessions", []), "count": data.get("count", 0)}
             except Exception as e:
                 return {"port": port, "error": str(e)}
 
-        # 4. 并发执行
-        results = await asyncio.gather(*[_sync_single_node(p) for p in targets])
-        
-        # 5. 格式化输出
-        summary_parts = [
-            "【Swarm 任务上下文同步报告】",
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            f"👤 用户身份: {current_user_id}",
-            f"🎯 目标节点: {targets}",
-            ""
-        ]
-        
-        success_count = 0
-        for res in results:
-            port = res['port']
-            if "error" in res:
-                summary_parts.append(f"❌ 节点 {port}: {res['error']}")
-            else:
-                success_count += 1
-                data = res['data']
-                summary_parts.append(f"✅ 节点 (Port {port}): {data.get('title', 'Untitled')}")
-                # 摘要截取后 5000 字符 (关注最新进展)
-                summary_text = data.get('recent_summary', '无')
-                summary_parts.append(f"   摘要: ...{summary_text[-5000:]}" if len(summary_text) > 5000 else f"   摘要: {summary_text}")
-                summary_parts.append("")
-        
-        summary_parts.append(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        summary_parts.append(f"同步成功率: {success_count}/{len(targets)}")
-        
-        return "\n".join(summary_parts)
+        async def _query_node_detail(port, sid):
+            """精准模式：按 session_id 获取完整对话"""
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.get(
+                        f"http://localhost:{port}/api/context/leader_summary",
+                        params={
+                            "app_name": "*",
+                            "user_id": current_user_id,
+                            "session_id": sid
+                        }
+                    )
+                    if response.status_code != 200:
+                        return {"port": port, "error": f"HTTP {response.status_code}"}
+                    data = response.json()
+                    if "error" in data:
+                        return {"port": port, "error": data['error']}
+                    return {"port": port, "success": True, "data": data}
+            except Exception as e:
+                return {"port": port, "error": str(e)}
+
+        # 4. 执行查询
+        if query_mode == "precise":
+            # 精准模式：按 session_id 查一台或多台节点
+            results = await asyncio.gather(*[_query_node_detail(p, session_id) for p in targets])
+            return _format_detail_results(current_user_id, targets, results, session_id)
+        else:
+            # 广播/定向模式：列出各节点上的会话列表
+            results = await asyncio.gather(*[_query_node_sessions(p) for p in targets])
+            return _format_discovery_results(current_user_id, targets, results, query_mode)
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return f"❌ 系统异常: {e}"
+        return f"[Sync Error] {e}"
+
+
+def _format_discovery_results(user_id, targets, results, mode):
+    """格式化广播/定向模式的发现结果"""
+    parts = [
+        "[Swarm Task Discovery Report]",
+        "=" * 40,
+        f"User: {user_id}",
+        f"Mode: {'Broadcast (all nodes)' if mode == 'broadcast' else 'Targeted'}",
+        f"Nodes queried: {targets}",
+        ""
+    ]
+    
+    total_sessions = 0
+    online_count = 0
+    
+    for res in results:
+        port = res['port']
+        if "error" in res:
+            parts.append(f"[X] Node {port}: {res['error']}")
+        else:
+            online_count += 1
+            sessions = res.get('sessions', [])
+            count = len(sessions)
+            total_sessions += count
+            
+            if count == 0:
+                parts.append(f"[OK] Node {port}: No sessions")
+            else:
+                parts.append(f"[OK] Node {port}: {count} session(s)")
+                for s in sessions:
+                    title = s.get('title', 'Untitled')
+                    sid = s.get('session_id', '?')
+                    task_type = s.get('task_type', '')
+                    tag = f" [{task_type}]" if task_type else ""
+                    updated = s.get('updated_at', '')
+                    parts.append(f"     - [{sid}] {title}{tag}  ({updated})")
+        parts.append("")
+    
+    parts.append("=" * 40)
+    parts.append(f"Summary: {online_count}/{len(targets)} nodes responded, {total_sessions} total sessions found")
+    
+    if total_sessions > 0:
+        parts.append("")
+        parts.append("Tip: To view details of a specific session, call:")
+        parts.append("  sync_task_context(target_ports=<port>, session_id='<session_id>')")
+    
+    return "\n".join(parts)
+
+
+def _format_detail_results(user_id, targets, results, session_id):
+    """格式化精准模式的详情结果"""
+    parts = [
+        "[Swarm Task Detail Report]",
+        "=" * 40,
+        f"User: {user_id}",
+        f"Session: {session_id}",
+        ""
+    ]
+    
+    for res in results:
+        port = res['port']
+        if "error" in res:
+            parts.append(f"[X] Node {port}: {res['error']}")
+        else:
+            data = res['data']
+            parts.append(f"[OK] Node {port}: {data.get('title', 'Untitled')}")
+            parts.append(f"     App: {data.get('app_name', '?')}")
+            parts.append(f"     Messages: {data.get('total_messages', 0)}")
+            summary_text = data.get('recent_summary', 'None')
+            if len(summary_text) > 5000:
+                summary_text = "..." + summary_text[-5000:]
+            parts.append(f"     Conversation:")
+            parts.append(f"     {summary_text}")
+        parts.append("")
+    
+    parts.append("=" * 40)
+    return "\n".join(parts)
 
 
 async def dispatch_batch_tasks(
