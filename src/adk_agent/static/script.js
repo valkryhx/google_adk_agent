@@ -184,10 +184,35 @@ document.addEventListener('DOMContentLoaded', () => {
                             // [Fix] Chronological Ordering:
                             // When 'init' event arrives, insert a placeholder block into the stream.
                             if (evt.sub_type === 'init') {
+                                const roundInfo = evt.data.meeting_round;
+                                const role = evt.data.meeting_role;
+
+                                // Meeting mode: insert Round Header before first card of each round
+                                if (roundInfo) {
+                                    const roundContainerId = `swarm-round-${loadingId}-${roundInfo}`;
+                                    const alreadyHasRoundHeader = responseBlocks.some(
+                                        b => b.type === 'round_header' && b.round === roundInfo && b.msgId === loadingId
+                                    );
+                                    if (!alreadyHasRoundHeader) {
+                                        responseBlocks.push({
+                                            type: 'round_header',
+                                            msgId: loadingId,
+                                            round: roundInfo,
+                                            totalRounds: evt.data.meeting_total_rounds,
+                                            role: role
+                                        });
+                                    }
+                                }
+
+                                // Use round-aware suffix for placeholder ID (include role to avoid secretary/participant collision)
+                                const rolePrefix = role === 'secretary' ? 'sec-' : '';
+                                const placeholderSuffix = roundInfo ? `R${roundInfo}-${rolePrefix}${evt.data.worker_port}` : `${evt.data.worker_port}`;
                                 responseBlocks.push({
                                     type: 'swarm_placeholder',
-                                    msgId: loadingId, // Helper to construct ID
+                                    msgId: loadingId,
                                     port: evt.data.worker_port,
+                                    round: roundInfo || null,
+                                    role: role || null,
                                     data: evt.data
                                 });
                                 // Force render immediately so the placeholder exists for processSwarmEvent
@@ -267,12 +292,20 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!msgEl) return;
 
         const workerPort = data.worker_port;
-        const cardId = `swarm-card-${msgId}-${workerPort}`;
-        const placeholderId = `swarm-placeholder-${msgId}-${workerPort}`;
+        const round = data.meeting_round;
+        const role = data.meeting_role;
+        const totalRounds = data.meeting_total_rounds;
+
+        // Round-aware ID: prevent same worker across rounds from overwriting
+        // Also include role to prevent secretary/participant collision on same round+port
+        const rolePrefix = role === 'secretary' ? 'sec-' : '';
+        const cardSuffix = round ? `R${round}-${rolePrefix}${workerPort}` : `${workerPort}`;
+        const cardId = `swarm-card-${msgId}-${cardSuffix}`;
+        const placeholderId = `swarm-placeholder-${msgId}-${cardSuffix}`;
 
         let card = document.getElementById(cardId);
 
-        // 1. Init: 创建卡片
+        // 1. Init: create card
         if (subType === 'init' && !card) {
             // Find the placeholder created by renderBlocks
             let placeholder = document.getElementById(placeholderId);
@@ -302,14 +335,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 card.classList.add('inline-card');
             }
 
+            // Build header info based on meeting context
+            const workerLabel = round
+                ? (role === 'secretary'
+                    ? `[Secretary] Worker-${workerPort}`
+                    : `[Round ${round}] Worker-${workerPort}`)
+                : `Worker-${workerPort}`;
+            const metaLabel = round
+                ? (role === 'secretary' ? 'Summarizing' : `Round ${round}/${totalRounds}`)
+                : 'Running';
+            const statusIcon = role === 'secretary' ? 'edit_note' : 'sync';
+
             card.innerHTML = `
                 <div class="swarm-card-header">
-                    <div class="swarm-status-icon"><span class="material-symbols-outlined spin">sync</span></div>
+                    <div class="swarm-status-icon"><span class="material-symbols-outlined spin">${statusIcon}</span></div>
                     <div class="swarm-info">
-                        <div class="swarm-worker-id">Worker-${workerPort}</div>
+                        <div class="swarm-worker-id">${workerLabel}</div>
                         <div class="swarm-task-preview" title="${data.task_preview}">${data.task_preview || 'Task Started...'}</div>
                     </div>
-                    <div class="swarm-meta">Running</div>
+                    <div class="swarm-meta">${metaLabel}</div>
                     <div class="swarm-actions" style="margin-left: 10px;">
                         <button class="stop-worker-btn" title="Force Stop Worker" onclick="stopWorker(${workerPort}, '${data.session_id}')" style="background:none; border:none; cursor:pointer;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">
                             <span class="material-symbols-outlined" style="font-size: 20px; color: #ff5252;">stop_circle</span>
@@ -493,10 +537,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderBlocks(blocks, isHistory = false) {
+        // [Debug] Beacon to verify script update and execution
+        console.log(`[Swarm Debug] renderBlocks called. Blocks: ${blocks.length}, isHistory: ${isHistory}`);
+
         let html = '';
 
         for (let i = 0; i < blocks.length; i++) {
             const block = blocks[i];
+            // [Debug] Trace block types
+            if (isHistory) console.log(`[Swarm Debug] Block ${i}: type=${block.type}, tool=${block.tool_name || block.function?.name}`);
 
             if (block.type === 'text') {
                 html += marked.parse(block.content);
@@ -555,10 +604,13 @@ document.addEventListener('DOMContentLoaded', () => {
                             const nextBlock = blocks[i + 1];
 
                             // [New] Use clean result field if available!
-                            const content = nextBlock.tool_result_clean || nextBlock.content || '';
+                            let content = nextBlock.tool_result_clean || nextBlock.content || '';
+
+                            // [Fix] Normalize escaped newlines to real newlines for regex matching
+                            content = content.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\r/g, '\n');
 
                             // Regex now expects CLEAN string with newlines
-                            const regex = /--- 任务 (\d+) 结果 ---[\r\n]+([\s\S]*?)(?=[\r\n]+--- 任务|[\r\n]+$|$)/g;
+                            const regex = /--- \u4efb\u52a1 (\d+) \u7ed3\u679c ---[\r\n]+([\s\S]*?)(?=[\r\n]+--- \u4efb\u52a1|[\r\n]*$)/g;
                             let match;
                             while ((match = regex.exec(content)) !== null) {
                                 const taskIndex = parseInt(match[1]) - 1;
@@ -592,6 +644,131 @@ document.addEventListener('DOMContentLoaded', () => {
                                         ${resultHtml}
                                     </div>`;
                         });
+                    } else if (block.tool_name === 'hold_meeting' && block.tool_args) {
+                        // === hold_meeting History Cards ===
+                        const args = block.tool_args;
+                        const meetingTopic = args.topic || 'Meeting';
+                        const maxRounds = args.max_rounds || '?';
+                        const participantCount = args.participant_count || '?';
+
+                        // Parse round_details from tool_result
+                        let roundEntries = [];
+                        if (i + 1 < blocks.length && (blocks[i + 1].type === 'tool_result' || blocks[i + 1].type === 'function_response')) {
+                            let resultContent = blocks[i + 1].tool_result_clean || blocks[i + 1].content || '';
+                            // Normalize escaped newlines
+                            resultContent = resultContent.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\r/g, '\n');
+
+                            // Robust Line-by-Line Parsing with Multi-line Support
+                            console.groupCollapsed(`[Meeting History Debug] Parsing rounds for topic: ${meetingTopic}`);
+
+                            const lines = resultContent.split('\n');
+                            let currentRound = null;
+                            let currentEntry = null;
+
+                            for (const line of lines) {
+                                // Match: --- Round 1 (3 participants) ---
+                                const roundMatch = line.match(/Round (\d+) \((\d+) participants\)/);
+                                if (roundMatch) {
+                                    console.log(`✅ Found Round: ${roundMatch[1]}`);
+                                    currentRound = {
+                                        round: parseInt(roundMatch[1]),
+                                        participants: parseInt(roundMatch[2]),
+                                        entries: []
+                                    };
+                                    roundEntries.push(currentRound);
+                                    currentEntry = null; // Reset entry focus
+                                    continue;
+                                }
+
+                                // Match: [P1-Port8003]: content or [Secretary-Port8003]: content
+                                const entryMatch = line.match(/^\s*\[(P\d+|Secretary)-Port(\d+|\?)\]:\s*(.*)/);
+                                if (entryMatch) {
+                                    if (currentRound) {
+                                        console.log(`  ✅ Found Entry: ${entryMatch[1]} (Port ${entryMatch[2]})`);
+                                        currentEntry = {
+                                            role: entryMatch[1].startsWith('Secretary') ? 'secretary' : 'participant',
+                                            label: entryMatch[1],
+                                            port: entryMatch[2],
+                                            preview: entryMatch[3].trim() // Start of content
+                                        };
+                                        currentRound.entries.push(currentEntry);
+                                    } else {
+                                        console.warn(`  ⚠️ Orphan Entry (no round): ${line.substring(0, 50)}...`);
+                                    }
+                                    continue;
+                                }
+
+                                // Multi-line Content Append
+                                if (currentEntry) {
+                                    const trimLine = line.trim();
+                                    // Only append if line has content (or if we want to preserve empty lines)
+                                    // For now, let's just append non-empty lines with a newline separator
+                                    if (trimLine) {
+                                        if (currentEntry.preview) {
+                                            currentEntry.preview += "\n" + trimLine;
+                                        } else {
+                                            currentEntry.preview = trimLine;
+                                        }
+                                    }
+                                }
+                            }
+                            console.log(`Total Rounds Parsed: ${roundEntries.length}`);
+                            console.groupEnd();
+                        }
+
+                        // Render meeting overview header
+                        html += `<div class="swarm-round-header" style="margin: 12px 0 6px 0;">
+                                    <span class="round-badge" style="background:#e65100;">Meeting</span>
+                                    <span class="round-label">${meetingTopic.substring(0, 40)} (${maxRounds} rounds, ${participantCount} per round)</span>
+                                 </div>`;
+
+                        // Render each round
+                        if (roundEntries.length > 0) {
+                            roundEntries.forEach(round => {
+                                // Round header
+                                html += `<div class="swarm-round-header" style="margin: 8px 0 4px 0;">
+                                            <span class="round-badge">R${round.round}</span>
+                                            <span class="round-label">${round.participants} participants</span>
+                                         </div>`;
+
+                                // Participant and Secretary cards
+                                round.entries.forEach(entry => {
+                                    const isSecretary = entry.role === 'Secretary';
+                                    const icon = isSecretary ? 'edit_note' : 'history';
+                                    const label = isSecretary ? `Secretary (Port ${entry.port})` : `${entry.role} (Port ${entry.port})`;
+                                    const roleTag = isSecretary ? '<span style="background:#e65100;color:#fff;padding:1px 6px;border-radius:4px;font-size:11px;margin-left:6px;">Secretary</span>' : '';
+
+                                    html += `<div class="swarm-card success" style="margin: 6px 0;">
+                                                <div class="swarm-card-header">
+                                                    <div class="swarm-status-icon"><span class="material-symbols-outlined">${icon}</span></div>
+                                                    <div class="swarm-info">
+                                                        <div class="swarm-worker-id">${label}${roleTag}</div>
+                                                        <div class="swarm-task-preview" title="${entry.preview.substring(0, 500)}">${entry.preview.length > 60 ? entry.preview.substring(0, 60) + "..." : entry.preview}</div>
+                                                    </div>
+                                                    <div class="swarm-meta">History</div>
+                                                </div>
+                                                <details class="swarm-logs-wrapper">
+                                                    <summary>Show History Logs</summary>
+                                                    <div class="swarm-logs-content">
+                                                        <pre class="swarm-terminal">${entry.preview}</pre>
+                                                    </div>
+                                                </details>
+                                             </div>`;
+                                });
+                            });
+                        } else {
+                            // Fallback: no structured details parsed, show basic info
+                            html += `<div class="swarm-card success" style="margin: 10px 0;">
+                                        <div class="swarm-card-header">
+                                            <div class="swarm-status-icon"><span class="material-symbols-outlined">groups</span></div>
+                                            <div class="swarm-info">
+                                                <div class="swarm-worker-id">Meeting: ${meetingTopic.substring(0, 30)}</div>
+                                                <div class="swarm-task-preview">${maxRounds} rounds, ${participantCount} participants per round</div>
+                                            </div>
+                                            <div class="swarm-meta">History</div>
+                                        </div>
+                                     </div>`;
+                        }
                     }
                 }
             } else if (block.type === 'tool_result' || block.type === 'function_response') {
@@ -611,10 +788,20 @@ document.addEventListener('DOMContentLoaded', () => {
                             </summary>
                             <div class="tool-content">${marked.parse(block.content)}</div>
                         </details>`;
+            } else if (block.type === 'round_header') {
+                // [Meeting] Render round header for meeting round grouping
+                const roleLabel = block.role === 'secretary' ? ' - Secretary Summarizing' : '';
+                html += `<div id="swarm-round-${block.msgId}-${block.round}" class="swarm-round-header">
+                    <span class="round-badge">Round ${block.round}/${block.totalRounds}</span>
+                    <span class="round-label">${roleLabel}</span>
+                </div>`;
             } else if (block.type === 'swarm_placeholder') {
                 // [New] Render placeholder for inline swarm card
-                // ID strictly follows the pattern needed for processSwarmEvent to find it
-                html += `<div id="swarm-placeholder-${block.msgId}-${block.port}" class="swarm-placeholder" data-port="${block.port}" style="margin: 10px 0;"></div>`;
+                // Use round-aware suffix if meeting_round is present
+                // Include role to prevent secretary/participant collision
+                const rolePrefix = block.role === 'secretary' ? 'sec-' : '';
+                const suffix = block.round ? `R${block.round}-${rolePrefix}${block.port}` : `${block.port}`;
+                html += `<div id="swarm-placeholder-${block.msgId}-${suffix}" class="swarm-placeholder" data-port="${block.port}" style="margin: 10px 0;"></div>`;
             }
         }
 
@@ -888,38 +1075,52 @@ document.addEventListener('DOMContentLoaded', () => {
             document.body.classList.add('chat-mode');
 
             // 渲染历史消息
-            data.messages.forEach(msg => {
+            for (let i = 0; i < data.messages.length; i++) {
+                const msg = data.messages[i];
+
                 if (msg.role === 'user') {
                     // 用户消息直接渲染 text
                     if (msg.text && msg.text.trim()) {
                         appendMessage('user', msg.text, false);
                     }
                 } else if (msg.role === 'model') {
-                    console.log('[前端调试] Model 消息:', msg);
-                    console.log('[前端调试] msg.blocks:', msg.blocks);
-                    console.log('[前端调试] hasValidContent(msg.blocks):', hasValidContent(msg.blocks));
-
                     // 优先处理 blocks 结构
                     if (msg.blocks && hasValidContent(msg.blocks)) {
-                        console.log('[前端调试] 准备渲染 blocks，数量:', msg.blocks.length);
-                        msg.blocks.forEach((block, idx) => {
-                            console.log(`[前端调试] Block ${idx}: type=${block.type}, content_length=${block.content?.length}`);
-                        });
+
+                        // [Fix] Merge Logic: Check if next message is a tool_result for this tool_call
+                        // This fixes the issue where hold_meeting history card couldn't see the result logs
+                        if (i + 1 < data.messages.length) {
+                            const nextMsg = data.messages[i + 1];
+                            if (nextMsg.role === 'model' && nextMsg.blocks && hasValidContent(nextMsg.blocks)) {
+                                // Simple heuristic: 
+                                // Current has tool_call/tool_use?
+                                // Next has tool_result?
+                                const hasToolCall = msg.blocks.some(b => b.type === 'tool_call' || b.type === 'tool_use');
+                                const hasToolResult = nextMsg.blocks.some(b => b.type === 'tool_result' || b.type === 'function_response');
+
+                                if (hasToolCall && hasToolResult) {
+                                    console.log(`[History] Merging tool_call (msg ${i}) with tool_result (msg ${i + 1})`);
+                                    // Append next message blocks to current
+                                    msg.blocks = msg.blocks.concat(nextMsg.blocks);
+                                    // Skip next message
+                                    i++;
+                                }
+                            }
+                        }
 
                         const msgId = appendMessage('model', '', false);
                         updateMessage(msgId, msg.blocks, true);
                     }
                     // 兼容旧的文本格式 (只有 text 没有 blocks)
                     else if (msg.text && msg.text.trim()) {
-                        console.log('[前端调试] 使用旧格式 text');
                         appendMessage('model', msg.text, false);
                     }
                     else {
                         // 真的没有内容,忽略
-                        console.warn('[前端调试] 忽略空消息:', msg);
+                        // console.warn('[前端调试] 忽略空消息:', msg);
                     }
                 }
-            });
+            }
 
         } catch (e) {
             console.error('加载历史消息失败:', e);

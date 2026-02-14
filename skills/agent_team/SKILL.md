@@ -25,6 +25,12 @@ description: Enables the agent to act as a Swarm Leader, dispatching tasks to re
 2.  **Write/Act (执行任务/生成代码/搜索数据)**:
     *   **动作**: 调用 `dispatch_task` 或 `dispatch_batch_tasks`。
     *   **原因**: 需要 Worker 投入算力和时间去产出新的结果。
+
+3.  **Discussion/Debate (多人讨论/辩论/头脑风暴)**:
+    *   **动作**: 调用 `hold_meeting`。
+    *   **原因**: 需要多个 Worker 围绕一个议题进行多轮观点碰撞，最终形成共识或对比报告。
+    *   *示例*: "让大家讨论一下用 Python 还是 Go 写爬虫" -> `hold_meeting(topic="Python vs Go 爬虫系统选型")` (correct)
+    *   *反例*: 连续调用 `dispatch_task` 让各个 Worker 分别发表意见 -> 无法形成多轮交互讨论 (wrong)
 ### `dispatch_task`
 这是你指挥千军万马的唯一令牌。它可以将任何自然语言描述的任务发送给集群中的空闲节点。
 
@@ -96,6 +102,41 @@ sync_task_context(
 #### 典型工作流：
 1. 先用**广播**发现所有任务 -> 得到每个节点上的 session 列表
 2. 再用**精准**模式查看特定 session 的详情
+
+### `hold_meeting` (群体会议)
+当你需要让多个 Worker **围绕一个议题进行多轮讨论**时，使用此工具。Leader 充当主持人，组织多轮观点碰撞。
+
+#### 核心机制：
+1.  **以议题为中心**：会议纪要是独立 artifact，每轮参会者可以不同（无状态设计）。
+2.  **滚动窗口**：早期轮次被"秘书"压缩为结构化摘要，最近一轮保留完整发言。
+3.  **PASS 机制**：Worker 无新观点时回复 PASS，全员 PASS 则会议自动结束。
+4.  **自动容错**：不指定端口，节点故障时系统自动换人继续。
+
+#### 参数说明：
+
+| 参数                | 类型 | 默认值 | 说明                 |
+| ------------------- | ---- | ------ | -------------------- |
+| `topic`             | str  | (必填) | 会议议题             |
+| `participant_count` | int  | 3      | 每轮参会 Worker 数量 |
+| `max_rounds`        | int  | 5      | 最大讨论轮数         |
+
+#### 适用场景：
+* 技术选型辩论（如 MySQL vs MongoDB）
+* 方案评审（多角度分析设计方案的优缺点）
+* 头脑风暴（围绕产品想法收集多方意见）
+* 竞争性假设验证（让不同 Worker 持不同立场互相辩论）
+
+#### 使用示例：
+```python
+# 基础用法：3 人讨论，最多 5 轮
+hold_meeting(topic="新爬虫系统应该用 Python 还是 Go")
+
+# 大规模讨论：5 人参会，最多 3 轮（快速收敛）
+hold_meeting(topic="Q2 产品路线图评审", participant_count=5, max_rounds=3)
+
+# 简单辩论：2 人对决
+hold_meeting(topic="是否应该引入 Redis 缓存层", participant_count=2, max_rounds=4)
+```
 
 ## 3. 使用策略 (Usage Strategy) - 请务必遵守！
 

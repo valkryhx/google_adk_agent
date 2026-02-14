@@ -910,3 +910,46 @@ details[open] .tool-header {
 .swarm-terminal::-webkit-scrollbar-thumb:hover {
     background: #bdc1c6;
 }
+
+/* =========================================
+   Meeting Round Header Styles
+   ========================================= */
+
+.swarm-round-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 16px 0 8px 0;
+    padding: 6px 12px;
+    border-left: 3px solid #4285f4;
+    background: linear-gradient(90deg, #e8f0fe 0%, transparent 100%);
+    border-radius: 0 6px 6px 0;
+}
+
+.round-badge {
+    display: inline-block;
+    background: #4285f4;
+    color: #fff;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.round-label {
+    font-size: 12px;
+    color: #5f6368;
+    font-weight: 500;
+}
+
+/* Secretary card styling - use edit_note icon */
+
+.swarm-card .swarm-worker-id {
+    font-size: 11px;
+    font-weight: 700;
+    color: #1a73e8;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
