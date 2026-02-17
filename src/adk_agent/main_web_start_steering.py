@@ -19,7 +19,7 @@ import sqlite3
 import functools
 from contextvars import ContextVar
 from typing import Dict, Tuple, Optional, Any, List
-
+import base64 as b64_module
 # 将当前目录添加到路径
 #sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # 将项目根目录添加到路径 (3层目录向上)
@@ -513,10 +513,14 @@ class SteeringSession:
     #         traceback.print_exc()
 
     
-    async def run_task(self, task: str):
+    async def run_task(self, task: str, images: List[str] = None):
         """
         执行任务主逻辑（原 run_agent 函数的核心部分）
         使用 yield 返回流式数据块
+        
+        Args:
+            task: 用户输入的文本
+            images: 可选的 Base64 编码图片列表 (data:image/xxx;base64,...)
         """
         was_interrupted = False
         
@@ -616,7 +620,39 @@ class SteeringSession:
             # 启动前检票
             self.interruption_guard()
             
-            user_query = types.Content(role='user', parts=[types.Part(text=task)])
+            # ============ [多模态] 构建 user_query ============
+            parts = []
+            
+            # 处理图片
+            if images:
+                
+                print(f"[Steering] 收到 {len(images)} 张图片输入")
+                for i, img_data in enumerate(images):
+                    try:
+                        # 解析 data:image/png;base64,xxxxx 格式
+                        if ',' in img_data:
+                            header, b64_str = img_data.split(',', 1)
+                            # 提取 MIME type，例如 image/png
+                            mime_type = header.split(':')[1].split(';')[0] if ':' in header else 'image/png'
+                        else:
+                            b64_str = img_data
+                            mime_type = 'image/png'
+                        
+                        image_bytes = b64_module.b64decode(b64_str)
+                        parts.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
+                        print(f"  [图片{i+1}] {mime_type}, {len(image_bytes)} bytes")
+                    except Exception as e:
+                        print(f"  [图片{i+1}] 解析失败: {e}")
+            
+            # 处理文本
+            if task:
+                parts.append(types.Part(text=task))
+            
+            # 兜底：防止空请求
+            if not parts:
+                parts.append(types.Part(text="(empty)"))
+            
+            user_query = types.Content(role='user', parts=parts)
             run_config = RunConfig(streaming_mode=StreamingMode.SSE)
             
             logger.task_start(task)
@@ -1274,7 +1310,7 @@ def _process_event_stream(event, parts_override=None):
 # 核心运行逻辑 (新架构适配层)
 # ==========================================
 
-async def run_agent(task: str, app_name: str, user_id: str, session_id: str):
+async def run_agent(task: str, app_name: str, user_id: str, session_id: str, images: List[str] = None):
     """
     [新架构] 运行 Agent（适配器函数）
     委托给 SessionManager 来获取/创建会话，然后调用 session.run_task()
@@ -1288,7 +1324,7 @@ async def run_agent(task: str, app_name: str, user_id: str, session_id: str):
     session = session_manager.get_or_create(app_name, user_id, session_id)
     
     # 委托给会话实例执行任务
-    async for chunk in session.run_task(task):
+    async for chunk in session.run_task(task, images=images):
         yield chunk
 
 # ==========================================
@@ -1300,6 +1336,7 @@ app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__
 
 class ChatRequest(BaseModel):
     message: str
+    images: Optional[List[str]] = None  # [多模态] Base64 编码的图片列表
     # 允许前端传参，如果没传则用默认值
     app_name: str = DEFAULT_APP_NAME
     user_id: str = DEFAULT_USER_ID
@@ -1371,12 +1408,13 @@ async def chat_endpoint(request: ChatRequest, response: Response):
 
         async def generate():
             try:
-                # 传入完整的三元组
+                # 传入完整的三元组 + 图片
                 async for chunk in run_agent(
                     request.message, 
                     request.app_name, 
                     request.user_id, 
-                    request.session_id
+                    request.session_id,
+                    images=request.images
                 ):
                     yield json.dumps({"chunk": chunk}) + "\n"
             except Exception as e:
@@ -1691,9 +1729,9 @@ async def get_session_history(
             elif hasattr(event, 'author'):
                 role = event.author
             
-            # 提取文本内容
             text_content = ""
             blocks = []
+            images = []  # [多模态] 存储图片的 Base64 data URL
             
             # [调试日志] 输出 event 的详细信息
             print(f"\n[历史消息调试] Event {event_idx} - Role: {role}")
@@ -1713,6 +1751,17 @@ async def get_session_history(
                         else:
                             blocks.append({"type": "text", "content": part.text})
                             text_content += part.text
+                    
+                    # [多模态] 检查 inline_data（图片）
+                    if hasattr(part, 'inline_data') and part.inline_data:
+                        blob = part.inline_data
+                        mime_type = getattr(blob, 'mime_type', 'image/png')
+                        img_bytes = getattr(blob, 'data', b'')
+                        if img_bytes:
+                            b64_str = b64_module.b64encode(img_bytes).decode('utf-8')
+                            data_url = f"data:{mime_type};base64,{b64_str}"
+                            images.append(data_url)
+                            print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 有图片 ({mime_type}, {len(img_bytes)} bytes)")
                     
                     # 检查 function_call
                     if hasattr(part, 'function_call') and part.function_call:
@@ -1780,11 +1829,15 @@ async def get_session_history(
                 role = 'model'
             
             if role == 'user' or role == 'model':
-                messages.append({
+                msg_data = {
                     "role": role,
-                    "blocks": merged_blocks,  # 使用合并后的 blocks
-                    "text": text_content  # 兼容性字段
-                })
+                    "blocks": merged_blocks,
+                    "text": text_content
+                }
+                # [多模态] 如果有图片，附加到消息中
+                if images:
+                    msg_data["images"] = images
+                messages.append(msg_data)
     
     return {"messages": messages}
 

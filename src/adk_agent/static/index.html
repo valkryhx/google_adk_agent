@@ -94,12 +94,18 @@
 
             <div class="input-area-wrapper">
                 <div class="input-area">
-                    <button class="icon-btn"><span class="material-symbols-outlined">add_circle</span></button>
-                    <textarea id="userInput" placeholder="问问 Ciri" rows="1"></textarea>
-                    <button class="icon-btn"><span class="material-symbols-outlined">mic</span></button>
-                    <button class="icon-btn" id="sendBtn"><span class="material-symbols-outlined">send</span></button>
-                    <button class="icon-btn" id="stopBtn" style="display: none;" title="停止生成"><span
-                            class="material-symbols-outlined">stop_circle</span></button>
+                    <div id="imagePreviewContainer" class="image-preview-container"></div>
+                    <div class="input-row">
+                        <button class="icon-btn" id="uploadBtn"><span
+                                class="material-symbols-outlined">add_circle</span></button>
+                        <input type="file" id="fileInput" multiple accept="image/*" style="display: none;">
+                        <textarea id="userInput" placeholder="问问 Ciri" rows="1"></textarea>
+                        <button class="icon-btn"><span class="material-symbols-outlined">mic</span></button>
+                        <button class="icon-btn" id="sendBtn"><span
+                                class="material-symbols-outlined">send</span></button>
+                        <button class="icon-btn" id="stopBtn" style="display: none;" title="停止生成"><span
+                                class="material-symbols-outlined">stop_circle</span></button>
+                    </div>
                 </div>
                 <div class="disclaimer">
                     Ciri 的回答未必准确无误，请注意核查。

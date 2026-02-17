@@ -36,6 +36,76 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const stopBtn = document.getElementById('stopBtn');
 
+    // ==========================================
+    // [多模态] 图片上传逻辑
+    // ==========================================
+    let currentImages = [];
+    const fileInput = document.getElementById('fileInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const previewContainer = document.getElementById('imagePreviewContainer');
+
+    if (uploadBtn && fileInput) {
+        uploadBtn.addEventListener('click', () => {
+            fileInput.value = '';
+            fileInput.click();
+        });
+
+        fileInput.addEventListener('change', async (e) => {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+
+            for (const file of files) {
+                if (!file.type.startsWith('image/')) continue;
+                try {
+                    const base64 = await fileToBase64(file);
+                    currentImages.push(base64);
+                } catch (err) {
+                    console.error('[Multimodal] Failed to read image:', err);
+                }
+            }
+            renderPreview();
+        });
+    }
+
+    function fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = error => reject(error);
+        });
+    }
+
+    function renderPreview() {
+        previewContainer.innerHTML = '';
+        if (currentImages.length === 0) return;
+
+        currentImages.forEach((imgSrc, index) => {
+            const item = document.createElement('div');
+            item.className = 'preview-item';
+
+            const img = document.createElement('img');
+            img.src = imgSrc;
+
+            const removeBtn = document.createElement('div');
+            removeBtn.className = 'remove-btn';
+            removeBtn.onclick = (e) => {
+                e.stopPropagation();
+                currentImages.splice(index, 1);
+                renderPreview();
+            };
+
+            item.appendChild(img);
+            item.appendChild(removeBtn);
+            previewContainer.appendChild(item);
+        });
+    }
+
+    function clearImages() {
+        currentImages = [];
+        renderPreview();
+    }
+
     // Session Constants (Should match backend defaults)
     const APP_NAME = "dynamic_expert";
 
@@ -80,20 +150,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function sendMessage() {
         const text = userInput.value.trim();
-        if (!text) return;
+        // [多模态] 有文本或有图片就可以发送
+        if (!text && currentImages.length === 0) return;
 
         // Hide welcome screen on first message
         if (welcomeScreen && welcomeScreen.style.display !== 'none') {
             welcomeScreen.style.display = 'none';
-            // 切换到对话模式,输入框移到底部
             document.body.classList.remove('welcome-mode');
             document.body.classList.add('chat-mode');
         }
 
-        // Add User Message
-        appendMessage('user', text);
+        // [多模态] 暂存图片副本用于发送和回显
+        const imagesToSend = [...currentImages];
+
+        // Add User Message (with images)
+        appendMessage('user', text, false, 'Ciri', imagesToSend);
         userInput.value = '';
         userInput.style.height = 'auto';
+        clearImages();
 
         // UI Toggle: Show Stop, Hide Send
         sendBtn.style.display = 'none';
@@ -143,6 +217,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
                 body: JSON.stringify({
                     message: text,
+                    images: imagesToSend.length > 0 ? imagesToSend : undefined,
                     app_name: appName,
                     user_id: currentUserId,
                     session_id: currentSessionId
@@ -491,7 +566,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function appendMessage(role, text, isLoading = false, appName = 'Ciri') {
+    function appendMessage(role, text, isLoading = false, appName = 'Ciri', images = []) {
         const msgDiv = document.createElement('div');
         msgDiv.className = `message ${role}`;
         // Use Date.now() + random to ensure uniqueness even if called rapidly
@@ -502,8 +577,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isLoading) {
             contentHtml = '<div class="typing-indicator"></div>';
         } else {
-            // Initial message is just text
-            contentHtml = marked.parse(text);
+            // [多模态] 如果有图片，先渲染图片行
+            if (images && images.length > 0) {
+                contentHtml += '<div class="user-images-row">';
+                images.forEach(src => {
+                    contentHtml += `<img src="${src}">`;
+                });
+                contentHtml += '</div>';
+            }
+            if (text) {
+                contentHtml += marked.parse(text);
+            }
         }
 
         msgDiv.innerHTML = `
@@ -1079,9 +1163,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 const msg = data.messages[i];
 
                 if (msg.role === 'user') {
-                    // 用户消息直接渲染 text
-                    if (msg.text && msg.text.trim()) {
-                        appendMessage('user', msg.text, false);
+                    // 用户消息渲染 text + images
+                    const hasText = msg.text && msg.text.trim();
+                    const hasImages = msg.images && msg.images.length > 0;
+                    if (hasText || hasImages) {
+                        appendMessage('user', msg.text || '', false, 'Ciri', msg.images || []);
                     }
                 } else if (msg.role === 'model') {
                     // 优先处理 blocks 结构
