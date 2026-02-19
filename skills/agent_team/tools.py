@@ -277,25 +277,41 @@ async def dispatch_task(
                                 "task_preview": task_instruction[:50] + "..."
                             })
 
-                            # 【过程屏蔽】只收集文本内容，忽略中间的 tool_calls
+                            # 【完整收集】收集所有类型的 chunk 内容，确保不遗漏工具执行结果
                             final_report = ""
                             async for line in response.aiter_lines():
                                 if not line: continue
                                 try:
                                     data = json.loads(line)
                                     chunk = data.get("chunk", {})
-                                    if chunk.get("type") == "text":
-                                        content = chunk.get("content", "")
+                                    chunk_type = chunk.get("type", "")
+                                    content = chunk.get("content", "")
+                                    
+                                    if not content:
+                                        continue
+                                    
+                                    # 根据类型收集内容
+                                    if chunk_type == "text":
                                         final_report += content
-                                        
-                                        # [Report] 实时流 (Chunk)
-                                        # 只有当有内容时才汇报
-                                        if content:
-                                            report('chunk', {
-                                                "worker_port": worker_port,
-                                                "content": content
-                                            })
-                                except: continue
+                                    elif chunk_type == "tool_result":
+                                        # 工具执行结果（搜索结果、代码输出等）
+                                        final_report += f"\n[Tool Result]\n{content}\n"
+                                    elif chunk_type == "tool_call":
+                                        # 工具调用记录（简要记录，不占太多篇幅）
+                                        tool_name = chunk.get("tool_name", "unknown")
+                                        final_report += f"\n[Called: {tool_name}]\n"
+                                    elif chunk_type == "thought":
+                                        # 思考过程，跳过不收集
+                                        pass
+                                    
+                                    # [Report] 实时流 (Chunk) - 所有有内容的 chunk 都汇报
+                                    if content and chunk_type in ("text", "tool_result"):
+                                        report('chunk', {
+                                            "worker_port": worker_port,
+                                            "content": content
+                                        })
+                                except Exception:
+                                    continue
                             
                             # 成功！返回结构化报告
                             print(f"[Swarm] Worker {worker_port} 任务完成。")
@@ -333,7 +349,8 @@ async def dispatch_task(
                                 f"会话 ID : {use_session_id}\n"
                                 f"\n"
                                 f"执行结果摘要:\n"
-                                f"{final_report[:20000]}..."
+                                f"{final_report[:20000]}"
+                                f"{'...(truncated)' if len(final_report) > 20000 else ''}"
                                 f"\n"
                             )
                         
