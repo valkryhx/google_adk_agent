@@ -164,7 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const imagesToSend = [...currentImages];
 
         // Add User Message (with images)
-        appendMessage('user', text, false, 'Ciri', imagesToSend);
+        const userMsgId = appendMessage('user', text, false, 'Ciri', imagesToSend);
         userInput.value = '';
         userInput.style.height = 'auto';
         clearImages();
@@ -354,6 +354,55 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // 标记 Swarm 任务结束
                 markSwarmTasksFinished(loadingId);
+            }
+
+            // [新增] 流式响应完成后刷新左侧会话列表（标题、task_type 标记更新）
+            // 延迟 800ms 等后端 save_session 写入 DB 完成
+            setTimeout(() => loadSessions().catch(e => console.warn('loadSessions after chat failed:', e)), 800);
+
+            // [新增] 刷新最新用户消息的 invocation_id
+            try {
+                const currentSessionId = getCurrentSessionId();
+                if (currentSessionId) {
+                    // 与 sendMessage 中保持一致的 app_name 获取逻辑
+                    let currentAppName = APP_NAME;
+                    const _isSwarm = sessionStorage.getItem('current_is_swarm');
+                    const _leaderPort = sessionStorage.getItem('current_leader_port');
+                    if (_isSwarm === 'true' && _leaderPort) {
+                        currentAppName = `swarm_from_${_leaderPort}`;
+                    }
+                    const historyRes = await fetch(`/api/sessions/${currentSessionId}/history?app_name=${currentAppName}&user_id=${getUserId()}`);
+                    const historyData = await historyRes.json();
+                    if (historyData.messages && historyData.messages.length > 0) {
+                        // 找到最后一个 role === 'user' 的消息
+                        let lastUserMsg = null;
+                        for (let i = historyData.messages.length - 1; i >= 0; i--) {
+                            if (historyData.messages[i].role === 'user') {
+                                lastUserMsg = historyData.messages[i];
+                                break;
+                            }
+                        }
+                        if (lastUserMsg && lastUserMsg.invocation_id) {
+                            const userMsgEl = document.getElementById(userMsgId);
+                            if (userMsgEl && !userMsgEl.dataset.invocationId) {
+                                userMsgEl.dataset.invocationId = lastUserMsg.invocation_id;
+                                let actionHtml = `
+                                    <div class="msg-actions">
+                                        <button class="icon-btn rewind-btn" title="回退到此处并重新编辑" onclick="window.triggerRewind('${lastUserMsg.invocation_id}', '${userMsgId}')">
+                                            <span class="material-symbols-outlined">edit</span>
+                                        </button>
+                                    </div>
+                                `;
+                                const contentDiv = userMsgEl.querySelector('.message-content');
+                                if (contentDiv) {
+                                    contentDiv.insertAdjacentHTML('beforeend', actionHtml);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch history for invocation_id update', e);
             }
         }
     }
@@ -566,12 +615,17 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function appendMessage(role, text, isLoading = false, appName = 'Ciri', images = []) {
+    // [修改] 增加 invocationId 参数
+    function appendMessage(role, text, isLoading = false, appName = 'Ciri', images = [], invocationId = null) {
         const msgDiv = document.createElement('div');
         msgDiv.className = `message ${role}`;
         // Use Date.now() + random to ensure uniqueness even if called rapidly
         const id = 'msg-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
         msgDiv.id = id;
+
+        // [新增] 把原始文本和调用ID藏在 DOM 的 dataset 里，供回填使用
+        msgDiv.dataset.rawText = encodeURIComponent(text || '');
+        if (invocationId) msgDiv.dataset.invocationId = invocationId;
 
         let contentHtml = '';
         if (isLoading) {
@@ -590,9 +644,22 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        // [新增] 生成悬浮的回退编辑按钮（仅对带有 ID 的用户消息渲染）
+        let actionHtml = '';
+        if (role === 'user' && invocationId) {
+            actionHtml = `
+                <div class="msg-actions">
+                    <button class="icon-btn rewind-btn" title="回退到此处并重新编辑" onclick="window.triggerRewind('${invocationId}', '${id}')">
+                        <span class="material-symbols-outlined">edit</span>
+                    </button>
+                </div>
+            `;
+        }
+
         msgDiv.innerHTML = `
             <div class="message-content">
                 ${contentHtml}
+                ${actionHtml}
             </div>
         `;
 
@@ -892,6 +959,82 @@ document.addEventListener('DOMContentLoaded', () => {
         return html;
     }
 
+    // ==========================================
+    // [新增] 触发rewind与重新编辑核心逻辑
+    // ==========================================
+    window.triggerRewind = async function (invocationId, msgId) {
+        if (!confirm('确定要修改这条消息吗？此节点之后的对话记忆将被抹除')) return;
+
+        const msgEl = document.getElementById(msgId);
+        if (!msgEl) return;
+
+        // 1. 提取刚才藏在 dataset 里的用户原始输入文本
+        const rawText = decodeURIComponent(msgEl.dataset.rawText || '');
+        const currentSessionId = getCurrentSessionId();
+
+        try {
+            // UI 交互：把按钮图标变成沙漏，表示正在请求
+            const btnIcon = msgEl.querySelector('.rewind-btn .material-symbols-outlined');
+            if (btnIcon) btnIcon.textContent = 'hourglass_empty';
+
+            // 2. 调用后端 /rewind 接口给 Agent “洗脑”
+            // 与 sendMessage 保持一致的 app_name 获取逻辑（兼容 Swarm 模式）
+            let rewindAppName = APP_NAME;
+            const _rewindIsSwarm = sessionStorage.getItem('current_is_swarm');
+            const _rewindLeaderPort = sessionStorage.getItem('current_leader_port');
+            if (_rewindIsSwarm === 'true' && _rewindLeaderPort) {
+                rewindAppName = `swarm_from_${_rewindLeaderPort}`;
+            }
+            const response = await fetch(`/api/sessions/${currentSessionId}/rewind`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    app_name: rewindAppName,
+                    user_id: getUserId(),
+                    invocation_id: invocationId
+                })
+            });
+
+            const res = await response.json();
+
+            if (res.status === 'success') {
+                // 3. 核心体验：内容回填 (Undo and Edit)
+                const inputArea = document.getElementById('userInput');
+                inputArea.value = rawText;
+
+                // 触发 auto-resize，让文本框自适应高度并获取焦点
+                inputArea.style.height = 'auto';
+                inputArea.style.height = (inputArea.scrollHeight) + 'px';
+                inputArea.focus();
+
+                // 4. 乐观 UI 更新：在界面上“斩断时间线”
+                // 把当前气泡及下方所有气泡全部从 DOM 中移除
+                let currentEl = msgEl;
+                while (currentEl) {
+                    let nextEl = currentEl.nextElementSibling;
+                    currentEl.remove();
+                    currentEl = nextEl;
+                }
+
+                // rewind 后始终保持 chat-mode（用户还需要重新输入）
+                // 隐藏 welcomeScreen 但不切换到 welcome-mode
+                const welcomeScreenEl = document.getElementById('welcomeScreen');
+                if (welcomeScreenEl) welcomeScreenEl.style.display = 'none';
+                document.body.classList.remove('welcome-mode');
+                document.body.classList.add('chat-mode');
+
+            } else {
+                alert(`回退失败: ${res.message}`);
+                if (btnIcon) btnIcon.textContent = 'edit';
+            }
+        } catch (e) {
+            console.error("Rewind API Error:", e);
+            alert("回退请求网络出错");
+            const btnIcon = msgEl.querySelector('.rewind-btn .material-symbols-outlined');
+            if (btnIcon) btnIcon.textContent = 'edit';
+        }
+    };
+
     // ========================================
     // 会话管理功能
     // ========================================
@@ -1167,7 +1310,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     const hasText = msg.text && msg.text.trim();
                     const hasImages = msg.images && msg.images.length > 0;
                     if (hasText || hasImages) {
-                        appendMessage('user', msg.text || '', false, 'Ciri', msg.images || []);
+                        // [修改] 最后一个参数传入后端的 msg.invocation_id
+                        appendMessage('user', msg.text || '', false, 'Ciri', msg.images || [], msg.invocation_id);
                     }
                 } else if (msg.role === 'model') {
                     // 优先处理 blocks 结构

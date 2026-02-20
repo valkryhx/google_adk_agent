@@ -42,6 +42,7 @@ import uvicorn
 import datetime
 
 from google.adk.agents import LlmAgent
+from google.adk import Runner
 from src.shared.db.custom_table_db_service import FullyCustomDbService
 from google.adk.models.lite_llm import LiteLlm
 from src.adk_agent.auto_compact_agent import AutoCompactAgent
@@ -552,18 +553,40 @@ class SteeringSession:
                     user_id=self.user_id, 
                     session_id=self.session_id
                 )
+                # [修复] 新创建的 session 也要绑定到 _current_session
+                # 否则 dispatch_batch_tasks 发来的 update_session_state 信号会因为
+                # self._current_session is None 而被忽略，导致 task_type 丢失
+                self._current_session = session
             
             # === 自动标题生成 ===
+            # 使用 rewind 感知的有效事件计数（与 history API 保持一致）
+            # 若第一条消息被 rewind，则 effective user event count 为 0，允许重新生成标题
+            _title_events = session.events if session and hasattr(session, 'events') else []
+            _title_exclude = set()
+            for _midx, _mev in enumerate(_title_events):
+                _mactions = getattr(_mev, 'actions', None)
+                if not _mactions:
+                    continue
+                _mtarget = getattr(_mactions, 'rewind_before_invocation_id', None)
+                if not _mtarget:
+                    continue
+                for _j in range(_midx):
+                    if getattr(_title_events[_j], 'invocation_id', None) == _mtarget:
+                        for _k in range(_j, _midx + 1):
+                            _title_exclude.add(_k)
+                        break
+            
             user_event_count = 0
-            if session and hasattr(session, 'events'):
-                for evt in session.events:
-                    role = 'unknown'
-                    if hasattr(evt, 'content') and evt.content and hasattr(evt.content, 'role'):
-                        role = evt.content.role
-                    elif hasattr(evt, 'author'):
-                        role = evt.author
-                    if role == 'user':
-                        user_event_count += 1
+            for _tidx, evt in enumerate(_title_events):
+                if _tidx in _title_exclude:
+                    continue
+                role = 'unknown'
+                if hasattr(evt, 'content') and evt.content and hasattr(evt.content, 'role'):
+                    role = evt.content.role
+                elif hasattr(evt, 'author'):
+                    role = evt.author
+                if role == 'user':
+                    user_event_count += 1
             
             if user_event_count == 0:
                 title = task[:30] + ("..." if len(task) > 30 else "")
@@ -572,6 +595,7 @@ class SteeringSession:
                 session.state['title'] = title
                 await self.session_service.save_session(session)
                 print(f"[系统] 自动生成会话标题: {title}")
+
             
             # === 压缩逻辑 ===
             turn_count = len(session.events) if session and hasattr(session, 'events') and session.events else 0
@@ -1352,6 +1376,11 @@ class CreateSessionRequest(BaseModel):
     app_name: str = DEFAULT_APP_NAME
     user_id: str = DEFAULT_USER_ID
 
+class RewindRequest(BaseModel):
+    app_name: str = DEFAULT_APP_NAME
+    user_id: str = DEFAULT_USER_ID
+    invocation_id: str
+
 class SessionInfo(BaseModel):
     session_id: str
     title: str
@@ -1720,8 +1749,44 @@ async def get_session_history(
     if not session:
         return {"messages": []}
     
+    # [核心修复] 处理 rewind 标记事件
+    # runner.rewind_async 不删除 DB 记录，而是追加一个特殊的"回退标记"事件
+    # 该事件的 event.actions.rewind_before_invocation_id 不为空
+    #
+    # 正确逻辑（镜像 ADK contents.py 的 _get_contents 实现）：
+    # - 找到所有 rewind 标记的位置（marker_idx）及其目标 invocation_id
+    # - 只跳过 [被回退 invocation_id 首次出现位置, marker_idx] 之间的事件
+    # - marker 之后的新对话事件必须保留
+    events_list = session.events
+    
+    # 计算需要排除的事件索引集合
+    exclude_indices = set()
+    for marker_idx, event in enumerate(events_list):
+        actions = getattr(event, 'actions', None)
+        if not actions:
+            continue
+        rewind_target = getattr(actions, 'rewind_before_invocation_id', None)
+        if not rewind_target:
+            continue
+        
+        # 找到目标 invocation_id 在标记之前最早出现的位置
+        target_start_idx = None
+        for j in range(marker_idx):
+            if getattr(events_list[j], 'invocation_id', None) == rewind_target:
+                target_start_idx = j
+                break
+        
+        if target_start_idx is not None:
+            # 排除 [target_start_idx, marker_idx] 区间（含标记自身）
+            for k in range(target_start_idx, marker_idx + 1):
+                exclude_indices.add(k)
+            print(f"[历史] rewind 标记检测到，排除事件 {target_start_idx}~{marker_idx} ({rewind_target})")
+    
+    effective_events = [e for idx, e in enumerate(events_list) if idx not in exclude_indices]
+    
+    
     messages = []
-    for event_idx, event in enumerate(session.events):
+    for event_idx, event in enumerate(effective_events):
         if hasattr(event, 'content') and event.content:
             role = 'unknown'
             if hasattr(event.content, 'role'):
@@ -1829,10 +1894,18 @@ async def get_session_history(
                 role = 'model'
             
             if role == 'user' or role == 'model':
+                inv_id = getattr(event, 'invocation_id', None)
+                if not inv_id and hasattr(event, 'model_extra') and event.model_extra:
+                    inv_id = event.model_extra.get('invocation_id')
+                elif getattr(event, '__dict__', None) and 'invocation_id' in event.__dict__:
+                    inv_id = event.__dict__['invocation_id']
+                    
                 msg_data = {
                     "role": role,
                     "blocks": merged_blocks,
-                    "text": text_content
+                    "text": text_content,
+                    # 👇 [新增] 暴露 invocation_id 给前端
+                    "invocation_id": inv_id
                 }
                 # [多模态] 如果有图片，附加到消息中
                 if images:
@@ -1840,6 +1913,43 @@ async def get_session_history(
                 messages.append(msg_data)
     
     return {"messages": messages}
+
+@app.post("/api/sessions/{session_id}/rewind")
+async def rewind_session_endpoint(session_id: str, req: RewindRequest):
+    """
+    [新增] 原生轻量级回退 (纯上下文洗脑)
+    重置 Agent 的记忆和状态，不处理外部物理文件。
+    """
+    global session_manager
+    if session_manager is None:
+        return {"status": "error", "message": "SessionManager not initialized"}
+        
+    try:
+        # 1. 获取当前会话 (支持多租户隔离)
+        steering_session = session_manager.get_or_create(req.app_name, req.user_id, session_id)
+        
+        # 2. 实例化原生 Runner
+        runner = Runner(
+            agent=steering_session.agent, 
+            app_name=req.app_name, 
+            session_service=steering_session.session_service
+        )
+        
+        print(f"[Rewind] 准备清除 Session {session_id} 的历史记忆 (目标节点: {req.invocation_id})...")
+        
+        # 3. 执行原生洗脑（底层会自动计算状态差，并触发 DB 的孤儿级联删除）
+        await runner.rewind_async(
+            user_id=req.user_id,
+            session_id=session_id,
+            rewind_before_invocation_id=req.invocation_id
+        )
+        
+        print(f"[Rewind] 记忆清洗完成！Agent 已恢复到该节点前的干净状态。")
+        return {"status": "success", "message": "Context rewound successfully."}
+        
+    except Exception as e:
+        print(f"[Rewind] 回退失败: {e}")
+        return {"status": "error", "message": str(e)}
 
 # ==========================================
 # [新增] Swarm 上下文同步相关 API

@@ -323,6 +323,7 @@ body.welcome-mode .chat-container {
 .message.user .message-content {
     background-color: var(--user-msg-bg);
     border-bottom-right-radius: 4px;
+    position: relative;
 }
 
 .message.model .message-content {
@@ -346,6 +347,50 @@ body.welcome-mode .chat-container {
     width: 100%;
     height: 100%;
 }
+
+/* --- [新增] 消息气泡悬浮操作区 (Rewind) --- */
+.msg-actions {
+    position: absolute;
+    top: -12px;
+    right: -12px;
+    opacity: 0;
+    transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s;
+    transform: translateY(5px);
+    background: var(--bg-color);
+    border-radius: 50%;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 10;
+}
+
+/* 鼠标悬停在用户气泡上时显示编辑按钮 */
+.message.user .message-content:hover .msg-actions {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.rewind-btn {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.rewind-btn .material-symbols-outlined {
+    font-size: 16px;
+    color: var(--secondary-text);
+    transition: color 0.2s;
+}
+
+.rewind-btn:hover {
+    background: var(--hover-bg);
+}
+
+.rewind-btn:hover .material-symbols-outlined {
+    color: var(--accent-color);
+}
+
+/* ------------------------------------- */
 
 /* Input Area - 基础样式 */
 .input-area-wrapper {
