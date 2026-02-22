@@ -34,7 +34,9 @@ from src.adk_agent.config import AgentConfig, build_system_prompt
 import litellm
 from litellm import ContextWindowExceededError
 from google.genai import types
-from fastapi import FastAPI, Response, status, Request
+from fastapi import FastAPI, Response, status, Request, WebSocket, WebSocketDisconnect
+import numpy as np
+import sherpa_onnx
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -1609,6 +1611,40 @@ async def run_agent(task: str, app_name: str, user_id: str, session_id: str, ima
 # Web 服务接口
 # ==========================================
 
+# ==========================================
+# 实时流式 STT 引擎
+# ==========================================
+stt_engine = None
+
+def init_streaming_stt():
+    """初始化流式 Paraformer 模型"""
+    global stt_engine
+    try:
+        print("[STT] 正在加载流式 Paraformer 模型...")
+        model_dir = "./model"
+        
+        if not os.path.exists(os.path.join(model_dir, "encoder.int8.onnx")):
+             print(f"[STT] ⚠️ 模型未找到，请检查 {model_dir}")
+             return
+
+        stt_engine = sherpa_onnx.OnlineRecognizer.from_paraformer(
+            tokens=os.path.join(model_dir, "tokens.txt"),
+            encoder=os.path.join(model_dir, "encoder.int8.onnx"),
+            decoder=os.path.join(model_dir, "decoder.int8.onnx"),
+            num_threads=1,
+            sample_rate=16000,
+            feature_dim=80,
+            enable_endpoint_detection=True, # 开启自动断句检测
+            rule1_min_trailing_silence=2.0,
+            rule2_min_trailing_silence=1.0,
+            rule3_min_utterance_length=float("inf"),
+            decoding_method="greedy_search",
+            provider="cpu"
+        )
+        print("[STT] ✅ 流式 STT 引擎就绪")
+    except Exception as e:
+        print(f"[STT] ❌ 引擎加载失败: {e}")
+
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 
@@ -2400,8 +2436,61 @@ async def health_check():
         return {"status": "busy", "task": worker_state.current_task_summary}
     return {"status": "ok", "port": node_config.port}
 
+@app.websocket("/ws/audio")
+async def websocket_audio_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    print("[WS] 前端已连接语音流")
+    
+    global stt_engine
+    if not stt_engine:
+        await websocket.close(code=1011, reason="STT model not initialized")
+        return
+
+    # 为每个连接创建一个独立的识别流
+    stream = stt_engine.create_stream()
+    last_text = ""
+
+    try:
+        while True:
+            # 1. 接收前端发来的二进制音频数据 (Float32 格式)
+            data = await websocket.receive_bytes()
+            
+            # 2. 转换数据格式
+            samples = np.frombuffer(data, dtype=np.float32)
+            
+            # 3. 喂给模型
+            stream.accept_waveform(16000, samples)
+            
+            # 4. 解码
+            while stt_engine.is_ready(stream):
+                stt_engine.decode_stream(stream)
+            
+            # 5. 获取结果
+            text = stt_engine.get_result(stream)
+            
+            # 6. 如果有新内容，发回前端
+            if text != last_text:
+                last_text = text
+                # 发送 JSON，包含 is_final 标记
+                is_endpoint = stt_engine.is_endpoint(stream)
+                await websocket.send_json({
+                    "text": text,
+                    "is_final": is_endpoint
+                })
+                
+                # 如果检测到一句话结束，重置流
+                if is_endpoint:
+                    stt_engine.reset(stream)
+                    last_text = ""
+
+    except WebSocketDisconnect:
+        print("[WS] 语音连接断开")
+    except Exception as e:
+        print(f"[WS] 异常: {e}")
+
 @app.on_event("startup")
 async def startup_event():
+    init_streaming_stt()
     init_registry_db()
     await create_agent()
     register_self()

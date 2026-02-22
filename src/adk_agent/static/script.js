@@ -1599,6 +1599,155 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    // ==========================================
+    // [Real-time] 实时语音输入逻辑
+    // ==========================================
+    let audioContext = null;
+    let scriptProcessor = null;
+    let mediaStreamSource = null;
+    let websocket = null;
+    let isRecording = false;
+
+    const micBtn = document.getElementById('micBtn');
+
+    if (micBtn) {
+        micBtn.addEventListener('click', toggleRecording);
+    }
+
+    async function toggleRecording() {
+        if (!isRecording) {
+            startRecording();
+        } else {
+            stopRecording();
+        }
+    }
+
+    async function startRecording() {
+        try {
+            // 1. 获取麦克风流
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            // 2. 初始化 WebSocket
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            websocket = new WebSocket(`${protocol}//${window.location.host}/ws/audio`);
+
+            websocket.onopen = () => {
+                console.log('[WS] 连接已建立');
+                initAudioProcessing(stream);
+            };
+
+            websocket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                const text = data.text;
+
+                if (text) {
+                    // 实时更新输入框
+                    if (userInput) {
+                        userInput.value = text;
+                        userInput.style.height = 'auto';
+                        userInput.style.height = (userInput.scrollHeight) + 'px';
+                    }
+                }
+
+                // if (data.is_final) {
+                //     // 自动发送？还是让用户确认？让用户确认比较好。
+                // }
+            };
+
+            // UI 更新
+            isRecording = true;
+            if (micBtn) {
+                micBtn.style.color = '#ea4335';
+                micBtn.style.backgroundColor = '#fce8e6';
+                const span = micBtn.querySelector('span');
+                if (span) span.textContent = 'mic_off';
+            }
+
+        } catch (err) {
+            console.error('[STT] 无法获取麦克风权限', err);
+            alert('无法获取麦克风权限');
+        }
+    }
+
+    function initAudioProcessing(stream) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        mediaStreamSource = audioContext.createMediaStreamSource(stream);
+
+        // 创建 ScriptProcessor
+        scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+
+        scriptProcessor.onaudioprocess = (event) => {
+            if (!isRecording || !websocket || websocket.readyState !== WebSocket.OPEN) return;
+
+            const inputData = event.inputBuffer.getChannelData(0); // 单通道 Float32Array
+
+            // 浏览器录音一般是 44100Hz 或 48000Hz, 重采样到 16000Hz 给模型
+            const resampledData = downsampleBuffer(inputData, audioContext.sampleRate, 16000);
+
+            // 发送给后端
+            websocket.send(resampledData.buffer);
+        };
+
+        mediaStreamSource.connect(scriptProcessor);
+        scriptProcessor.connect(audioContext.destination);
+    }
+
+    function stopRecording() {
+        isRecording = false;
+
+        if (scriptProcessor) {
+            scriptProcessor.disconnect();
+            scriptProcessor = null;
+        }
+        if (mediaStreamSource) {
+            mediaStreamSource.disconnect();
+            mediaStreamSource = null;
+        }
+        if (audioContext) {
+            audioContext.close();
+            audioContext = null;
+        }
+        if (websocket) {
+            websocket.close();
+            websocket = null;
+        }
+
+        // UI 恢复
+        if (micBtn) {
+            micBtn.style.color = '';
+            micBtn.style.backgroundColor = '';
+            const span = micBtn.querySelector('span');
+            if (span) span.textContent = 'mic';
+        }
+    }
+
+    // 简单降采样算法
+    function downsampleBuffer(buffer, sampleRate, outSampleRate) {
+        if (outSampleRate === sampleRate) {
+            return buffer;
+        }
+        if (outSampleRate > sampleRate) {
+            throw 'downsampling rate should be smaller than original sample rate';
+        }
+        var sampleRateRatio = sampleRate / outSampleRate;
+        var newLength = Math.round(buffer.length / sampleRateRatio);
+        var result = new Float32Array(newLength);
+        var offsetResult = 0;
+        var offsetBuffer = 0;
+        while (offsetResult < result.length) {
+            var nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+            var accum = 0, count = 0;
+            for (var i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+                accum += buffer[i];
+                count++;
+            }
+            result[offsetResult] = accum / count;
+            offsetResult++;
+            offsetBuffer = nextOffsetBuffer;
+        }
+        return result;
+    }
+
     // 调用初始化
     initializePage();
 });
