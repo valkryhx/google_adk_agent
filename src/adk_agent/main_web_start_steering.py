@@ -118,6 +118,20 @@ WORKER_LOCK = asyncio.Lock()
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 REGISTRY_DB = os.path.join(_PROJECT_ROOT, "sqlite_db", "swarm_registry.db")
 
+# ==========================================
+# [新增] 本地经验库配置 (OpenViking-Lite 架构)
+# ==========================================
+# 1. 经验池根目录 (存放分类文件夹)
+SHARED_GENE_POOL = os.path.join(_PROJECT_ROOT, "agent_experiences")
+# 2. 全局索引文件 (存放 L0 摘要数据，用于极速检索)
+EXPERIENCE_INDEX_PATH = os.path.join(SHARED_GENE_POOL, "index_manifest.json")
+# 3. 经验提取过程日志目录 (与 agent_experiences 平级)
+EXPERIENCE_LOG_DIR = os.path.join(_PROJECT_ROOT, "agent_exp_extract_logs")
+
+# 自动初始化目录
+os.makedirs(SHARED_GENE_POOL, exist_ok=True)
+os.makedirs(EXPERIENCE_LOG_DIR, exist_ok=True)
+
 def init_registry_db():
     """初始化注册表数据库 (幂等操作)"""
     # 确保父目录存在，防止 unable to open database file 错误
@@ -514,6 +528,214 @@ class SteeringSession:
     #         traceback.print_exc()
 
     
+    async def _extract_and_publish_experience(self, events_snapshot: list):
+        """
+        [新增] 经验提取器 (核心引擎)
+        功能：分析内存快照 -> 清洗数据 -> 识别试错模式 -> LLM 提炼 -> 分类归档 -> 更新索引
+        """
+        import re
+        import uuid
+        import json
+        from datetime import datetime
+
+        # ==========================================
+        # [日志工具] 将所有过程记录到 md 文件（避免被终端刷掉）
+        # ==========================================
+        _log_time = datetime.now()
+        _log_lines = []
+
+        def _log(msg: str):
+            ts = datetime.now().strftime("%H:%M:%S")
+            _log_lines.append(f"[{ts}] {msg}")
+
+        def _flush_log(gene_id: str = "no_gene"):
+            """将日志 flush 到 markdown 文件"""
+            try:
+                date_str = _log_time.strftime("%Y-%m-%d-%H%M%S")
+                uid = uuid.uuid4().hex[:6]
+                log_filename = f"{date_str}_{uid}_{gene_id}.md"
+                log_path = os.path.join(EXPERIENCE_LOG_DIR, log_filename)
+                with open(log_path, 'w', encoding='utf-8') as lf:
+                    lf.write(f"# 经验提取日志 - {_log_time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                    lf.write("\n".join(_log_lines))
+                    lf.write("\n")
+            except Exception as le:
+                print(f"[反思提取] 日志写入失败: {le}")
+
+        # 1. 基础过滤：交互太短通常没有抓取价值
+        if not events_snapshot or len(events_snapshot) < 3:
+            return
+            
+        _log(f"启动后台复盘，分析 {len(events_snapshot)} 条原始轨迹...")
+        
+        has_env_error = False
+        tool_call_history = [] 
+        clean_history_text = ""
+        
+        # ==========================================
+        # 2. 数据清洗 (Data Cleaning) - 节省 Token 且聚焦核心
+        # ==========================================
+        for evt in events_snapshot:
+            # 提取角色
+            role = "unknown"
+            if hasattr(evt, 'content') and hasattr(evt.content, 'role'):
+                role = evt.content.role
+            elif hasattr(evt, 'author'):
+                role = evt.author
+            
+            if role == 'user': role_tag = "User"
+            elif role == 'model': role_tag = "Agent"
+            else: role_tag = "Tool/System"
+
+            step_content = ""
+            if hasattr(evt, 'content') and hasattr(evt.content, 'parts'):
+                for part in evt.content.parts:
+                    # [干货] 文本
+                    if hasattr(part, 'text') and part.text:
+                        step_content += f"  [Text]: {part.text.strip()}\n"
+                    # [干货] 工具调用
+                    if hasattr(part, 'function_call') and part.function_call:
+                        fc = part.function_call
+                        func_args = str(dict(fc.args)) if hasattr(fc, 'args') else str(fc.args)
+                        tool_call_history.append({"name": fc.name, "args": func_args})
+                        step_content += f"  [Action]: Call {fc.name}({func_args})\n"
+                    # [干货] 工具结果 (关键! 用于判断报错)
+                    if hasattr(part, 'function_response') and part.function_response:
+                        resp = str(part.function_response.response)
+                        # 截断过长输出，保留头部报错信息
+                        if len(resp) > 4000: resp = resp[:4000] + "...(truncated)"
+                        step_content += f"  [Observation]: {resp}\n"
+                        
+                        # 扫描客观报错特征
+                        error_signatures = ["traceback", "error", "exception", "failed", "not found", "denied", "fatal"]
+                        if any(sig in resp.lower() for sig in error_signatures):
+                            has_env_error = True
+
+            if step_content.strip():
+                clean_history_text += f"\n== {role_tag} ==\n{step_content}"
+
+        # ==========================================
+        # 3. 启发式判定 (Heuristic Check) - 减少无效 LLM 调用
+        # ==========================================
+        is_struggling = False
+        # 判定 A: 有客观报错
+        if has_env_error: 
+            is_struggling = True
+            _log(f"判定触发: 检测到客观报错特征")
+        # 判定 B: 没报错但重复尝试 (Action 重复)
+        elif len(tool_call_history) >= 2:
+            call_names = [call["name"] for call in tool_call_history]
+            if len(call_names) > len(set(call_names)):
+                is_struggling = True
+                _log(f"判定触发: 检测到工具重复调用 {call_names}")
+
+        if not is_struggling:
+            _log("判定：任务顺利完成，无需提取经验，跳过。")
+            _flush_log("skipped")
+            return
+
+        _log("捕捉到试错/纠偏轨迹，提交 LLM 进行经验蒸馏...")
+
+        # ==========================================
+        # 4. LLM 提炼 (Distillation)
+        # ==========================================
+        system_prompt = """
+        你是一个 AI Agent 经验归档员。请分析这段"清洗后的执行日志"。
+        判断 Agent 是否在执行中遇到了阻碍（报错或逻辑错误），并通过【重试/修改参数】成功修复了问题？
+        
+        如果符合，请提取 JSON（不要包含 Markdown 格式）：
+        {
+            "category": "分类目录名(英文单数), 如 python, git, docker, network, os",
+            "title": "简短经验标题 (10-15字)",
+            "keywords": ["tag1", "tag2"],
+            "problem_context": "客观描述：Agent 想做什么，哪里卡住了",
+            "trigger_error_regex": "提取最具代表性的报错片段(Observation)",
+            "solution_action": {"commands": ["提取最终成功的 Action 代码/参数"]},
+            "reasoning": "推测它为什么一开始不对，后来是怎么改对的？"
+        }
+        如果不符合（只是顺利完成），仅返回 "NONE"。
+        """
+
+        try:
+            response = await litellm.acompletion(
+                model=self.config.model,
+                api_key=self.config.api_key,
+                api_base=self.config.api_base,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"【清洗后的轨迹】\n{clean_history_text}"}
+                ],
+                temperature=0.1
+            )
+            
+            output = response.choices[0].message.content.strip()
+            _log(f"LLM 返回结果长度: {len(output)} 字符")
+
+            if "NONE" in output.upper() and len(output) < 10:
+                _log("LLM 判定：任务顺利完成，返回 NONE，跳过归档。")
+                _flush_log("llm_none")
+                return
+            
+            json_match = re.search(r'\{.*\}', output, re.DOTALL)
+            if not json_match:
+                _log("LLM 返回内容无法解析为 JSON，跳过归档。")
+                _flush_log("parse_fail")
+                return
+            gene_data = json.loads(json_match.group())
+
+            # ==========================================
+            # 5. 分类归档与索引更新 (OpenViking-Lite 核心)
+            # ==========================================
+            gene_id = f"gene_{uuid.uuid4().hex[:8]}"
+            
+            # A. 确定分类目录
+            category = gene_data.get("category", "uncategorized").lower()
+            category = "".join([c for c in category if c.isalnum() or c=='_']) # 安全过滤
+            save_dir = os.path.join(SHARED_GENE_POOL, category)
+            os.makedirs(save_dir, exist_ok=True)
+
+            # B. 保存正文 (L2 Detail)
+            capsule = {
+                "id": gene_id,
+                "category": category,
+                "timestamp": datetime.now().isoformat(),
+                "content": gene_data
+            }
+            file_path = os.path.join(save_dir, f"{gene_id}.json")
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(capsule, f, ensure_ascii=False, indent=2)
+
+            # C. 更新总索引 (L0 Index) - 极其关键
+            # 采用 Read-Modify-Write 模式
+            manifest = {}
+            if os.path.exists(EXPERIENCE_INDEX_PATH):
+                try:
+                    with open(EXPERIENCE_INDEX_PATH, 'r', encoding='utf-8') as f:
+                        manifest = json.load(f)
+                except Exception:
+                    pass
+            
+            # 写入索引条目
+            manifest[gene_id] = {
+                "path": f"{category}/{gene_id}.json", # 相对路径指针
+                "category": category,
+                "title": gene_data.get("title"),
+                "keywords": gene_data.get("keywords", []),
+                "error_regex": gene_data.get("trigger_error_regex", "")
+            }
+            
+            with open(EXPERIENCE_INDEX_PATH, 'w', encoding='utf-8') as f:
+                json.dump(manifest, f, ensure_ascii=False, indent=2)
+            
+            _log(f"经验已归档: [{category}] {file_path}")
+            _log(f"  标题: {gene_data.get('title')}")
+            _log(f"  关键词: {gene_data.get('keywords', [])}")
+            _flush_log(gene_id)
+
+        except Exception as e:
+            _log(f"提取过程异常: {e}")
+            _flush_log("error")
+
     async def run_task(self, task: str, images: List[str] = None):
         """
         执行任务主逻辑（原 run_agent 函数的核心部分）
@@ -524,6 +746,12 @@ class SteeringSession:
             images: 可选的 Base64 编码图片列表 (data:image/xxx;base64,...)
         """
         was_interrupted = False
+        
+        # ==========================================
+        # [新增] 初始化内存快照列表
+        # 完全独立于 session.events，无论后续发生 Compact 还是 Rewind，数据都是安全的
+        # ==========================================
+        events_snapshot = []
         
         try:
             from google.adk.runners import Runner
@@ -744,6 +972,14 @@ class SteeringSession:
                             # 正常 Event
                             self.interruption_guard()
                             
+                            # ==========================================
+                            # [新增] 实时抓取快照
+                            # 只要 Runner 吐出一个 Event，立刻存入本地快照。
+                            # 这是"对抗回滚"的关键：即使下一秒用户回滚了，这个 Event 依然在内存里。
+                            # ==========================================
+                            events_snapshot.append(result)
+                            # ==========================================
+                            
                             # [Deduplication Logic]
                             # Identify new parts by comparing with processed history
                             evt_parts = []
@@ -918,6 +1154,17 @@ class SteeringSession:
                     print(f"[Warning] Final session save failed: {e}")
             
             self._current_session = None
+
+            # ==========================================
+            # [新增] 触发后台提取 (使用内存快照，Fire-and-Forget 模式)
+            # 只要本轮产生了有效的交互 (>=3条)，就启动后台分析。
+            # 传入 events_snapshot 而非 session.events，对抗 Compact/Rewind 影响。
+            # ==========================================
+            if not was_interrupted and len(events_snapshot) >= 3:
+                asyncio.create_task(
+                    self._extract_and_publish_experience(events_snapshot)
+                )
+            # ==========================================
 
             # 打印 Session History（调试用）
             try:
