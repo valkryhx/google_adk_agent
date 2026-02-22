@@ -306,6 +306,13 @@ class SteeringSession:
         # 加载 bash 时也尝试注入 reporter (虽然 bash 可能用不上)
         bash_tools = self._load_skill_tools('bash')
         print(f"[SteeringSession] 已自动加载 bash 工具: {[t.__name__ for t in bash_tools]}")
+
+        # 🔑 自动加载 search_exp 作为第4个内置核心工具
+        try:
+            exp_tools = self._load_skill_tools('search_exp')
+            print(f"[SteeringSession] 已自动加载 search_exp 工具: {[t.__name__ for t in exp_tools]}")
+        except Exception as e:
+            print(f"[SteeringSession] ⚠️ 加载 search_exp 失败: {e}")
         
         return agent
     

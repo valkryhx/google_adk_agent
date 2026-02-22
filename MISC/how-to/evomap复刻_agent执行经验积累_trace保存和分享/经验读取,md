@@ -1,0 +1,235 @@
+现在 经验抓取已经 实现了 请你重新完整的写出agent查阅经验的 tools.py和 skill.md ，注意你提到的分层阅览
+
+Gemini said
+好的，这是为您准备的最终版代码。
+
+这套代码实现了 OpenViking-Lite 的核心机制：“索引优先检索（Index-First Retrieval）”。
+
+它严格遵循了分层阅览的设计：
+
+L0 层（内存快查）：先加载极小的 index_manifest.json，在内存中进行正则和关键词的高速匹配。
+
+L2 层（懒加载）：只有命中目标后，才根据路径去硬盘读取具体的 JSON 经验文件。
+
+请将以下两个文件分别创建/覆盖到您的项目中。
+
+1. 工具实现文件: tools.py
+路径: src/adk_agent/skills/experience_library/tools.py
+
+Python
+import os
+import json
+import re
+from typing import List, Dict, Any
+
+# ==========================================
+# 1. 路径配置 (自动定位)
+# ==========================================
+# 当前文件位于: src/adk_agent/skills/experience_library/tools.py
+# 向上回溯 4 层找到 Project Root
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(CURRENT_DIR))))
+
+# 经验池根目录
+SHARED_GENE_POOL = os.path.join(PROJECT_ROOT, "agent_experiences")
+# 全局索引文件 (L0 Index - 只有这个会被预加载)
+EXPERIENCE_INDEX_PATH = os.path.join(SHARED_GENE_POOL, "index_manifest.json")
+
+def search_experience_library(query: str) -> str:
+    """
+    [Tool] 本地经验图书馆检索工具。
+    
+    【使用场景】：
+    1. 当你执行代码遇到报错 (Traceback/Error) 时。
+    2. 当你不确定某个内网工具的配置命令时。
+    3. 当你想知道以前是否解决过类似问题时。
+    
+    【工作原理】：
+    它会先搜索轻量级索引，根据报错特征和语义相似度匹配，然后懒加载具体的解决方案。
+    
+    Args:
+        query: 具体的报错信息 (如 "Connection refused: port 8080") 或 问题描述 (如 "how to config git proxy")。
+        
+    Returns:
+        返回找到的最佳经验内容（包含原因分析和修复代码），或者未找到的提示。
+    """
+    # 0. 基础环境检查
+    if not os.path.exists(EXPERIENCE_INDEX_PATH):
+        return "【系统提示】本地经验库尚未建立索引 (index_manifest.json 不存在)，暂无可用经验。"
+
+    print(f"[Experience Lib] 正在检索索引 (L0 Layer), Query: {query[:50]}...")
+
+    # 1. 加载索引 (L0 Layer) - 极快，只读内存
+    try:
+        with open(EXPERIENCE_INDEX_PATH, 'r', encoding='utf-8') as f:
+            manifest = json.load(f) # type: Dict[str, Dict]
+    except Exception as e:
+        return f"【系统错误】索引文件损坏或无法读取: {e}"
+
+    if not manifest:
+        return "【系统提示】经验库目前为空，还没有任何记录。"
+
+    # ==========================================
+    # 2. 分层评分逻辑 (Weighted Scoring)
+    # ==========================================
+    scored_items = []
+    
+    # 预处理查询：转小写，提取单词集合
+    query_lower = query.lower()
+    query_words = set(re.findall(r'\w+', query_lower))
+    
+    for gene_id, meta in manifest.items():
+        score = 0
+        
+        # A. 【致命一击】正则/报错特征完全包含 (权重: 100)
+        # 逻辑：如果库里的报错特征直接出现在了查询里，这几乎就是同一个问题
+        error_regex = meta.get('error_regex', '').lower()
+        if error_regex and error_regex in query_lower:
+            score += 100 
+            
+        # B. 【主题相关】标题匹配 (权重: 50)
+        # 逻辑：虽然报错不一样，但大家都在聊同一个 Title
+        title = meta.get('title', '').lower()
+        if title and title in query_lower:
+            score += 50
+            
+        # C. 【上下文相似】标签/关键词交集 (权重: 每个词 10 分)
+        # 逻辑：计算查询词和经验标签的重叠度
+        keywords = [k.lower() for k in meta.get('keywords', [])]
+        if keywords:
+            common_tags = set(keywords) & query_words
+            score += len(common_tags) * 10
+        
+        # 只有当分数大于 0 时才认为是候选
+        if score > 0:
+            scored_items.append((score, meta))
+
+    # ==========================================
+    # 3. 排序与决策
+    # ==========================================
+    if not scored_items:
+        return f"在本地经验库中未找到与 '{query[:50]}...' 相关的解决方案。请尝试自行分析或更换关键词搜索。"
+        
+    # 按分数从高到低排序 (取第一名)
+    scored_items.sort(key=lambda x: x[0], reverse=True)
+    
+    # 解包：拿到分数和元数据
+    best_score, best_meta = scored_items[0]
+    
+    # 调试日志
+    print(f"[Experience Lib] 索引命中: {best_meta.get('title')} (得分: {best_score}) | 指针: {best_meta.get('path')}")
+
+    # 【阈值控制】如果分数太低 (比如只命中了一个通用词 "error")，则不推荐
+    if best_score < 15:
+        return f"找到一条经验但匹配度过低 (置信度 {best_score})，系统判定为不相关，不予展示。"
+
+    # ==========================================
+    # 4. 懒加载正文 (Lazy Load L2 Content)
+    # ==========================================
+    # 只有确定要读取这一条了，才去读硬盘上的具体文件
+    rel_path = best_meta.get('path', '')
+    if not rel_path:
+        return "【数据异常】索引命中，但文件路径字段丢失。"
+        
+    full_path = os.path.join(SHARED_GENE_POOL, rel_path)
+    
+    try:
+        # 二次检查物理文件是否存在
+        if not os.path.exists(full_path):
+             return f"【系统错误】索引指向的文件不存在: {rel_path}"
+
+        # 读取正文
+        with open(full_path, 'r', encoding='utf-8') as f:
+            full_data = json.load(f)
+            
+        # 提取核心内容
+        content = full_data.get('content', {})
+        context = content.get('problem_context', '无描述')
+        solution = content.get('solution_action', {}).get('commands', [])
+        reasoning = content.get('reasoning', '无')
+        category = full_data.get('category', 'general')
+        
+        # 构造给 Agent 看的最终回复
+        return f"""
+✅ 已匹配到本地经验 (匹配度: {best_score})
+📂 分类: {category} | 📄 ID: {best_meta.get('path')}
+--------------------------------------------------
+【历史问题】: {context}
+【报错特征】: {best_meta.get('error_regex', 'N/A')}
+
+【推荐解决方案 (已验证)】:
+{json.dumps(solution, indent=2, ensure_ascii=False)}
+
+【原理解析】: 
+{reasoning}
+--------------------------------------------------
+💡 建议：请直接参考上述 JSON 中的 commands 修改你的代码或配置。
+"""
+
+    except json.JSONDecodeError:
+        return f"【系统错误】经验文件损坏 (JSON Parse Error): {rel_path}"
+    except Exception as e:
+        return f"【系统错误】读取经验文件失败: {e}"
+
+def get_tools(agent, session_service, app_info, **kwargs):
+    """
+    ADK 标准工具导出接口
+    """
+    return [search_experience_library]
+2. 技能说明书: skill.md
+路径: src/adk_agent/skills/experience_library/skill.md
+
+这份文档向 LLM 解释了它是如何通过“分层检索”来获取知识的，并强调了查库的重要性。
+
+Markdown
+# Experience Library Skill
+
+## Description
+此技能赋予了 Agent 访问本地“集体智慧库”的能力。这个库采用类似 OpenViking 的分层索引架构，记录了历史 Agent 在解决复杂任务时遇到的错误及验证过的解决方案。
+
+## Tools
+### search_experience_library
+- **Purpose**: 基于报错特征或语义描述，从本地经验库中检索解决方案。
+- **Mechanism**: 该工具会先扫描内存索引（L0层），匹配到高相关度条目后，再懒加载具体的经验文件（L2层）。
+- **When to use**: 
+    1. **遇到报错时 (MUST USE)**: 当你的代码执行失败，出现 Traceback、Error Code 或异常行为时，**必须第一时间**调用此工具。
+    2. **环境配置时**: 当你需要编写复杂的 Git、Docker 或内网环境配置命令时。
+    3. **策略迷茫时**: 当你不确定下一步该怎么做，或者之前的尝试都失败时。
+
+## Best Practices
+1. **优先查库**: 在尝试自己“猜测”修复方案之前，总是先查库。库里的方案是经过验证的真理，优于你的幻觉。
+2. **精准查询**: 将完整的报错信息（如 `SSL certificate problem: unable to get local issuer certificate`）直接作为 query 传入，这能极大提高匹配准确率（正则加权分值最高）。
+3. **举一反三**: 如果库里返回的方案不完全适用（例如文件路径不同），请仔细阅读【原理解析】部分，理解其根本原因，然后适配到当前的任务中，不要生搬硬套。
+
+## Examples
+
+### Example 1: 遇到 Git 报错 (精准匹配)
+**User**: "Run the git clone script."
+**Agent**: (Executes code) -> `fatal: unable to access '...': SSL certificate problem`
+**Agent (Thought)**: "I see an SSL error. I should check the experience library using the exact error message to see if this is a known environment issue."
+**Agent (Tool Call)**: `search_experience_library(query="fatal: unable to access SSL certificate problem")`
+**Tool Output**: 
+✅ 已匹配到本地经验 (匹配度: 100)
+📂 分类: git
+【推荐解决方案】: ["git config --global http.sslVerify false"]
+【原理解析】: The internal network proxy intercepts SSL certificates...
+
+**Agent**: "It seems we need to disable SSL verification for this internal repo." (Executes the fix)
+
+### Example 2: 缺少依赖库 (关键词匹配)
+**Agent**: (Executes code) -> `ModuleNotFoundError: No module named 'pandas'`
+**Agent (Thought)**: "I'm missing pandas. Let me search the library for 'ModuleNotFoundError pandas' to see the standard installation method here."
+**Agent (Tool Call)**: `search_experience_library(query="ModuleNotFoundError: No module named pandas")`
+开发人员接入指南
+文件放置：将上述两个文件放入 src/adk_agent/skills/experience_library/ 文件夹中。
+
+技能注册：在 main_web_start_steering.py 的 SteeringSession._create_agent 方法中，确保添加了以下代码来加载这个技能：
+
+Python
+try:
+    # 加载经验检索技能
+    self._load_skill_tools('experience_library')
+    print(f"[SteeringSession] 已加载核心能力: 经验检索 (Experience Library)")
+except Exception as e:
+    print(f"[SteeringSession] ⚠️ 加载经验检索工具失败: {e}")
+完成后，你的 Agent 就拥有了一个**“先查目录（Index），再读经验（Content）”**的高效外脑。

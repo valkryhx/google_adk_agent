@@ -294,8 +294,9 @@ async def _smart_compact(
                 # 定义需要保留的核心工具名称
                 # 1. skill_load: 动态加载能力
                 # 2. bash: 系统操作能力
-                # 3. file_editor: 文件编辑能力 (新增)
-                CORE_TOOL_NAMES = {'skill_load', 'bash', 'file_editor'}
+                # 3. file_editor: 文件编辑能力
+                # 4. search_experience: 本地经验库检索 (新增)
+                CORE_TOOL_NAMES = {'skill_load', 'bash', 'file_editor', 'search_experience'}
                 
                 # 筛选出核心工具
                 kept_tools = []
