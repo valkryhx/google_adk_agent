@@ -187,7 +187,7 @@ google_adk_agent/
 │   ├── dynamic-mcp/    # MCP Dynamic Loading Skills
 │   └── ...
 ├── image/              # Demo Images
-└── start_demo_swarm.bat # Swarm Startup Script
+└── start_demo_swarm.bat # The Swarm Startup Script
 ```
 
 ---
