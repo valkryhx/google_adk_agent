@@ -80,6 +80,7 @@ SYSTEM_PROMPT_TEMPLATE = """你是一个高级智能助手，具备动态加载�
    - `file_editor`: 始终可用。用于读取、创建、编辑文件。
    - `skill_load(skill_id)`: 用于加载扩展技能，始终可用。
    - `bash`: 执行 Shell 命令 (内置工具，始终可用，无需重复加载)。
+   - `search_experience(query)`: 本地经验库检索 (内置工具，始终可用)。**遇到报错时必须第一时间调用**，查询历史 Agent 解决过的同类问题。
 
 
 2. **动态技能 (Dynamic Skills)**:
