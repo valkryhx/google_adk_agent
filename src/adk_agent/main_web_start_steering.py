@@ -825,15 +825,63 @@ class SteeringSession:
                 if role == 'user':
                     user_event_count += 1
             
-            if user_event_count == 0:
-                title = task[:30] + ("..." if len(task) > 30 else "")
+            # [Fix] 不再仅依赖 user_event_count==0，而是检查 state 中是否已有 title
+            # 防止中断后标题被 Runner/压缩的 save_session 全量覆盖导致丢失
+            existing_title = None
+            if hasattr(session, 'state') and session.state:
+                existing_title = session.state.get('title')
+            
+            if not existing_title:
+                # 优先使用 session 中第一条 user event 的内容作为标题
+                # 防止"继续执行"时 task="继续" 被当作标题
+                title_source = task
+                if user_event_count > 0 and session and hasattr(session, 'events'):
+                    for evt in session.events:
+                        if hasattr(evt, 'content') and evt.content and hasattr(evt.content, 'role') and evt.content.role == 'user':
+                            if hasattr(evt.content, 'parts') and evt.content.parts:
+                                for p in evt.content.parts:
+                                    if hasattr(p, 'text') and p.text and len(p.text) > 5:
+                                        title_source = p.text
+                                        break
+                            break
+                title = title_source[:30] + ("..." if len(title_source) > 30 else "")
                 if not hasattr(session, 'state') or session.state is None:
                     session.state = {}
                 session.state['title'] = title
                 await self.session_service.save_session(session)
                 print(f"[系统] 自动生成会话标题: {title}")
 
+            # [Fix] 同样检查 task_type 是否丢失，通过扫描历史 events 恢复
+            if hasattr(session, 'state') and session.state:
+                existing_task_type = session.state.get('task_type')
+            else:
+                existing_task_type = None
             
+            if not existing_task_type:
+                recovered_type = None
+                
+                # 方式1: 通过 app_name 前缀判断 Worker 身份
+                if self.app_name.startswith('swarm_from_'):
+                    recovered_type = 'swarm_worker'
+                # 方式2: 通过 function_call 判断 Leader 身份
+                elif session and hasattr(session, 'events') and session.events:
+                    swarm_tool_names = {'dispatch_task', 'dispatch_batch_tasks', 'deep_think', 'hold_meeting'}
+                    for evt in session.events:
+                        if hasattr(evt, 'content') and evt.content and hasattr(evt.content, 'parts'):
+                            for part in evt.content.parts:
+                                if hasattr(part, 'function_call') and part.function_call:
+                                    if part.function_call.name in swarm_tool_names:
+                                        recovered_type = 'swarm_leader'
+                                        break
+                        if recovered_type:
+                            break
+                
+                if recovered_type:
+                    if not hasattr(session, 'state') or session.state is None:
+                        session.state = {}
+                    session.state['task_type'] = recovered_type
+                    await self.session_service.save_session(session)
+                    print(f"[系统] 自动恢复 task_type: {recovered_type}")            
             # === 压缩逻辑 ===
             turn_count = len(session.events) if session and hasattr(session, 'events') and session.events else 0
             tool_count = len(self.agent.tools) if self.agent.tools else 0
@@ -946,20 +994,39 @@ class SteeringSession:
 
                 driver_task = asyncio.create_task(_driver_coro())
                 
-                # 创建两个 listener task
+                # 创建三个 listener task (添加了 self.queue 的监听)
                 pending_runner_get = asyncio.create_task(runner_queue.get())
                 pending_stream_get = asyncio.create_task(self.stream_queue.get())
+                pending_cancel_get = asyncio.create_task(self.queue.get()) if self.queue else None
                 
                 # [Deduplication State]
                 processed_part_history = []
                 
                 while True:
                     # 等待任意一个队列有消息
+                    wait_tasks = [pending_runner_get, pending_stream_get]
+                    if pending_cancel_get:
+                        wait_tasks.append(pending_cancel_get)
+                        
                     done, pending = await asyncio.wait(
-                        [pending_runner_get, pending_stream_get], 
+                        wait_tasks, 
                         return_when=asyncio.FIRST_COMPLETED
                     )
                     
+                    # 0. 处理取消信号
+                    if pending_cancel_get and pending_cancel_get in done:
+                        cancel_signal = pending_cancel_get.result()
+                        # 准备下一次获取，以防信号不是 CANCEL (理论上只有 CANCEL)
+                        pending_cancel_get = asyncio.create_task(self.queue.get())
+                        
+                        if cancel_signal == "CANCEL":
+                            print(f"[Node-{node_config.port}] 🛑 收到前端取消信号，强制终止当前任务！")
+                            if not pending_runner_get.done(): pending_runner_get.cancel()
+                            if not pending_stream_get.done(): pending_stream_get.cancel()
+                            driver_task.cancel()
+                            from src.adk_agent.core.worker_state import UserInterruption
+                            raise UserInterruption("Task cancelled by user.")
+                            
                     # 1. 处理 Runner 的消息 (LLM Token, Tool Call 等)
                     if pending_runner_get in done:
                         result = pending_runner_get.result()
@@ -1037,6 +1104,7 @@ class SteeringSession:
                 # 清理
                 if not pending_runner_get.done(): pending_runner_get.cancel()
                 if not pending_stream_get.done(): pending_stream_get.cancel()
+                if pending_cancel_get and not pending_cancel_get.done(): pending_cancel_get.cancel()
                 # driver_task 应该已经结束了，不过保险起见
                 if not driver_task.done(): driver_task.cancel()
         
