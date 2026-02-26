@@ -1095,3 +1095,36 @@ details[open] .tool-header {
     border-radius: 8px;
     border: 1px solid #eee;
 }
+
+/* =========================================
+   Markdown 渲染图片样式优化
+   ========================================= */
+
+/* 限制 Agent 回复中图片的最大尺寸 */
+.message.model .message-content img {
+    max-width: 100%;
+    /* 基础限制：绝不超过气泡宽度 */
+    max-height: 500px;
+    /* 高度限制：防止长图霸占整个屏幕 */
+
+    /* 如果你觉得还是太宽，可以设置一个像素宽度上限，例如 600px */
+    /* width: auto; */
+    /* 默认保持原始比例 */
+
+    border-radius: 12px;
+    /* 更圆润的边角 */
+    border: 1px solid #e0e0e0;
+    /* 增加细微边框，防止白底图与背景融为一体 */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    /* 增加悬浮阴影，更有质感 */
+    margin: 12px 0;
+    /* 图片上下增加呼吸空间 */
+    display: block;
+    /* 独占一行 */
+}
+
+/* 鼠标悬停时的小交互（可选） */
+.message.model .message-content img:hover {
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+    transition: all 0.3s ease;
+}

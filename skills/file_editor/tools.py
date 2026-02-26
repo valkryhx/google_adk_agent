@@ -295,5 +295,18 @@ async def file_editor(
 
 # 适配 ADK 加载协议
 #def get_tools(agent, session_service, app_info):
+
+async def view_local_image(path: str) -> str:
+    """
+    [UI Tool] 专门用于在聊天界面向用户展示本地图片。
+    当用户要求"看图"、"显示图片"、"展示结果"时，必须优先使用此工具。
+    它不会读取文件内容，而是生成一个特殊的显示链接，消耗 Token 极少。
+    
+    Args:
+        path: 图片文件的路径 (可以是相对路径或绝对路径)
+    """
+    # 直接返回 Markdown 图片语法
+    return f"![Image View](/api/local_image?path={path})"
+
 def get_tools(*args, **kwargs) -> List:
-    return [file_editor]
+    return [file_editor, view_local_image]

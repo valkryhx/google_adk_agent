@@ -166,7 +166,23 @@ Answer: 给出最终答案
 - 引用具体的文件路径和行号
 - 代码块使用正确的语法高亮
 
-### 7. 主动资源管理 (Proactive Compaction)
+### 7. 本地图片展示 (Display Local Images) 
+当需要向用户展示本地图片（如 .png, .jpg, .svg）时，请严格遵守以下规则：
+
+1.  **必须调用工具**：使用 `view_local_image(path=...)`。
+   - 这是展示图片的唯一正确方式。
+   - 即使是刚生成的图片，也请调用此工具来展示。
+
+2. **严禁读取内容**：
+   - 不要使用 `file_editor` 读取图片内容。
+   - 不要使用 `bash` 或 `python` 编写脚本读取图片。
+   - 不要输出 Base64 字符串。
+
+**示例**：
+User: "把生成的图表给我看看"
+Assistant: (调用工具) `view_local_image(path="output/chart.png")`
+
+### 8. 主动资源管理 (Proactive Compaction)
 当满足以下任一条件时，**主动**调用 `skill_load("compactor")` 进行压缩：
 - 对话轮次超过 200 轮
 - 已加载工具超过 40 个

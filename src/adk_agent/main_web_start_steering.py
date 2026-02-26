@@ -1288,7 +1288,29 @@ class SteeringSession:
                             if hasattr(part, 'function_call') and part.function_call:
                                 content += f" [ToolCall: {part.function_call.name}]"
                             if hasattr(part, 'function_response') and part.function_response:
-                                content += f" [ToolOutput: {part.function_response.name}]"
+                                # === [优化] 提取内容摘要，但过滤 Base64 ===
+                                fr = part.function_response
+                                raw_resp = fr.response
+                                
+                                # 1. 解包可能存在的 dict 结构
+                                if isinstance(raw_resp, dict) and 'result' in raw_resp:
+                                    raw_resp = raw_resp['result']
+                                
+                                clean_text = ""
+                                # 2. 处理字符串结果
+                                if isinstance(raw_resp, str):
+                                    clean_text = raw_resp
+                                # 3. 处理多模态列表结果 (List[Dict])
+                                elif isinstance(raw_resp, list):
+                                    # 只提取 type='text' 的部分，跳过 type='image_url' 等
+                                    texts = []
+                                    for item in raw_resp:
+                                        if isinstance(item, dict) and item.get("type") == "text":
+                                            texts.append(item.get("text", ""))
+                                    clean_text = " ".join(texts)
+                                
+                                content += f" [ToolOutput: {fr.name} -> {clean_text}]"
+                                # ========================================
                     
                     history_text += f"{role}: {content}\n"
             
@@ -2572,6 +2594,53 @@ async def root():
 @app.on_event("shutdown")
 async def shutdown_event():
     deregister_self()
+
+# ==========================================
+# [新增] 本地图片代理接口 (增强版)
+# ==========================================
+from urllib.parse import unquote
+
+@app.get("/api/local_image")
+async def get_local_image(path: str):
+    """
+    代理本地图片文件，供前端 Markdown 渲染使用。
+    增强功能：支持相对路径自动补全、支持 Windows 路径修正
+    """
+    # 1. URL 解码 (防止路径中包含 %20 等字符)
+    try:
+        clean_path = unquote(path)
+    except:
+        clean_path = path
+
+    # 2. 去除可能存在的引号 (Agent 有时会输出 path="D:/...")
+    clean_path = clean_path.strip('"\'')
+
+    # 3. 路径查找策略
+    candidate_paths = [
+        clean_path,  # 尝试原始路径
+        os.path.abspath(clean_path),  # 尝试转为绝对路径 (基于当前 CWD)
+        os.path.join(os.getcwd(), clean_path)  # 强制拼接当前目录
+    ]
+
+    final_path = None
+    for p in candidate_paths:
+        if os.path.exists(p) and os.path.isfile(p):
+            final_path = p
+            break
+
+    # 4. 如果还是找不到，返回 404
+    if not final_path:
+        print(f"[Image API] ❌ 404 Not Found: {path} (Tried: {candidate_paths})")
+        return Response(content="File not found", status_code=404)
+
+    # 5. 安全校验：只允许图片
+    valid_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg')
+    if not final_path.lower().endswith(valid_extensions):
+        return Response(content="Not a valid image file", status_code=400)
+
+    # 6. 返回文件
+    print(f"[Image API] ✅ Serving: {final_path}")
+    return FileResponse(final_path)
 
 def start_web_server(port: int):
     print(f"Starting web server at http://localhost:{port}")
