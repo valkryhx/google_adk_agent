@@ -1,5 +1,7 @@
 import os
 import asyncio
+import base64
+import mimetypes
 from typing import Any, Literal, Optional, List, Dict
 from pathlib import Path
 from dataclasses import dataclass
@@ -298,15 +300,72 @@ async def file_editor(
 
 async def view_local_image(path: str) -> str:
     """
-    [UI Tool] 专门用于在聊天界面向用户展示本地图片。
-    当用户要求"看图"、"显示图片"、"展示结果"时，必须优先使用此工具。
-    它不会读取文件内容，而是生成一个特殊的显示链接，消耗 Token 极少。
+    [UI Tool] 仅用于向【人类用户】展示图片。
+    场景：用户说"给我看看图"、"显示结果"、"画好了吗"。
+    行为：生成前端可渲染的 Markdown 链接。
+    注意：此工具不会让 Agent 看到图片内容，仅仅是搬运工。
+    """
+    import os
+    from urllib.parse import quote
+    
+    # 简单路径检查与修正
+    if not os.path.exists(path):
+        # 尝试相对路径
+        cwd_path = os.path.join(os.getcwd(), path)
+        if os.path.exists(cwd_path):
+            path = cwd_path
+        else:
+            return f"Error: 文件不存在 {path}"
+            
+    # 返回纯文本链接 (让前端去渲染)
+    # 这里的 path 建议转义一下，防止空格报错，但在本地环境简单拼接通常也没问题
+    return f"![Image Display](/api/local_image?path={path})"
+
+
+async def analyze_local_image(path: str) -> List[Dict[str, Any]]:
+    """
+    [Vision Tool] 仅用于让【Agent 你自己】看懂并分析图片内容。
+    场景：用户说"图里有什么"、"检查图片是否画错了"、"分析数据趋势"、"提取截图文字"。
+    行为：读取文件二进制数据，消耗 Vision Token 进行视觉理解。
     
     Args:
-        path: 图片文件的路径 (可以是相对路径或绝对路径)
+        path: 图片文件的路径
     """
-    # 直接返回 Markdown 图片语法
-    return f"![Image View](/api/local_image?path={path})"
+    p = Path(path)
+    # 相对路径兼容
+    if not p.is_absolute():
+        p = Path(os.getcwd()) / p
+        
+    if not p.exists():
+        return [{"type": "text", "text": f"Error: 文件 {path} 不存在"}]
+    
+    # 识别 MIME 类型
+    mime_type, _ = mimetypes.guess_type(p)
+    if not mime_type or not mime_type.startswith('image'):
+        # 兜底默认为 png
+        mime_type = 'image/png'
+
+    try:
+        # 读取并转 Base64
+        with open(p, "rb") as f:
+            b64_data = base64.b64encode(f.read()).decode('utf-8')
+            
+        # 返回多模态数据结构 (OpenAI/LiteLLM 标准格式)
+        # 注意：这里返回的是 List，Agent 框架会将其作为 content 传入 LLM
+        return [
+            {
+                "type": "text", 
+                "text": f"我已读取图片 {path} 的视觉数据，正在分析其内容..."
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{b64_data}"
+                }
+            }
+        ]
+    except Exception as e:
+        return [{"type": "text", "text": f"读取图片失败: {str(e)}"}]
 
 def get_tools(*args, **kwargs) -> List:
-    return [file_editor, view_local_image]
+    return [file_editor, view_local_image, analyze_local_image]
