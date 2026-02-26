@@ -149,6 +149,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     async function sendMessage() {
+        // [新增] 每次发送新消息时，重置 Swarm 事件的早期刷新标记
+        window._hasTriggeredEarlyRefreshForSwarm = false;
+
         const text = userInput.value.trim();
         // [多模态] 有文本或有图片就可以发送
         if (!text && currentImages.length === 0) return;
@@ -256,6 +259,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
                         if (data.chunk && data.chunk.type === 'swarm_event') {
                             const evt = data.chunk;
+
+                            // [新增] 专门针对会话状态更新（如打标签）事件：无视标记强制刷新，因为此时后端刚好写入完成
+                            if (evt.sub_type === 'update_session_state') {
+                                setTimeout(() => loadSessions().catch(e => console.warn('state update load failed:', e)), 200);
+                            }
+                            // [新增] 发现后台开始执行 Agent 任务时，提早触发左侧列表刷新，以免长时间等待
+                            else if (!window._hasTriggeredEarlyRefreshForSwarm) {
+                                window._hasTriggeredEarlyRefreshForSwarm = true;
+                                setTimeout(() => loadSessions().catch(e => console.warn('early loadSessions failed:', e)), 500);
+                            }
+
                             // [Fix] Chronological Ordering:
                             // When 'init' event arrives, insert a placeholder block into the stream.
                             if (evt.sub_type === 'init') {
@@ -281,7 +295,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
                                 // Use round-aware suffix for placeholder ID (include role to avoid secretary/participant collision)
                                 const rolePrefix = role === 'secretary' ? 'sec-' : '';
-                                const placeholderSuffix = roundInfo ? `R${roundInfo}-${rolePrefix}${evt.data.worker_port}` : `${evt.data.worker_port}`;
+                                let placeholderSuffix = `${evt.data.worker_port}`;
+                                if (roundInfo) {
+                                    placeholderSuffix = `R${roundInfo}-${rolePrefix}${evt.data.worker_port}`;
+                                } else if (evt.data.session_id) {
+                                    placeholderSuffix = `${evt.data.session_id}-${evt.data.worker_port}`;
+                                }
                                 responseBlocks.push({
                                     type: 'swarm_placeholder',
                                     msgId: loadingId,
@@ -321,6 +340,12 @@ document.addEventListener('DOMContentLoaded', () => {
                                         responseBlocks.push({ type: chunk.type, content: chunk.content });
                                     }
                                 } else {
+                                    // [新增] 发现普通 tool_call 时，也提早触发左侧列表刷新
+                                    if (chunk.type === 'tool_call' && !window._hasTriggeredEarlyRefreshForSwarm) {
+                                        window._hasTriggeredEarlyRefreshForSwarm = true;
+                                        setTimeout(() => loadSessions().catch(e => console.warn('early loadSessions failed:', e)), 500);
+                                    }
+
                                     // Tool calls and results are distinct blocks
                                     responseBlocks.push(chunk);
                                 }
@@ -417,13 +442,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const workerPort = data.worker_port;
         const round = data.meeting_round;
-        const role = data.meeting_role;
+        const role = data.meeting_role || data.deep_think_role;
         const totalRounds = data.meeting_total_rounds;
 
         // Round-aware ID: prevent same worker across rounds from overwriting
         // Also include role to prevent secretary/participant collision on same round+port
         const rolePrefix = role === 'secretary' ? 'sec-' : '';
-        const cardSuffix = round ? `R${round}-${rolePrefix}${workerPort}` : `${workerPort}`;
+        let cardSuffix = `${workerPort}`;
+        if (round) {
+            cardSuffix = `R${round}-${rolePrefix}${workerPort}`;
+        } else if (data.session_id) {
+            cardSuffix = `${data.session_id}-${workerPort}`;
+        }
+
         const cardId = `swarm-card-${msgId}-${cardSuffix}`;
         const placeholderId = `swarm-placeholder-${msgId}-${cardSuffix}`;
 
@@ -459,16 +490,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 card.classList.add('inline-card');
             }
 
-            // Build header info based on meeting context
-            const workerLabel = round
-                ? (role === 'secretary'
-                    ? `[Secretary] Worker-${workerPort}`
-                    : `[Round ${round}] Worker-${workerPort}`)
-                : `Worker-${workerPort}`;
-            const metaLabel = round
-                ? (role === 'secretary' ? 'Summarizing' : `Round ${round}/${totalRounds}`)
-                : 'Running';
-            const statusIcon = role === 'secretary' ? 'edit_note' : 'sync';
+            // Build header info based on meeting or deep think context
+            let workerLabel = `Worker-${workerPort}`;
+            let metaLabel = 'Running';
+            let statusIcon = 'sync';
+
+            if (round) {
+                if (role === 'secretary') {
+                    workerLabel = `[Secretary] Worker-${workerPort}`;
+                    metaLabel = 'Summarizing';
+                    statusIcon = 'edit_note';
+                } else {
+                    workerLabel = `[Round ${round}/${totalRounds || '?'}] Worker-${workerPort}`;
+                    metaLabel = `Round ${round}/${totalRounds || '?'}`;
+                }
+            } else if (data.deep_think_role) {
+                workerLabel = `[${data.deep_think_role}] Worker-${workerPort}`;
+                metaLabel = data.deep_think_role;
+                statusIcon = 'psychology';
+            }
 
             card.innerHTML = `
                 <div class="swarm-card-header">
@@ -920,6 +960,171 @@ document.addEventListener('DOMContentLoaded', () => {
                                         </div>
                                      </div>`;
                         }
+                    } else if (block.tool_name === 'deep_think' && block.tool_args) {
+                        // === deep_think (Aletheia GVR) History Cards ===
+                        const args = block.tool_args;
+                        const taskPreview = args.task_instruction ? args.task_instruction.substring(0, 60) + '...' : 'Deep Think Task';
+                        const mPaths = args.m_paths || '?';
+                        const nRounds = args.n_rounds || '?';
+
+                        // Parse result content
+                        let resultContent = '';
+
+                        if (i + 1 < blocks.length && (blocks[i + 1].type === 'tool_result' || blocks[i + 1].type === 'function_response')) {
+                            resultContent = blocks[i + 1].tool_result_clean || blocks[i + 1].content || '';
+                            resultContent = resultContent.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\r/g, '\n');
+                        }
+
+                        // Detect success/failure from report title
+                        const isSuccess = resultContent.includes('\u6162\u601d\u8003\u5b8c\u6210');
+
+                        // Parse PHASE_LOGS for per-phase detail
+                        let phaseLogs = {};
+                        const phaseLogsMatch = resultContent.match(/<!-- PHASE_LOGS_START -->\n([\s\S]*?)\n<!-- PHASE_LOGS_END -->/);
+                        if (phaseLogsMatch) {
+                            const logMatches = [...phaseLogsMatch[1].matchAll(/\[PHASE_LOG\]\s*([^|]+?)\s*\|\s*Status:\s*(\w+)\s*\|\s*([\s\S]*?)(?=\n\[PHASE_LOG\]|$)/g)];
+                            for (const m of logMatches) {
+                                phaseLogs[m[1].trim()] = { status: m[2], detail: m[3].trim() };
+                            }
+                        }
+                        console.log('[DeepThink History Debug] phaseLogs parsed:', Object.keys(phaseLogs).length, 'entries');
+
+                        // Render overview header
+                        const statusColor = isSuccess ? '#2e7d32' : '#c62828';
+                        const statusText = isSuccess ? 'GVR Success' : 'GVR Failed';
+                        html += `<div class="swarm-round-header" style="margin: 12px 0 6px 0;">
+                                    <span class="round-badge" style="background:${statusColor};">${statusText}</span>
+                                    <span class="round-label">Aletheia Deep Think (${mPaths} paths, ${nRounds} max rounds)</span>
+                                 </div>`;
+
+                        // Phase 1: QA Tester
+                        const qaLog = phaseLogs['QA Tester'];
+                        const qaDetail = qaLog ? qaLog.detail : '';
+                        html += `<div class="swarm-card success" style="margin: 6px 0;">
+                                    <div class="swarm-card-header">
+                                        <div class="swarm-status-icon"><span class="material-symbols-outlined">psychology</span></div>
+                                        <div class="swarm-info">
+                                            <div class="swarm-worker-id">[QA Tester] Phase 1</div>
+                                            <div class="swarm-task-preview">Generated ground-truth test script</div>
+                                        </div>
+                                        <div class="swarm-meta">Done</div>
+                                    </div>
+                                    ${qaDetail ? `<details class="swarm-logs-wrapper"><summary>Test Script Path</summary><pre class="swarm-terminal">${qaDetail}</pre></details>` : ''}
+                                 </div>`;
+
+                        // Phase 2: Solver cards - status from PHASE_LOG
+                        const numPaths = parseInt(mPaths) || 0;
+                        for (let p = 1; p <= numPaths; p++) {
+                            const solverLog = phaseLogs[`Solver Path ${p}`];
+
+                            let pathStatus = 'Unknown';
+                            let cardClass = 'running';
+                            let pathIcon = 'help';
+                            let solverDetail = '';
+                            let solverFile = '';
+                            let solverExecOutput = '';
+                            let roundsInfo = '';
+
+                            if (solverLog) {
+                                pathStatus = solverLog.status;
+                                cardClass = pathStatus === 'Passed' ? 'success' : 'fail';
+                                pathIcon = pathStatus === 'Passed' ? 'check_circle' : 'cancel';
+
+                                const roundsMatch = solverLog.detail.match(/Rounds:\s*(\d+\/\d+)/);
+                                if (roundsMatch) roundsInfo = roundsMatch[1];
+                                const fileMatch = solverLog.detail.match(/SolutionFile:\s*([^\n|]*?)(?:\s*\||$)/);
+                                if (fileMatch && fileMatch[1].trim()) solverFile = fileMatch[1].trim();
+                                const execMatch = solverLog.detail.match(/ExecOutput:\s*([\s\S]*?)(?:\s*\|\s*LastError:|$)/);
+                                if (execMatch && execMatch[1].trim()) solverExecOutput = execMatch[1].trim();
+                                const errorMatch = solverLog.detail.match(/LastError:\s*([\s\S]*)/);
+                                if (errorMatch && errorMatch[1].trim()) solverDetail = errorMatch[1].trim();
+                            }
+
+                            const roundsLabel = roundsInfo ? ` (Round ${roundsInfo})` : ` (max ${nRounds} rounds)`;
+
+                            let solverExpandHtml = '';
+                            if (solverDetail) {
+                                solverExpandHtml += `<details class="swarm-logs-wrapper"><summary>Last Error Log</summary><pre class="swarm-terminal">${solverDetail}</pre></details>`;
+                            }
+                            if (solverFile) {
+                                solverExpandHtml += `<details class="swarm-logs-wrapper"><summary>Solution Details</summary><pre class="swarm-terminal">File: ${solverFile}${solverExecOutput ? '\n\nTest Output:\n' + solverExecOutput : ''}</pre></details>`;
+                            }
+
+                            html += `<div class="swarm-card ${cardClass}" style="margin: 6px 0;">
+                                        <div class="swarm-card-header">
+                                            <div class="swarm-status-icon"><span class="material-symbols-outlined">${pathIcon}</span></div>
+                                            <div class="swarm-info">
+                                                <div class="swarm-worker-id">[Solver] Path ${p}</div>
+                                                <div class="swarm-task-preview">${pathStatus} sandbox verification${roundsLabel}</div>
+                                            </div>
+                                            <div class="swarm-meta">${pathStatus}</div>
+                                        </div>
+                                        ${solverExpandHtml}
+                                     </div>`;
+
+                            // Reviser cards for this path (rendered after Solver card)
+                            const maxRoundsInt = parseInt(nRounds) || 3;
+                            for (let r = 1; r < maxRoundsInt; r++) {
+                                const reviserLog = phaseLogs[`Reviser Path ${p} Round ${r}`];
+                                if (!reviserLog) continue;
+
+                                let reviserFile = '';
+                                let reviserError = '';
+                                if (reviserLog.detail) {
+                                    const fMatch = reviserLog.detail.match(/SolutionFile:\s*([^\n|]*?)(?:\s*\||$)/);
+                                    if (fMatch && fMatch[1].trim()) reviserFile = fMatch[1].trim();
+                                    const eMatch = reviserLog.detail.match(/ErrorInput:\s*([\s\S]*)/);
+                                    if (eMatch && eMatch[1].trim()) reviserError = eMatch[1].trim();
+                                }
+
+                                let reviserExpandHtml = '';
+                                if (reviserFile) {
+                                    reviserExpandHtml += `<details class="swarm-logs-wrapper"><summary>Revised File</summary><pre class="swarm-terminal">${reviserFile}</pre></details>`;
+                                }
+                                if (reviserError) {
+                                    const errorDisplay = reviserError.length > 2000 ? reviserError.substring(0, 2000) + '\n...(Truncated)' : reviserError;
+                                    reviserExpandHtml += `<details class="swarm-logs-wrapper"><summary>Error Input (Traceback)</summary><pre class="swarm-terminal">${errorDisplay}</pre></details>`;
+                                }
+
+                                html += `<div class="swarm-card running" style="margin: 6px 0 6px 20px;">
+                                            <div class="swarm-card-header">
+                                                <div class="swarm-status-icon"><span class="material-symbols-outlined">build</span></div>
+                                                <div class="swarm-info">
+                                                    <div class="swarm-worker-id">[Reviser] Path ${p} Round ${r}</div>
+                                                    <div class="swarm-task-preview">Code revision based on test failure</div>
+                                                </div>
+                                                <div class="swarm-meta">${reviserLog.status}</div>
+                                            </div>
+                                            ${reviserExpandHtml}
+                                         </div>`;
+                            }
+                        }
+
+                        // Phase 3: Arbiter - show whenever PHASE_LOG exists
+                        const arbiterLog = phaseLogs['Arbiter'];
+                        if (arbiterLog) {
+                            let arbiterContent = arbiterLog.detail || 'Evaluation complete.';
+                            // Extract just the Reason portion from detail
+                            const reasonMatch = arbiterContent.match(/Reason:\s*([\s\S]*)/);
+                            if (reasonMatch) arbiterContent = reasonMatch[1].trim();
+
+                            const displayContent = arbiterContent.length > 3000 ? arbiterContent.substring(0, 3000) + '\n...(Truncated)' : arbiterContent;
+
+                            html += `<div class="swarm-card success" style="margin: 6px 0;">
+                                        <div class="swarm-card-header">
+                                            <div class="swarm-status-icon"><span class="material-symbols-outlined">psychology</span></div>
+                                            <div class="swarm-info">
+                                                <div class="swarm-worker-id">[Arbiter] Final Evaluation</div>
+                                                <div class="swarm-task-preview">Click to view analysis</div>
+                                            </div>
+                                            <div class="swarm-meta">Done</div>
+                                        </div>
+                                        <details class="swarm-logs-wrapper" open>
+                                            <summary>Arbiter Analysis</summary>
+                                            <pre class="swarm-terminal">${displayContent}</pre>
+                                        </details>
+                                     </div>`;
+                        }
                     }
                 }
             } else if (block.type === 'tool_result' || block.type === 'function_response') {
@@ -951,7 +1156,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Use round-aware suffix if meeting_round is present
                 // Include role to prevent secretary/participant collision
                 const rolePrefix = block.role === 'secretary' ? 'sec-' : '';
-                const suffix = block.round ? `R${block.round}-${rolePrefix}${block.port}` : `${block.port}`;
+                let suffix = `${block.port}`;
+                if (block.round) {
+                    suffix = `R${block.round}-${rolePrefix}${block.port}`;
+                } else if (block.data && block.data.session_id) {
+                    suffix = `${block.data.session_id}-${block.port}`;
+                }
                 html += `<div id="swarm-placeholder-${block.msgId}-${suffix}" class="swarm-placeholder" data-port="${block.port}" style="margin: 10px 0;"></div>`;
             }
         }
