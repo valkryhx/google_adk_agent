@@ -1,0 +1,226 @@
+/*
+ * mobile.css - 手机端自适应样式
+ * 仅在屏幕宽度 <= 768px 时生效，不影响桌面端
+ */
+
+/* ==========================================
+   移动端覆盖层背景 (侧边栏打开时的遮罩)
+   ========================================== */
+.mobile-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.4);
+    z-index: 999;
+    opacity: 0;
+    pointer-events: none;
+    /* 防止隐藏时遮挡点击和下拉 */
+    transition: opacity 0.3s ease;
+}
+
+.mobile-overlay.visible {
+    opacity: 1;
+    pointer-events: auto;
+    /* 显示时恢复点击以允许点击关闭 */
+}
+
+/* 手机端汉堡菜单按钮 - 桌面端默认隐藏 */
+.mobile-menu-btn {
+    display: none;
+}
+
+@media (max-width: 768px) {
+
+    /* ==========================================
+       关键修复：让整个布局高度链完整，使 chat-container 可以内部滚动
+       注意：不覆盖 body { height: 100vh }，那是正确的
+       ========================================== */
+
+    /* app-container 需要 overflow:hidden 防止子元素撑开 */
+    .app-container {
+        overflow: hidden;
+    }
+
+    /* main-content 必须有 min-height: 0 才能在 flex 中正确收缩 */
+    .main-content {
+        width: 100% !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+        overflow: hidden;
+    }
+
+    /* chat-container 必须有 min-height: 0 才能触发内部滚动 */
+    /* 不加 !important 使 welcome-mode 覆盖规则仍然生效（欢迎屏不需要滚动） */
+    .chat-container {
+        min-height: 0;
+    }
+
+    /* 在 chat-mode 下强制开启滚动（覆盖 welcome-mode 的 visible 规则） */
+    body.chat-mode .chat-container {
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch;
+        /* Android 惯性滚动 */
+        padding: 16px 4% 80px 4% !important;
+    }
+
+    /* ==========================================
+       手机端汉堡菜单按钮 (在 top-bar 里，始终可见)
+       ========================================== */
+    .mobile-menu-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        padding: 6px 8px;
+        border-radius: 8px;
+        color: #5f6368;
+        flex-shrink: 0;
+        margin-right: 4px;
+        transition: background 0.15s ease;
+    }
+
+    .mobile-menu-btn:active,
+    .mobile-menu-btn:hover {
+        background: rgba(0, 0, 0, 0.06);
+    }
+
+    .mobile-menu-btn .material-symbols-outlined {
+        font-size: 22px;
+    }
+
+    /* ==========================================
+       侧边栏 - 改为全屏覆盖式 Drawer
+       ========================================== */
+    .sidebar {
+        position: fixed !important;
+        top: 0;
+        left: 0;
+        height: 100% !important;
+        width: 80vw !important;
+        max-width: 320px !important;
+        min-width: unset !important;
+        z-index: 1000;
+        transform: translateX(-100%);
+        transition: transform 0.3s ease !important;
+        box-shadow: 4px 0 20px rgba(0, 0, 0, 0.15);
+    }
+
+    .sidebar.mobile-open {
+        transform: translateX(0) !important;
+    }
+
+    /* 折叠模式在手机端不适用，统一用 mobile-open 控制 */
+    .sidebar.collapsed {
+        transform: translateX(-100%) !important;
+        width: 80vw !important;
+        min-width: unset !important;
+        max-width: 320px !important;
+    }
+
+    /* 手机端显示覆盖层 */
+    .mobile-overlay {
+        display: block;
+    }
+
+    /* resize handle 在手机上不显示 */
+    .resize-handle {
+        display: none !important;
+    }
+
+    /* ==========================================
+       顶部栏
+       ========================================== */
+    .top-bar {
+        padding: 10px 12px;
+        flex-shrink: 0;
+    }
+
+    /* 用户切换器在手机上缩小 */
+    .top-bar .model-selector select {
+        font-size: 12px !important;
+        padding: 4px 8px !important;
+    }
+
+    /* ==========================================
+       欢迎界面
+       ========================================== */
+    .welcome-screen {
+        width: 90% !important;
+        min-width: unset !important;
+        max-width: none !important;
+        padding: 0 16px;
+    }
+
+    .sub-greeting {
+        font-size: 28px !important;
+        margin-bottom: 16px !important;
+    }
+
+    .greeting {
+        font-size: 16px !important;
+    }
+
+    /* ==========================================
+       输入框区域
+       ========================================== */
+    .input-area-wrapper {
+        padding: 8px 4% !important;
+        flex-shrink: 0;
+    }
+
+    body.chat-mode .input-area-wrapper {
+        padding: 8px 4% !important;
+    }
+
+    body.welcome-mode .input-area-wrapper .input-area {
+        width: 90% !important;
+        min-width: unset !important;
+        max-width: none !important;
+    }
+
+    /* 防止 Android Chrome 在 focus 时自动缩放 */
+    .input-area textarea {
+        font-size: 16px !important;
+    }
+
+    /* ==========================================
+       消息气泡
+       ========================================== */
+    .message {
+        max-width: 100% !important;
+    }
+
+    .message-content {
+        max-width: 90% !important;
+    }
+
+    /* ==========================================
+       图片
+       ========================================== */
+    .user-images-row img {
+        height: 70px !important;
+    }
+
+    .message.model .message-content img {
+        max-height: 300px !important;
+    }
+
+    /* ==========================================
+       Swarm 卡片 - 窄屏单列
+       ========================================== */
+    .swarm-monitor-container {
+        grid-template-columns: 1fr !important;
+    }
+
+    /* ==========================================
+       麦克风按钮 - 加大点击区域
+       ========================================== */
+    #micBtn {
+        padding: 12px !important;
+    }
+}

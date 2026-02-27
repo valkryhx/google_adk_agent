@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ciri</title>
     <link rel="stylesheet" href="/static/style.css?v=1.13">
+    <link rel="stylesheet" href="/static/mobile.css?v=1.0">
     <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" />
@@ -61,6 +62,10 @@
         <!-- Main Content -->
         <main class="main-content">
             <div class="top-bar">
+                <!-- 手机端汉堡菜单按钮 (仅在手机上显示) -->
+                <button class="mobile-menu-btn" id="mobileMenuBtn">
+                    <span class="material-symbols-outlined">menu</span>
+                </button>
                 <div class="model-selector">
                     <span>Ciri</span>
                     <span class="material-symbols-outlined">arrow_drop_down</span>
@@ -113,6 +118,8 @@
             </div>
         </main>
     </div>
+    <!-- 手机端侧边栏遮罩 -->
+    <div class="mobile-overlay" id="mobileOverlay"></div>
     <script src="/static/script.js?v=1.15"></script>
 </body>
 

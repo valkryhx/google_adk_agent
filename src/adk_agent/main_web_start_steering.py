@@ -30,7 +30,7 @@ from src.adk_agent.core.manager import SkillManager
 from src.adk_agent.core.executor import execute_python_code
 from src.adk_agent.core.logger import AgentLogger, logger
 from src.adk_agent.core.simple_file_logger import default_logger as file_logger
-from src.adk_agent.config import AgentConfig, build_system_prompt
+from src.adk_agent.config import AgentConfig, build_system_prompt, yaml_config
 import litellm
 from litellm import ContextWindowExceededError
 from google.genai import types
@@ -1735,8 +1735,67 @@ def init_streaming_stt():
     except Exception as e:
         print(f"[STT] ❌ 引擎加载失败: {e}")
 
+# ==========================================
+# 智能网关 (Smart Gatekeeper) - ASGI 中间件实现
+# 使用中间件而非 Depends()，才能正确处理 WebSocket 连接
+# ==========================================
+from fastapi import HTTPException, status, Request
+from starlette.types import ASGIApp, Scope, Receive, Send
+from starlette.responses import Response
+
+# 优先从 private_key.yaml 中获取 remote_token
+REMOTE_PASSWORD = yaml_config.get("remote_token") or "cosmos"
+
+class SmartGatekeeperMiddleware:
+    """
+    ASGI 中间件：
+    - WebSocket 连接 -> 直接放行（浏览器无法在 WS 握手中发送 Basic Auth）
+    - 本地 HTTP 请求（无 cf-ray 头）-> 直接放行
+    - 远程 HTTP 请求（含 cf-ray 头）-> 校验 Basic Auth 密码
+    """
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        # WebSocket 和 lifespan 事件直接透传，不做认证
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # 从 scope headers 中提取 (bytes -> str)
+        headers = {k.decode(): v.decode() for k, v in scope.get("headers", [])}
+        is_remote = "cf-ray" in headers
+
+        # 本地请求直接放行
+        if not is_remote:
+            await self.app(scope, receive, send)
+            return
+
+        # 远程请求：验证 Basic Auth
+        auth = headers.get("authorization", "")
+        if auth.startswith("Basic "):
+            try:
+                decoded = b64_module.b64decode(auth[6:]).decode("utf-8")
+                _, _, password = decoded.partition(":")
+                if secrets.compare_digest(password.encode(), REMOTE_PASSWORD.encode()):
+                    # 密码正确，放行
+                    await self.app(scope, receive, send)
+                    return
+            except Exception:
+                pass
+
+        # 未提供凭证或密码错误，返回 401
+        response = Response(
+            content="Remote access requires password authentication.",
+            status_code=401,
+            headers={"WWW-Authenticate": "Basic realm=\"Ciri Remote\""},
+        )
+        await response(scope, receive, send)
+
 app = FastAPI()
+app.add_middleware(SmartGatekeeperMiddleware)
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
+
 
 class ChatRequest(BaseModel):
     message: str

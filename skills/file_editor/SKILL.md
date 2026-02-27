@@ -13,3 +13,5 @@ This skill provides tools for file system operations.
 - Write to files
 - List directory contents
 - Check file existence
+- Analyze image content (vision processing for both local paths and network URLs)
+- View image in UI (display only, without vision processing, supports local paths and network URLs)

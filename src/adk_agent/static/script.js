@@ -110,9 +110,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const APP_NAME = "dynamic_expert";
 
     // 动态获取当前 user_id (必须是函数，不能是常量！)
-    // ⚠️ 使用 sessionStorage 而非 localStorage，确保每个标签页独立
+    // ⚠️ 优先从 localStorage 读取，为了兼容各种移动端浏览器的 reload() 行为
     function getUserId() {
-        return sessionStorage.getItem('user_id_override') || "user_001";
+        return localStorage.getItem('user_id_override') || "user_001";
     }
 
     // 在控制台显示当前用户ID
@@ -1634,8 +1634,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // 用户切换器事件监听
     const userSelector = document.getElementById('userSelector');
     if (userSelector) {
-        // 设置初始选中值 (使用 sessionStorage 实现标签页隔离)
-        const currentUserId = sessionStorage.getItem('user_id_override') || 'user_001';
+        // 设置初始选中值 (改为 localStorage 以兼容所有手机浏览器刷新)
+        const currentUserId = localStorage.getItem('user_id_override') || 'user_001';
 
         // 如果当前 ID 不在预设选项中，动态添加它
         const presetValues = Array.from(userSelector.options).map(opt => opt.value);
@@ -1664,15 +1664,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
             console.log(`[切换用户] ${currentUserId} -> ${newUserId}`);
 
-            // 更新用户ID (sessionStorage: 每个标签页独立)
-            sessionStorage.setItem('user_id_override', newUserId);
+            // 更新用户ID (localStorage更稳定)
+            localStorage.setItem('user_id_override', newUserId);
 
             // ⚠️ 关键修复：清除旧的 session_id，强制为新用户创建新会话
             sessionStorage.removeItem('current_session_id');
             console.log('[清除会话] 已清除旧会话，将为新用户创建新会话');
 
-            // 静默刷新页面
-            location.reload();
+            // 延迟一点刷新，给手机浏览器IO写入时间
+            setTimeout(() => {
+                location.reload();
+            }, 100);
         });
     }
 
@@ -1706,35 +1708,83 @@ document.addEventListener('DOMContentLoaded', () => {
         const sidebar = document.querySelector('.sidebar');
         const handle = document.querySelector('.resize-handle');
         const menuBtn = document.querySelector('.menu-btn');
+        const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+        const overlay = document.getElementById('mobileOverlay');
         let isResizing = false;
 
-        // --- 1. 侧边栏折叠/展开逻辑 ---
+        // 判断是否为手机端
+        const isMobile = () => window.innerWidth <= 768;
+
+        // --- 手机端：关闭侧边栏 ---
+        function closeMobileSidebar() {
+            sidebar.classList.remove('mobile-open');
+            if (overlay) {
+                overlay.classList.remove('visible');
+            }
+        }
+
+        // --- 手机端：打开侧边栏 ---
+        function openMobileSidebar() {
+            sidebar.classList.add('mobile-open');
+            if (overlay) {
+                overlay.classList.add('visible');
+            }
+        }
+
+        // --- 1. 菜单按钮点击 ---
         menuBtn.addEventListener('click', () => {
-            if (sidebar.classList.contains('collapsed')) {
-                sidebar.classList.remove('collapsed');
-                // 恢复宽度
-                const savedWidth = localStorage.getItem('sidebarWidth_v2') || '300px';
-                sidebar.style.width = savedWidth;
-                sidebar.style.minWidth = savedWidth;
-                sidebar.style.maxWidth = savedWidth;
+            if (isMobile()) {
+                // 手机端：切换 drawer 模式
+                if (sidebar.classList.contains('mobile-open')) {
+                    closeMobileSidebar();
+                } else {
+                    openMobileSidebar();
+                }
             } else {
-                sidebar.classList.add('collapsed');
-                // 移除内联宽度限制，让 CSS 的 .collapsed 样式 (130px) 生效
-                sidebar.style.width = '';
-                sidebar.style.minWidth = '';
-                sidebar.style.maxWidth = '';
+                // 桌面端：折叠/展开原逻辑
+                if (sidebar.classList.contains('collapsed')) {
+                    sidebar.classList.remove('collapsed');
+                    const savedWidth = localStorage.getItem('sidebarWidth_v2') || '300px';
+                    sidebar.style.width = savedWidth;
+                    sidebar.style.minWidth = savedWidth;
+                    sidebar.style.maxWidth = savedWidth;
+                } else {
+                    sidebar.classList.add('collapsed');
+                    sidebar.style.width = '';
+                    sidebar.style.minWidth = '';
+                    sidebar.style.maxWidth = '';
+                }
             }
         });
 
-        // --- 2. 侧边栏调整大小逻辑 ---
-        // 恢复保存的宽度
-        const savedWidth = localStorage.getItem('sidebarWidth_v2');
-        if (savedWidth) {
-            sidebar.style.width = savedWidth;
-            sidebar.style.minWidth = savedWidth;
+        // --- 2. 手机端：点击遮罩关闭侧边栏 ---
+        if (overlay) {
+            overlay.addEventListener('click', closeMobileSidebar);
+        }
+
+        // --- 2b. 手机端：top-bar 里的汉堡按钮 ---
+        if (mobileMenuBtn) {
+            mobileMenuBtn.addEventListener('click', () => {
+                if (sidebar.classList.contains('mobile-open')) {
+                    closeMobileSidebar();
+                } else {
+                    openMobileSidebar();
+                }
+            });
+        }
+
+        // --- 3. 桌面端：拖拽调整大小 ---
+        // 恢复保存的宽度（仅桌面）
+        if (!isMobile()) {
+            const savedWidth = localStorage.getItem('sidebarWidth_v2');
+            if (savedWidth) {
+                sidebar.style.width = savedWidth;
+                sidebar.style.minWidth = savedWidth;
+            }
         }
 
         handle.addEventListener('mousedown', (e) => {
+            if (isMobile()) return; // 手机端不支持拖拽
             if (sidebar.classList.contains('collapsed')) return;
             isResizing = true;
             handle.classList.add('active');
@@ -1747,10 +1797,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             let newWidth = e.clientX;
 
-            // 响应式限制：如果窗口很窄，允许侧边栏占满更多空间
             const maxAllowedRatio = window.innerWidth < 600 ? 0.8 : 0.5;
             const maxAllowed = window.innerWidth * maxAllowedRatio;
-            const minAllowed = 150; // 稍微降低最小限制以适应窄屏
+            const minAllowed = 150;
 
             if (newWidth < minAllowed) newWidth = minAllowed;
             if (newWidth > maxAllowed) newWidth = maxAllowed;
@@ -1766,9 +1815,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 handle.classList.remove('active');
                 document.body.style.cursor = '';
                 document.body.style.userSelect = '';
-
-                // 保存宽度
                 localStorage.setItem('sidebarWidth_v2', sidebar.style.width);
+            }
+        });
+
+        // --- 4. 窗口大小变化时重置状态 ---
+        window.addEventListener('resize', () => {
+            if (!isMobile()) {
+                // 切换回桌面：移除手机端样式
+                closeMobileSidebar();
+                const savedWidth = localStorage.getItem('sidebarWidth_v2') || '300px';
+                sidebar.style.width = savedWidth;
+                sidebar.style.minWidth = savedWidth;
+            } else {
+                // 切换回手机：清除桌面内联宽度
+                sidebar.style.width = '';
+                sidebar.style.minWidth = '';
+                sidebar.style.maxWidth = '';
             }
         });
     }
@@ -1839,7 +1902,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // 2. 初始化 WebSocket
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            websocket = new WebSocket(`${protocol}//${window.location.host}/ws/audio`);
+            // [Fix] 动态获取协议和主机，兼容 HTTPS (Cloudflare)
+            const host = window.location.host;
+            const wsUrl = `${protocol}//${host}/ws/audio`;
+
+            websocket = new WebSocket(wsUrl);
 
             websocket.onopen = () => {
                 console.log('[WS] 连接已建立');

@@ -308,6 +308,10 @@ async def view_local_image(path: str) -> str:
     import os
     from urllib.parse import quote
     
+    # 如果是网络图片 URL，直接返回 Markdown 格式让前端渲染
+    if path.startswith("http://") or path.startswith("https://"):
+        return f"![Image Display]({path})"
+    
     # 简单路径检查与修正
     if not os.path.exists(path):
         # 尝试相对路径
@@ -326,11 +330,26 @@ async def analyze_local_image(path: str) -> List[Dict[str, Any]]:
     """
     [Vision Tool] 仅用于让【Agent 你自己】看懂并分析图片内容。
     场景：用户说"图里有什么"、"检查图片是否画错了"、"分析数据趋势"、"提取截图文字"。
-    行为：读取文件二进制数据，消耗 Vision Token 进行视觉理解。
+    行为：读取文件二进制数据或从网络URL直接读取，消耗 Vision Token 进行视觉理解。
     
     Args:
-        path: 图片文件的路径
+        path: 图片文件的路径或网络 URL (如 http:// 或 https://)
     """
+    # 如果是网络图片 URL，大多数多模态大语言模型支持直接传入 URL
+    if path.startswith("http://") or path.startswith("https://"):
+        return [
+            {
+                "type": "text", 
+                "text": f"我正在分析网络图片 {path} 的内容..."
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": path
+                }
+            }
+        ]
+
     p = Path(path)
     # 相对路径兼容
     if not p.is_absolute():
