@@ -19,7 +19,7 @@
 
 本项目 `MISC/tech_files` 目录下完整记录了 Ciri 从概念到实现的演进过程。这些是通过与 **Google Gemini 3 Pro** 进行的深度技术讨论沉淀下来的。
 
-特别感谢 **Google Gemini 3 Pro** 惊人的 **2M+ Token 超长上下文能力** 和 **卓越的架构设计水平**。正是得益于它的辅助，我们才能在短时间内从零构建出如此复杂的 Swarm 架构。这些讨论日志是理解 Agentic AI 设计思路的绝佳资料，强烈推荐阅读。
+特别感谢 **Google Gemini 3 Pro** 惊人的 **1M+ Token 超长上下文能力** 和 **卓越的架构设计水平**。正是得益于它的辅助，我们才能在短时间内从零构建出如此复杂的 Swarm 架构。这些讨论日志是理解 Agentic AI 设计思路的绝佳资料，强烈推荐阅读。
 
 同时也要感谢 **Antigravity** —— 这个极致流畅的 **Vibe Coding IDE**。如果没有它强大的 Agentic 协作能力和无缝的工具集成，我无法如此快速地将这些复杂的想法转化为现实。在这个项目中，Antigravity 不仅仅是一个编辑器，更是我的 Pair Programmer。
 
@@ -109,32 +109,35 @@ cmd /c set PYTHONIOENCODING=utf-8 && python -m src.adk_agent.main_web_start_stee
 这将启动标准版 Ciri Agent (默认端口 9000)。
 
 ### 4. 启动 Swarm 集群 (推荐)
-我们提供了一个一键启动脚本，会自动启动 1 个 Head Leader 和 4 个 Worker 节点：
+我们提供了一个一键启动脚本，会自动配置完整的 Swarm 环境。该脚本执行以下操作：
+1. 清理旧的 `swarm_registry.db`，确保全新的会话。
+2. 在 **8000** 端口启动 **1 个编排节点 (Leader)**。
+3. 并行在 **8001 - 8004** 端口启动 **4 个独立的工作节点 (Worker)**。
 
 ```cmd
 .\start_demo_swarm.bat
 ```
 
-启动后，访问 **http://localhost:8000** 即可开始体验。
+启动后，访问 **http://localhost:8000** 的 Leader 仪表板，即可开始体验 `agent_team` 的协同威力。
 
 ---
 
 ## 🧩 核心技能详解 (Core Skills Deep Dive)
 
 ### 1. Agent Team (Swarm Orchestrator)
-这是 Ciri 的"指挥官"技能。加载此技能后，Agent 获得指挥整个集群的能力。
+这是 Ciri 的"指挥官"技能。加载此技能后，Agent 获得了无缝指挥整个集群的能力。在通过 `start_demo_swarm.bat` 启动的 Swarm 模式下，`agent_team` 会在活跃的 Worker 端口（8001-8004）之间透明地处理任务分发。
 
 *   **`dispatch_task`**: 将单个复杂任务（如"写一个贪吃蛇游戏"）分派给空闲 Worker。
 *   **`dispatch_batch_tasks`**: 并行分派多个任务（如"同时分析 Apple、Google、Microsoft 的财报"）。
 
 **场景示例**:
 > **User**: "帮我写一个即时通讯软件，包括前端 React 和后端 Python。"
-> **Leader (Ciri)**: 
-> 1. 思考拆解任务。
-> 2. 调用 `dispatch_batch_tasks`:
->    - Worker 8001: "编写 Python FastAPI 后端 websocket 接口"
->    - Worker 8002: "编写 React 聊天页面组件"
-> 3. 收集结果并向用户汇报。
+> **Leader (运行于 8000 端口的 Ciri)**: 
+> 1. 思考并将任务拆解为子任务。
+> 2. 触发 `agent_team` 技能调用 `dispatch_batch_tasks`:
+>    - 分发给空闲 Worker 8001: "编写 Python FastAPI 后端 websocket 接口"
+>    - 分发给空闲 Worker 8002: "编写 React 聊天页面组件"
+> 3. 异步收集执行结果并向用户汇报最终的组合方案，在此过程中保持了 Leader 自身上下文的清爽隔离。
 
 **视频演示**:
 - [Part 1](https://www.youtube.com/watch?v=0zBrTGIcZWg&t=22s)

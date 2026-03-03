@@ -15,7 +15,7 @@
 
 The `MISC/tech_files` directory contains the complete evolution of Ciri from concept to implementation. These are the records of in-depth technical discussions with **Google Gemini 3 Pro**.
 
-Special thanks to **Google Gemini 3 Pro** for its unprecedented **2M+ Token Context Window** and **exceptional architectural design capabilities**. It was instrumental in building this complex Swarm architecture from scratch in such a short time. These discussion logs are invaluable resources for understanding Agentic AI design patterns and are highly recommended for reading.
+Special thanks to **Google Gemini 3 Pro** for its unprecedented **1M+ Token Context Window** and **exceptional architectural design capabilities**. It was instrumental in building this complex Swarm architecture from scratch in such a short time. These discussion logs are invaluable resources for understanding Agentic AI design patterns and are highly recommended for reading.
 
 Also, a huge shoutout to **Antigravity** — the ultimate **Vibe Coding IDE**. Its powerful Agentic collaboration and seamless tool integration made the "from scratch" development process flow like water. In this project, Antigravity was not just an editor, but my true Pair Programmer.
 
@@ -107,32 +107,35 @@ cmd /c set PYTHONIOENCODING=utf-8 && python -m src.adk_agent.main_web_start_stee
 This will start the standard Ciri agent on port 9000 (default).
 
 ### 4. Start Swarm Cluster (Recommended)
-We provide a one-click startup script that automatically launches 1 Head Leader and 4 Worker nodes:
+We provide a one-click startup script that automatically sets up the entire Swarm environment. It performs the following:
+1. Cleans up old `swarm_registry.db` to ensure a fresh session.
+2. Launches **1 Orchestrator Node (Leader)** on port **8000**.
+3. Spawns **4 independent Worker Nodes** on ports **8001 - 8004** in parallel.
 
 ```cmd
 .\start_demo_swarm.bat
 ```
 
-After startup, visit **http://localhost:8000** to start experiencing.
+After startup, visit **http://localhost:8000** for the Leader Dashboard to start experiencing the coordinated power of the `agent_team`.
 
 ---
 
 ## 🧩 Core Skills Deep Dive
 
 ### 1. Agent Team (Swarm Orchestrator)
-The "Commander" skill of Ciri. Loading this skill gives the Agent the ability to command the entire cluster.
+The "Commander" skill of Ciri. Loading this skill gives the Agent the ability to command the entire cluster seamlessly. When exploring the Swarm mode started via `start_demo_swarm.bat`, the `agent_team` handles task delegation transparently across the active worker ports (8001-8004).
 
 *   **`dispatch_task`**: Dispatch a single complex task (e.g., "Write a Snake game") to an idle Worker.
 *   **`dispatch_batch_tasks`**: Parallel dispatch of multiple tasks (e.g., "Simultaneously analyze financial reports of Apple, Google, Microsoft").
 
 **Scenario Example**:
 > **User**: "Help me write an IM software, including React frontend and Python backend."
-> **Leader (Ciri)**: 
-> 1. Breaks down task.
-> 2. Calls `dispatch_batch_tasks`:
->    - Worker 8001: "Write Python FastAPI backend websocket interface"
->    - Worker 8002: "Write React chat page component"
-> 3. Collects results and reports to user.
+> **Leader (Ciri at port 8000)**: 
+> 1. Breaks down task into smaller chunks.
+> 2. Calls `dispatch_batch_tasks` triggering the `agent_team` skill:
+>    - Dispatches to idle Worker 8001: "Write Python FastAPI backend websocket interface"
+>    - Dispatches to idle Worker 8002: "Write React chat page component"
+> 3. Collects results asynchronously and reports the final composed solution to the user, keeping the Leader's context pristine.
 
 **Video Demos**:
 - [Part 1](https://www.youtube.com/watch?v=0zBrTGIcZWg&t=22s)
