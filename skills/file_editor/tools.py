@@ -322,8 +322,9 @@ async def view_local_image(path: str) -> str:
             return f"Error: 文件不存在 {path}"
             
     # 返回纯文本链接 (让前端去渲染)
-    # 这里的 path 建议转义一下，防止空格报错，但在本地环境简单拼接通常也没问题
-    return f"![Image Display](/api/local_image?path={path})"
+    # 对路径进行 URL 编码，解决路径中有空格等特殊字符导致前端无法渲染的问题
+    encoded_path = quote(path)
+    return f"![Image Display](/api/local_image?path={encoded_path})"
 
 
 async def analyze_local_image(path: str) -> List[Dict[str, Any]]:
