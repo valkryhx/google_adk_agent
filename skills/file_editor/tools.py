@@ -327,7 +327,11 @@ async def view_local_image(path: str) -> str:
     return f"![Image Display](/api/local_image?path={encoded_path})"
 
 
-async def analyze_local_image(path: str) -> List[Dict[str, Any]]:
+from google.adk.events.event import Event
+from google.genai import types as genai_types
+from google.adk.tools.tool_context import ToolContext
+
+async def analyze_local_image(path: str, tool_context: ToolContext = None) -> str:
     """
     [Vision Tool] 仅用于让【Agent 你自己】看懂并分析图片内容。
     场景：用户说"图里有什么"、"检查图片是否画错了"、"分析数据趋势"、"提取截图文字"。
@@ -335,57 +339,86 @@ async def analyze_local_image(path: str) -> List[Dict[str, Any]]:
     
     Args:
         path: 图片文件的路径或网络 URL (如 http:// 或 https://)
+        tool_context: (Auto-injected) 工具执行上下文
     """
-    # 如果是网络图片 URL，大多数多模态大语言模型支持直接传入 URL
-    if path.startswith("http://") or path.startswith("https://"):
-        return [
-            {
-                "type": "text", 
-                "text": f"我正在分析网络图片 {path} 的内容..."
-            },
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": path
-                }
-            }
-        ]
+    if not tool_context or not tool_context.session:
+        return "Error: ToolContext or Session is missing. This tool must be called within an active agent session."
 
-    p = Path(path)
-    # 相对路径兼容
-    if not p.is_absolute():
-        p = Path(os.getcwd()) / p
-        
-    if not p.exists():
-        return [{"type": "text", "text": f"Error: 文件 {path} 不存在"}]
-    
-    # 识别 MIME 类型
-    mime_type, _ = mimetypes.guess_type(p)
-    if not mime_type or not mime_type.startswith('image'):
-        # 兜底默认为 png
-        mime_type = 'image/png'
+    import mimetypes
+    import traceback
 
+    # 识别 MIME 类型和加载图片 Part
     try:
-        # 读取并转 Base64
-        with open(p, "rb") as f:
-            b64_data = base64.b64encode(f.read()).decode('utf-8')
+        if path.startswith("http://") or path.startswith("https://"):
+            image_part = genai_types.Part.from_uri(file_uri=path, mime_type="image/jpeg") # Default to jpeg for URIs
+        else:
+            p = Path(path)
+            if not p.is_absolute():
+                p = Path(os.getcwd()) / p
+            if not p.exists():
+                return f"Error: 文件 {path} 不存在"
             
-        # 返回多模态数据结构 (OpenAI/LiteLLM 标准格式)
-        # 注意：这里返回的是 List，Agent 框架会将其作为 content 传入 LLM
-        return [
-            {
-                "type": "text", 
-                "text": f"我已读取图片 {path} 的视觉数据，正在分析其内容..."
-            },
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{mime_type};base64,{b64_data}"
-                }
-            }
-        ]
+            mime_type, _ = mimetypes.guess_type(p)
+            if not mime_type or not mime_type.startswith('image'):
+                mime_type = 'image/png'
+            
+            with open(p, "rb") as f:
+                image_data = f.read()
+            image_part = genai_types.Part.from_bytes(data=image_data, mime_type=mime_type)
+
+        # Prevent multiple injections of the same image in the same turn
+        # We check the events for an existing injection with the same path or image data
+        for event in tool_context.session.events:
+            if event.author == "user" and event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text and f"image from {path}" in part.text:
+                        return f"The image {path} is already in the conversation history above. Please analyze it directly."
+
+        # 构造 Injection Event（注入为 User 消息）
+        # 我们在这里使用更强烈的语气和明确的标记
+        image_event = Event(
+            author="user",
+            invocation_id=tool_context._invocation_context.invocation_id,
+            content=genai_types.Content(
+                role="user",
+                parts=[
+                    genai_types.Part.from_text(text=f"### [USER_ATTACHMENT: IMAGE] ###\nI am providing the image file from: {path}\n\n[IMAGE_CONTENT_START]"),
+                    image_part,
+                    genai_types.Part.from_text(text="[IMAGE_CONTENT_END]\n\nAbove is the image you requested to analyze. Please examine it carefully and provide a detailed analysis based on the actual visual content you see.")
+                ]
+            )
+        )
+
+        # 持久化该事件到 SessionService
+        # 注意：append_event 会将其添加到 events 列表的末尾
+        await tool_context._invocation_context.session_service.append_event(
+            tool_context.session, image_event
+        )
+
+        # 为了满足 LiteLLM 校验（tool_call 必须紧跟 tool_response），
+        # 我们寻找当前工具调用的位置，并将新注入的 user 事件移动到它之前。
+        tool_call_idx = -1
+        for i, event in enumerate(tool_context.session.events):
+            if tool_context.function_call_id and any(fc.id == tool_context.function_call_id for fc in event.get_function_calls()):
+                tool_call_idx = i
+                break
+        
+        # 如果找到了当前的 tool_call 事件，且刚刚 append 的事件在最后，则移动它
+        if tool_call_idx != -1 and tool_context.session.events[-1] == image_event:
+            ev = tool_context.session.events.pop()
+            tool_context.session.events.insert(tool_call_idx, ev)
+            logger_info = f"Successfully injected and PERSISTED image event before tool call for {path}"
+        else:
+            logger_info = f"Appended and PERSISTED image event for {path}"
+        
+        print(logger_info)
+        
+        return f"SUCCESS: The image data for {path} has been PERSISTED to the database and injected as a NEW User Message immediately BEFORE this tool response. ACTION: Please look at the message content titled '### [USER_ATTACHMENT: IMAGE] ###' in your conversation history and use its visual parts to answer the user's request. DO NOT hallucinate based on the filename."
+
     except Exception as e:
-        return [{"type": "text", "text": f"读取图片失败: {str(e)}"}]
+        error_msg = f"Error processing image {path}: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
+        return error_msg
 
 def get_tools(*args, **kwargs) -> List:
     return [file_editor, view_local_image, analyze_local_image]
