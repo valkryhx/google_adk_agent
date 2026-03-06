@@ -1250,19 +1250,18 @@ class SteeringSession:
                     user_id=self.user_id, 
                     session_id=self.session_id
                 )
-                print("\n\n***打印session events***\n===Session History Start===")
+
                 file_logger.info("\n\n***打印session events***\n===Session History Start===")
                 if updated_session and updated_session.events:
                     for event in updated_session.events:
                         if event.content and event.content.parts:
-                            print(f"<{event.author}>: {event.content.parts}")
+
                             file_logger.info(f"<{event.author}>: {event.content.parts}")
                             file_logger.info('=='*10 + '\n')
-                            print('=='*10 + '\n')
+
                 file_logger.info("=" * 60)
-                print("=" * 60)
+
                 file_logger.info("\n\n***打印session events***\n===Session History End===\n")
-                print("\n\n***打印session events***\n===Session History End===\n")
             except Exception as e:
                 print(f"[Warning] Failed to print session history: {e}")
             
