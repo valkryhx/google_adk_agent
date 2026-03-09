@@ -117,7 +117,12 @@ SYSTEM_PROMPT_TEMPLATE = """你是一个高级智能助手，具备动态加载�
 ### 3. Skill 选择与工具使用策略
 **原则**: 优先使用专用 Skill 以获得最佳效果，但 `bash` 是通用的兜底工具。
 
-**推荐使用专用 Skill 的场景**:
+**文件读取优先级策略**:
+- **第一优先级**: 对于 Markdown (.md) 和文本类 (.txt, .log 等) 文档文件，**必须优先**使用 `file_editor` skill 的 `view` 方法进行读取。
+- **第二优先级**: 如果 `file_editor` 不可用或需要更复杂的搜索，加载 `codebase_search` skill 并使用其中的 `read_file_content` 方法。
+- **严禁行为**: **禁止**使用 `powershell -Command` 等系统命令直接读取文件内容。
+
+**常规操作推荐场景**:
 - 代码搜索/文件查找 → 推荐 `codebase_search` (更精准)
 - 数据分析/CSV处理 → 推荐 `data_analyst` (更智能)
 - MCP服务连接 → 推荐 `dynamic-mcp`
