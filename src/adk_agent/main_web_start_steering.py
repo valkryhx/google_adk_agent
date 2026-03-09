@@ -190,6 +190,59 @@ async def heartbeat_daemon():
 
 
 # ==========================================
+# [新增] 安全并发写总索引的后台进程函数
+# ==========================================
+import tempfile
+import shutil
+from filelock import FileLock
+import json
+
+def _sync_safe_update_manifest(lock_path: str, index_path: str, gene_id: str, category: str, gene_data: dict):
+    """
+    负责加锁、读取、合并与原子写入经验索引的同步阻塞函数 (必须交由子线程执行)
+    """
+    with FileLock(lock_path, timeout=10):
+        manifest = {}
+        
+        # 1. 抢到锁后安全读取
+        if os.path.exists(index_path):
+            try:
+                with open(index_path, 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+            except Exception as e:
+                # 灾难熔断与备份防擦除
+                if os.path.getsize(index_path) > 0:
+                    backup_path = f"{index_path}.corrupted.bak"
+                    shutil.copy2(index_path, backup_path)
+                    print(f"[严重警告] L0总索引加载失败: {e} | 已抢救备份旧版本至: {backup_path}")
+                # 放行空字典用于重建，但老数据安全在了 .bak 中
+                manifest = {}
+        
+        # 2. 追加最新经验
+        manifest[gene_id] = {
+            "path": f"{category}/{gene_id}.json",
+            "category": category,
+            "title": gene_data.get("title", ""),
+            "keywords": gene_data.get("keywords", []),
+            "error_regex": gene_data.get("trigger_error_regex", "")
+        }
+        
+        # 3. 原子操作 (Atomic Write)
+        # 先找同级目录建一个隐式同名或后缀临时文件，保文件不出跨区移动问题
+        fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(index_path), text=True)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(manifest, f, ensure_ascii=False, indent=2)
+            
+            # 只有当完整写入 temp 后，再命令 OS 一瞬间做原地替换！
+            os.replace(temp_path, index_path) 
+        except Exception as e:
+            # 写入遇到任何意外，清理临时碎片，绝不玷污原始 index_path
+            shutil.rmtree(temp_path, ignore_errors=True) 
+            raise e
+
+
+# ==========================================
 # [新架构] SteeringSession 类
 # ==========================================
 
@@ -714,27 +767,22 @@ class SteeringSession:
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(capsule, f, ensure_ascii=False, indent=2)
 
-            # C. 更新总索引 (L0 Index) - 极其关键
-            # 采用 Read-Modify-Write 模式
-            manifest = {}
-            if os.path.exists(EXPERIENCE_INDEX_PATH):
-                try:
-                    with open(EXPERIENCE_INDEX_PATH, 'r', encoding='utf-8') as f:
-                        manifest = json.load(f)
-                except Exception:
-                    pass
+            # C. 更新总索引 (L0 Index) - 高级保险丝架构 [异步解耦 + FileLock防覆写 + 原子落盘]
+            lock_path = f"{EXPERIENCE_INDEX_PATH}.lock"
             
-            # 写入索引条目
-            manifest[gene_id] = {
-                "path": f"{category}/{gene_id}.json", # 相对路径指针
-                "category": category,
-                "title": gene_data.get("title"),
-                "keywords": gene_data.get("keywords", []),
-                "error_regex": gene_data.get("trigger_error_regex", "")
-            }
-            
-            with open(EXPERIENCE_INDEX_PATH, 'w', encoding='utf-8') as f:
-                json.dump(manifest, f, ensure_ascii=False, indent=2)
+            # 【优化1：异步解耦】把沉重的阻塞级 I/O 踢到独立线程中运行，保障主体 Event Loop 大量思考并发
+            try:
+                await asyncio.to_thread(
+                    _sync_safe_update_manifest,
+                    lock_path,
+                    EXPERIENCE_INDEX_PATH,
+                    gene_id,
+                    category,
+                    gene_data
+                )
+            except Exception as update_err:
+                _log(f"经验更新落地最终阶段异常: {update_err}")
+                # 这里不抛异常阻断外面，只记录错误
             
             _log(f"经验已归档: [{category}] {file_path}")
             _log(f"  标题: {gene_data.get('title')}")
@@ -1233,7 +1281,18 @@ class SteeringSession:
             self._current_session = None
 
             # ==========================================
-            # [新增] 触发后台提取 (使用内存快照，Fire-and-Forget 模式)
+            # [新增] 1. 触发实时流式记忆落盘 (黑匣子机制)
+            # 无视任务是否中断，只要有数据，立刻写进 Markdown 档案
+            # 传入的 events_snapshot 是防篡改的独立快照
+            # ==========================================
+            if task or events_snapshot:
+                # Fire-and-Forget 异步执行，不阻塞主线程退出
+                asyncio.create_task(
+                    self._archive_turn_to_memory(task, events_snapshot, images)
+                )
+
+            # ==========================================
+            # [已有] 2. 触发后台提取 (使用内存快照，Fire-and-Forget 模式)
             # 只要本轮产生了有效的交互 (>=3条)，就启动后台分析。
             # 传入 events_snapshot 而非 session.events，对抗 Compact/Rewind 影响。
             # ==========================================
@@ -1267,6 +1326,177 @@ class SteeringSession:
             
             if was_interrupted:
                 print(f"\n🛑 [System] 任务已停止 (Interrupted by User)")
+
+    async def _archive_turn_to_memory(self, user_task: str, events_snapshot: list, images: list = None):
+        """
+        [新增] 实时流式落盘 (黑匣子机制) - Swarm 并发安全版
+        纯 Append-Only 模式，无视框架上下文压缩，保留最完整的原生记录。
+        """
+        import os
+        import json
+        from datetime import datetime
+        from filelock import FileLock
+        
+        try:
+            now = datetime.now()
+            month_str = now.strftime("%Y-%m")
+            date_str = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M:%S")
+            
+            # 1. 确定物理路径 (按三元组严格隔离，天然免疫跨角色冲突)
+            _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            memory_dir = os.path.join(_PROJECT_ROOT, "memory_archive", self.user_id, month_str)
+            os.makedirs(memory_dir, exist_ok=True)
+            
+            safe_app_name = self.app_name.replace("/", "_").replace("\\", "_")
+            filename = f"{date_str}_{safe_app_name}_{self.session_id}.md"
+            filepath = os.path.join(memory_dir, filename)
+            
+            is_new_file = not os.path.exists(filepath)
+            
+            # 2. 在内存中完成字符串拼接 (极大减少持有锁的时间)
+            buffer = []
+            
+            # --- [A] 如果是新文件，写入 L0 索引头 (YAML) ---
+            if is_new_file:
+                buffer.append("---\n")
+                buffer.append(f"user_id: {self.user_id}\n")
+                buffer.append(f"app_name: {self.app_name}\n")
+                buffer.append(f"session_id: {self.session_id}\n")
+                buffer.append(f"created_at: {now.isoformat()}\n")
+                if self._current_session and hasattr(self._current_session, 'state') and self._current_session.state:
+                    state = self._current_session.state
+                    if 'task_type' in state: buffer.append(f"task_type: {state['task_type']}\n")
+                    if 'title' in state: buffer.append(f"title: {state['title']}\n")
+                buffer.append("---\n\n")
+            
+            # --- [B] 写入本轮 User 输入 ---
+            buffer.append(f"<user time=\"{time_str}\">\n")
+            buffer.append(f"{user_task.strip() if user_task else ''}\n")
+            if images:
+                buffer.append(f"(attached {len(images)} image(s))\n")
+            buffer.append("</user>\n\n")
+            
+            # --- [C] 遍历快照，写入 Agent 动作 ---
+            # [去重策略] 基于诊断数据确定的 ADK 事件结构：
+            # - partial=True  -> 流式碎片 -> 跳过
+            # - partial=False -> 累加式完整事件 -> 处理
+            # - partial=None  -> 工具返回事件 -> 处理
+            last_role = None
+            in_thought_stream = False
+            agent_tag_open = False
+
+            for evt in events_snapshot:
+                # 核心去重：跳过所有流式碎片
+                if getattr(evt, 'partial', False) is True:
+                    continue
+
+                role = getattr(evt, 'author', 'Ciri')
+                if hasattr(evt, 'content') and evt.content and hasattr(evt.content, 'role'):
+                    role = evt.content.role
+
+                # 跳过 user 角色（由 B 阶段处理原生输入）
+                # 但不能跳过工具返回事件（ADK 中 function_response 的 content.role='user'）
+                if role == 'user':
+                    has_func_response = False
+                    if hasattr(evt, 'content') and evt.content and hasattr(evt.content, 'parts'):
+                        for _p in evt.content.parts:
+                            if hasattr(_p, 'function_response') and _p.function_response:
+                                has_func_response = True
+                                break
+                    if not has_func_response:
+                        continue
+
+                # 获取 parts
+                evt_parts = []
+                if hasattr(evt, 'content') and evt.content and hasattr(evt.content, 'parts'):
+                    evt_parts = evt.content.parts
+                
+                if not evt_parts:
+                    continue
+
+                # 角色切换时，关闭旧标签、开启新标签
+                if role != last_role:
+                    if in_thought_stream:
+                        buffer.append("\n</thought>\n")
+                        in_thought_stream = False
+                    if agent_tag_open:
+                        buffer.append("</agent>\n\n")
+                    agent_role = role if role != 'user' else 'system'
+                    buffer.append(f"<agent role=\"{agent_role}\" time=\"{time_str}\">\n")
+                    agent_tag_open = True
+                    last_role = role
+
+                # 渲染 Parts（thought 流感知合并）
+                for part in evt_parts:
+                    # 1. 文本 (含 Thought 流合并)
+                    if hasattr(part, 'text') and part.text:
+                        is_thought = getattr(part, 'thought', False)
+                        
+                        if is_thought:
+                            if not in_thought_stream:
+                                buffer.append("<thought>\n")
+                                in_thought_stream = True
+                            buffer.append(part.text)
+                        else:
+                            if in_thought_stream:
+                                buffer.append("\n</thought>\n")
+                                in_thought_stream = False
+                            buffer.append(f"{part.text.strip()}\n")
+                        
+                    # 2. 工具调用 (Function Call)
+                    if hasattr(part, 'function_call') and part.function_call:
+                        if in_thought_stream:
+                            buffer.append("\n</thought>\n")
+                            in_thought_stream = False
+                        fc = part.function_call
+                        tool_name = getattr(fc, 'name', 'unknown')
+                        args_dict = dict(fc.args) if hasattr(fc, 'args') else {}
+                        buffer.append(f"<tool_call name=\"{tool_name}\">\n")
+                        buffer.append(json.dumps(args_dict, indent=2, ensure_ascii=False) + "\n")
+                        buffer.append("</tool_call>\n")
+                        
+                    # 3. 工具结果 (Function Response)
+                    if hasattr(part, 'function_response') and part.function_response:
+                        if in_thought_stream:
+                            buffer.append("\n</thought>\n")
+                            in_thought_stream = False
+                        fr = part.function_response
+                        tool_name = getattr(fr, 'name', 'unknown')
+                        resp_val = getattr(fr, 'response', {})
+                        if hasattr(resp_val, 'items'):
+                            resp_dict = dict(resp_val)
+                        else:
+                            resp_dict = {"result": str(resp_val)}
+                        buffer.append(f"<tool_result name=\"{tool_name}\">\n")
+                        buffer.append(json.dumps(resp_dict, indent=2, ensure_ascii=False) + "\n")
+                        buffer.append("</tool_result>\n")
+
+            # 关闭残留标签
+            if in_thought_stream:
+                buffer.append("\n</thought>\n")
+            if agent_tag_open:
+                buffer.append("</agent>\n\n")
+
+
+            # 3. 终极并发保护：使用 FileLock 执行极速落盘
+            # 锁的文件名与 Markdown 文件强绑定，不影响其他 Session 的并发写入
+            lock_path = filepath + ".lock"
+            with FileLock(lock_path, timeout=5):
+                with open(filepath, "a", encoding="utf-8") as f:
+                    f.write("".join(buffer))
+            
+            # 写入完成后清理 .lock 文件（不影响保护功能，下次写入时会自动重建）
+            try:
+                os.remove(lock_path)
+            except OSError:
+                pass
+                    
+            print(f"[Memory] 实时快照已安全落盘至: {filename}")
+
+            
+        except Exception as e:
+            print(f"[Memory] 实时流式落盘异常: {e}")
     
     async def _auto_compact_session(self, session):
         """自动压缩会话历史（内部方法）"""
