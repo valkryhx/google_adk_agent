@@ -156,8 +156,9 @@ async def dispatch_task(
     _original_user_id: str = "unknown",  # 传递原始人类用户 ID
     _meeting_context: dict = None  # hold_meeting 透传的轮次/角色信息
 ) -> str:
-    print(f"[DEBUG] dispatch_task called. reporter type: {type(_status_reporter)}")
-    print(f"[DEBUG] dispatch_task called with reporters={_status_reporter}")
+    # [防御] LLM 可能把 _status_reporter 当普通参数传入字符串，必须校验
+    if not callable(_status_reporter):
+        _status_reporter = None
     # [New] 非侵入式打标：通过 status_reporter 发送信号
     if _status_reporter:
         try:
@@ -300,7 +301,7 @@ async def dispatch_task(
                             else:
                                 # 如果是随机分配，那就找下一个人
                                 print(f"[Swarm] Worker {worker_port} 正忙，尝试下一个...")
-                                report('fail', {"worker_port": worker_port, "session_id": use_session_id, "error": "Worker busy"})
+                                report('retry', {"worker_port": worker_port, "session_id": use_session_id, "retry_reason": "Worker busy"})
                                 break # 跳出重试，尝试下一个 candidate
 
                         # === 场景 B: 连接成功 (200) ===
@@ -658,6 +659,9 @@ async def dispatch_batch_tasks(
         return_structured (bool): 内部参数。True 时返回结构化列表，供 hold_meeting 等上层工具使用。
     """
     
+    # [防御] LLM 可能把 _status_reporter 当普通参数传入字符串，必须校验
+    if not callable(_status_reporter):
+        _status_reporter = None
     # [New] 非侵入式打标：通过 status_reporter 发送信号
     if _status_reporter:
         try:
@@ -746,6 +750,10 @@ async def hold_meeting(
         participant_count (int): 每轮参会 Worker 数量，默认 3。
         max_rounds (int): 最大讨论轮数，默认 5。防止无限循环。
     """
+    # [防御] LLM 可能把 _status_reporter 当普通参数传入字符串，必须校验
+    if not callable(_status_reporter):
+        _status_reporter = None
+
     print(f"\n[Swarm Meeting] === 会议启动 ===")
     print(f"[Swarm Meeting] 议题: {topic}")
     print(f"[Swarm Meeting] 每轮参会者: {participant_count}, 最大轮数: {max_rounds}")
@@ -1556,56 +1564,80 @@ def get_tools(agent, session_service, app_info, status_reporter=None, **kwargs):
     # 获取原始人类用户 ID
     original_user_id = app_info.get("user_id", "unknown") if app_info else "unknown"
     
-    # 使用 partial 注入 status_reporter 和 original_user_id，同时保持其他参数的灵活性
-    # 注意：agent 调用时只会传它认识的参数（task_instruction等），
-    # _status_reporter 和 _original_user_id 必须作为 keyword argument 预先绑定。
+    # [关键修复] 使用闭包 wrapper 替代 functools.partial
+    # 原因：functools.partial 绑定的 _status_reporter 会被 LLM 调用时传入的
+    # 同名参数（如 _status_reporter="{}"）覆盖，导致 'str' object is not callable。
+    # 闭包 wrapper 在内部强制注入内部参数，LLM 传什么都无法覆盖。
     
-    dt = functools.partial(
-        dispatch_task, 
-        _status_reporter=status_reporter,
-        _original_user_id=original_user_id
-    )
-    dbt = functools.partial(
-        dispatch_batch_tasks, 
-        _status_reporter=status_reporter,
-        _original_user_id=original_user_id
-    )
-    
-    # 恢复原函数的元数据，以便 Agent 能够正确识别工具说明
+    # --- dispatch_task wrapper ---
+    async def dt(task_instruction, context_info="", target_port=None,
+                 sub_session_id=None, priority="NORMAL", **kwargs):
+        # 强制使用闭包捕获的内部参数，忽略 LLM 可能传入的 _status_reporter 等
+        return await dispatch_task(
+            task_instruction=task_instruction,
+            context_info=context_info,
+            target_port=target_port,
+            sub_session_id=sub_session_id,
+            priority=priority,
+            _status_reporter=status_reporter,
+            _original_user_id=original_user_id,
+            _meeting_context=kwargs.get("_meeting_context")
+        )
     dt.__name__ = "dispatch_task"
     dt.__doc__ = dispatch_task.__doc__
     functools.update_wrapper(dt, dispatch_task)
     
+    # --- dispatch_batch_tasks wrapper ---
+    async def dbt(tasks, common_context="", priority="NORMAL",
+                  return_structured=False, **kwargs):
+        return await dispatch_batch_tasks(
+            tasks=tasks,
+            common_context=common_context,
+            priority=priority,
+            return_structured=return_structured,
+            _status_reporter=status_reporter,
+            _original_user_id=original_user_id,
+            _meeting_context=kwargs.get("_meeting_context")
+        )
     dbt.__name__ = "dispatch_batch_tasks"
     dbt.__doc__ = dispatch_batch_tasks.__doc__
     functools.update_wrapper(dbt, dispatch_batch_tasks)
     
-    # sync_task_context 工具
-    stc = functools.partial(
-        sync_task_context,
-        _session_service=session_service,
-        _app_info=app_info
-    )
+    # --- sync_task_context wrapper ---
+    async def stc(reason="", target_ports=None, session_id=None, **kwargs):
+        return await sync_task_context(
+            reason=reason,
+            target_ports=target_ports,
+            session_id=session_id,
+            _session_service=session_service,
+            _app_info=app_info
+        )
     stc.__name__ = "sync_task_context"
     stc.__doc__ = sync_task_context.__doc__
     functools.update_wrapper(stc, sync_task_context)
 
-    # [新增] hold_meeting 工具
-    hm = functools.partial(
-        hold_meeting,
-        _status_reporter=status_reporter,
-        _original_user_id=original_user_id
-    )
+    # --- hold_meeting wrapper ---
+    async def hm(topic, participant_count=3, max_rounds=5, **kwargs):
+        return await hold_meeting(
+            topic=topic,
+            participant_count=participant_count,
+            max_rounds=max_rounds,
+            _status_reporter=status_reporter,
+            _original_user_id=original_user_id
+        )
     hm.__name__ = "hold_meeting"
     hm.__doc__ = hold_meeting.__doc__
     functools.update_wrapper(hm, hold_meeting)
 
-    # [新增] deep_think 慢思考工具
-    dpt = functools.partial(
-        deep_think,
-        _status_reporter=status_reporter,
-        _original_user_id=original_user_id
-    )
+    # --- deep_think wrapper ---
+    async def dpt(task_instruction, m_paths=3, n_rounds=3, **kwargs):
+        return await deep_think(
+            task_instruction=task_instruction,
+            m_paths=m_paths,
+            n_rounds=n_rounds,
+            _status_reporter=status_reporter,
+            _original_user_id=original_user_id
+        )
     dpt.__name__ = "deep_think"
     dpt.__doc__ = deep_think.__doc__
     functools.update_wrapper(dpt, deep_think)

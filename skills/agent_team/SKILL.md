@@ -31,6 +31,12 @@ description: Enables the agent to act as a Swarm Leader, dispatching tasks to re
     *   **原因**: 需要多个 Worker 围绕一个议题进行多轮观点碰撞，最终形成共识或对比报告。
     *   *示例*: "让大家讨论一下用 Python 还是 Go 写爬虫" -> `hold_meeting(topic="Python vs Go 爬虫系统选型")` (correct)
     *   *反例*: 连续调用 `dispatch_task` 让各个 Worker 分别发表意见 -> 无法形成多轮交互讨论 (wrong)
+
+> **⛔ 严禁传入内部参数 (NEVER pass internal parameters)**
+> 所有以下划线 `_` 开头的参数（如 `_status_reporter`、`_original_user_id`、`_meeting_context`）均为**系统内部自动注入**的参数，**严禁**在调用时手动传入。
+> 传入这些参数会导致系统异常（如 `'str' object is not callable`）。
+> 你只需要传递文档中明确列出的业务参数（如 `tasks`、`common_context`、`topic` 等）。
+
 ### `dispatch_task`
 这是你指挥千军万马的唯一令牌。它可以将任何自然语言描述的任务发送给集群中的空闲节点。
 

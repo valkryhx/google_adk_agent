@@ -575,6 +575,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 details.open = true; // 失败时自动展开看原因
             }
         }
+
+        // 5. Retry: 标记跳过（节点忙碌，正在切换到其他节点）
+        if (subType === 'retry') {
+            card.classList.remove('running');
+            card.classList.add('skipped');
+            meta.textContent = data.retry_reason || 'Skipped';
+            icon.innerHTML = '<span class="material-symbols-outlined">swap_horiz</span>';
+            // 不自动展开日志（与 fail 不同），因为这不是真正的错误
+        }
     }
 
     function markSwarmTasksFinished(msgId) {

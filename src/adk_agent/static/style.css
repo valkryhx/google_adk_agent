@@ -891,6 +891,16 @@ details[open] .tool-header {
     color: #ea4335;
 }
 
+.swarm-card.skipped {
+    border-left: 4px solid #9aa0a6;
+    /* Grey - 跳过/忙碌 */
+    opacity: 0.7;
+}
+
+.swarm-card.skipped .swarm-status-icon {
+    color: #9aa0a6;
+}
+
 
 .swarm-task-preview {
     font-size: 12px;
