@@ -67,6 +67,25 @@ description: 专门针对记忆归档库的 L0(广度扫描) 到 L2(精准读取
 2. **执行 L2 `read_memory`**
    - 找到目标行后，放大读取前后 50 行为自己重建上下文。
 
+### 场景三：跨节点协同协作追踪 (Swarm Tracing)
+**核心认知：主辅日志的“单向索引”关系**
+在 Swarm 架构中，Worker（子节点）的日志文件名与主 Agent（主节点）的日志文件名通过 **Session ID** 和 **时间戳** 关联：
+- **主节点日志** (如 `2026-03-10_dynamic_expert_session_{timestamp}_{random_id}.md`)：记录任务的分派（`hold_meeting`/`dispatch`）和结论。
+- **Worker日志** (如 `2026-03-10_swarm_from_8000_sub_{sub_session_id}.md`)：记录具体执行步骤和原始内容。
+**注意**：主被动文件名无直接字符串包含关系，主日志是“索引”，Worker 日志是“详情”。没有主日志中的 `sub_xxx` ID，很难猜出 Worker 日志归属。
+
+**追踪目标**：查询曾经分配给子节点的复杂任务执行细节。
+
+1. **Step 1: 在主日志中“抓钩子”**
+   - 阅读主控节点日志（例如某个 `dynamic_expert_session` 文件）。
+   - 寻找 `dispatch_batch_tasks` 或派发动作，搜索发现类似 `session_id: sub_0d78f570`。
+2. **Step 2: 用“钩子”钓出 Worker 日志 (进行 L0 `search_memory`)**
+   - 把找到的子会话 ID 作为唯一关键词发起新一轮搜索。
+   - 调用：`search_memory(pattern="sub_0d78f570", user_id="user123")`
+   - 系统会精准定位到 `2026-03-10_swarm_from_8000_sub_0d78f570.md`。
+3. **Step 3: 执行 L2 `read_memory` 深入子节点日志**
+   - 调用：`read_memory(file_path="2026-03-10_swarm_from_8000_sub_0d78f570.md", ...)` 查阅 Worker 具体做了什么。
+
 ---
 
 ## 限制与守则
