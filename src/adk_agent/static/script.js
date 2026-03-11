@@ -543,7 +543,15 @@ document.addEventListener('DOMContentLoaded', () => {
         // 2. Chunk: 追加日志
         if (subType === 'chunk') {
             if (terminal) {
-                terminal.textContent += data.content;
+                // 对于 OpenCode，由于后端已经在 accumulated_text 里累加了，这里如果一直是 += 会导致文本重复或者太长
+                // 需要区分是否是 OpenCode。或者后端改了，前端就用赋值。
+                // 既然我们在工具里做了 += 累加，前端应该用 = （直接覆盖）。但是之前的 Swarm 任务可能是片段流。
+                // 为了兼容，如果内容是包含前面内容的累加字符串，前端用 = 替换。
+                if (data.worker_port === 'opencode') {
+                    terminal.textContent = data.content;
+                } else {
+                    terminal.textContent += data.content;
+                }
                 // 自动滚动到底部
                 terminal.scrollTop = terminal.scrollHeight;
 
@@ -593,6 +601,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!msgEl) return;
         const runningCards = msgEl.querySelectorAll('.swarm-card.running');
         runningCards.forEach(card => {
+            // [Fix] Do not mark OpenCode background tasks as disconnected prematurely
+            const workerIdEl = card.querySelector('.swarm-worker-id');
+            if (workerIdEl && workerIdEl.textContent.includes('opencode')) {
+                return; // Skip this card, let it finish via its own background thread events
+            }
+
             card.classList.remove('running');
             // 如果没有明确 failed，就默认为 done? 或者 stopped?
             // 还是保持 running 状态说明连接断了？

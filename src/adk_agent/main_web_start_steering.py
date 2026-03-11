@@ -279,6 +279,13 @@ class SteeringSession:
         
         # [新特性] 旁路事件流队列 (用于 Swarm 实时状态汇报)
         self.stream_queue = asyncio.Queue()
+        
+        # 获取事件循环以供跨线程调用
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+
         self._current_session = None # [New] 跟踪当前正在执行任务的 Session 对象
 
         # 创建会话专属的 Agent（内部会创建自己的 compactor）
@@ -304,7 +311,14 @@ class SteeringSession:
             "sub_type": event_type, # init, chunk, finish, fail
             "data": payload
         }
-        # 使用 put_nowait 防止工具被阻塞，如果队列满了(极其罕见)则丢弃或报错
+        # 使用 call_soon_threadsafe 确保跨线程调用的安全性
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._safe_put_event, event, event_type)
+        else:
+            self._safe_put_event(event, event_type)
+
+    def _safe_put_event(self, event, event_type):
+        print(f"[SteeringSession] 🎯 safe_put_event executed for: {event_type}")
         try:
             self.stream_queue.put_nowait(event)
         except asyncio.QueueFull:

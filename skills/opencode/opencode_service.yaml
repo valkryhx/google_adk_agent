@@ -1,0 +1,7 @@
+# OpenCode 服务配置 (支持热加载)
+# 每次启动 opencode server 后，将对应的 http 端口配置在此处即可
+opencode_base_url: "http://127.0.0.1:4096"
+
+# 强制指定的引擎 (避免使用失效的 connected 服务)
+opencode_provider: "jiutian" #"nvidia-qwen35-122b"
+opencode_model: "jiutian-lan-35b" #"qwen/qwen3.5-397b-a17b"
