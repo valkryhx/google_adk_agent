@@ -135,13 +135,32 @@ def get_tools(*args, **kwargs) -> List:
             status_reporter("chunk", {"content": f"[OpenCode 运行轨迹]\n\n", "worker_port": "opencode", "session_id": session.id})
             
         def background_opencode_task():
+            # [Fix] 作用域提升：将轨迹内容存入 context 字典，以便主线程在任务结束后能获取并合并结果
+            shared_context = {"accumulated_text": "[OpenCode 运行轨迹]\n\n"}
+            
             try:
                 import threading
                 is_finished = threading.Event()
                 
+                def get_attr_robust(obj, attr, default=None):
+                    """鲁棒地获取属性：支持对象属性访问、字典访问和 Vars 访问"""
+                    if obj is None: return default
+                    # 1. 直接属性访问
+                    if hasattr(obj, attr):
+                        return getattr(obj, attr, default)
+                    # 2. 字典访问 (如果 obj 是 dict)
+                    if isinstance(obj, dict):
+                        return obj.get(attr, default)
+                    # 3. 字典访问 (如果 obj 内部有 __dict__)
+                    if hasattr(obj, "__dict__"):
+                        return obj.__dict__.get(attr, default)
+                    return default
+
                 def event_listener():
                     try:
-                        accumulated_text = ""
+                        # [Fix] 维护各 part 的已知长度，以精确计算 updated 事件的增量
+                        part_lengths = {}
+                        
                         for event in client.event.list():
                             if is_finished.is_set():
                                 break
@@ -152,41 +171,53 @@ def get_tools(*args, **kwargs) -> List:
                                     status_reporter("fail", {"error": "强制中断了 OpenCode 执行", "worker_port": "opencode", "session_id": session.id})
                                 break
 
-                            if hasattr(event, "properties"):
-                                event_session_id = getattr(event.properties, "session_id", None)
-                                # [BUG FIX] 经过排查发现由于某些 SDK 或模型 (比如 jiutian 和 qwen3.5)，它的 Server-Sent Event 并不会透传所属的 session_id（始终为 None）
-                                # 因此，强制校验 session_id == session.id 会导致所有内容被拦截。我们放宽这个限制，允许 session_id 为 None 的事件。
+                            props = getattr(event, "properties", None)
+                            if props:
+                                event_session_id = get_attr_robust(props, "session_id")
+                                # [BUG FIX] 允许 session_id 为 None 的事件透传 (针对 jiutian/qwen 等引擎)
                                 if event_session_id == session.id or event_session_id is None:
-                                    if "message" in event.type or "session" in event.type:
-                                        try:
-                                            props_dict = vars(event.properties) if hasattr(event.properties, "__dict__") else dir(event.properties)
-                                            print(f"[EVENT DEBUG] {event.type} -> {props_dict}")
-                                        except Exception as e:
-                                            print(f"[EVENT DEBUG] {event.type} EXCEPTION: {e}")
-                                            
-                                    # 处理各种流事件：qwen 返回 message.part.delta，jiutian 等返回 message.part.updated
-                                    if event.type in ["message.part.delta", "message.part.updated", "message.updated"]:
-                                        txt = ""
-                                        if event.type == "message.part.delta":
-                                            txt = getattr(event.properties, "delta", "")
-                                        elif event.type == "message.part.updated" or event.type == "message.updated":
-                                            # 处理其它变种事件，这里可能藏在 message.text 或者 part.text 中，试着拿 message 或者 part
-                                            part_obj = getattr(event.properties, "part", None)
-                                            if part_obj and hasattr(part_obj, "text"):
-                                                new_text = getattr(part_obj, "text", "")
-                                                # 取增量
-                                                if len(new_text) > len(accumulated_text):
-                                                    txt = new_text[len(accumulated_text):]
+                                    delta_text = ""
+                                    part_id = get_attr_robust(props, "part_id", "default")
+                                    event_type = getattr(event, "type", "")
+                                    
+                                    # 1. 处理流增量事件 (delta)
+                                    if event_type == "message.part.delta":
+                                        delta_text = get_attr_robust(props, "delta", "")
                                         
-                                        if isinstance(txt, str) and txt:
-                                            accumulated_text += txt
-                                            print(f"[OpenCode Stream] {txt}")
-                                            if status_reporter:
-                                                status_reporter("chunk", {"content": accumulated_text, "worker_port": "opencode", "session_id": session.id})
-                                    elif event.type == "session.error":
-                                        err = getattr(event.properties, "error", "Unknown error")
+                                    # 2. 处理全量更新事件 (updated)
+                                    elif "updated" in event_type:
+                                        part_obj = get_attr_robust(props, "part")
+                                        if part_obj:
+                                            # 捕获 text (回复), thought (思考过程), content (某些模型的字段)
+                                            for field in ["text", "thought", "content"]:
+                                                val = get_attr_robust(part_obj, field)
+                                                if isinstance(val, str) and val:
+                                                    key = f"{part_id}_{field}"
+                                                    old_len = part_lengths.get(key, 0)
+                                                    if len(val) > old_len:
+                                                        delta_text += val[old_len:]
+                                                        part_lengths[key] = len(val)
+                                                        
+                                    # 3. 处理工具调用与结果摘要 (捕获多种变体)
+                                    elif ("call" in event_type or "tool_call" in event_type) and ("created" in event_type or "added" in event_type):
+                                        tool_name = get_attr_robust(props, "tool_name") or get_attr_robust(props, "name", "某个动作")
+                                        delta_text = f"\n[动作]: 正在执行 {tool_name}...\n"
+                                        
+                                    elif "tool_result" in event_type and ("created" in event_type or "added" in event_type):
+                                        tool_name = get_attr_robust(props, "tool_name") or get_attr_robust(props, "name", "动作")
+                                        delta_text = f"[结果]: {tool_name} 执行完毕。\n"
+
+                                    if delta_text:
+                                        shared_context["accumulated_text"] += delta_text
+                                        # 实时同步到前端
                                         if status_reporter:
-                                            status_reporter("chunk", {"content": f"[底层报错]: {err}\n", "worker_port": "opencode", "session_id": session.id})
+                                            status_reporter("chunk", {"content": shared_context["accumulated_text"], "worker_port": "opencode", "session_id": session.id})
+                                    
+                                    elif event_type == "session.error":
+                                        err = get_attr_robust(props, "error", "Unknown error")
+                                        if status_reporter:
+                                            shared_context["accumulated_text"] += f"\n[底层报错]: {err}\n"
+                                            status_reporter("chunk", {"content": shared_context["accumulated_text"], "worker_port": "opencode", "session_id": session.id})
                     except Exception as e:
                         print(f"[OpenCode Stream Exception] {e}")
                         import traceback
@@ -207,21 +238,31 @@ def get_tools(*args, **kwargs) -> List:
                 
                 is_finished.set()
 
-                # 构建最终结果
-                final_output = []
+                # 构建最终回复摘要
+                final_parts_text = []
                 if hasattr(response, "parts"):
                     for part in response.parts:
-                        if getattr(part, "type", "") == "text":
-                            final_output.append(f"\n\n[最终回复]:\n{getattr(part, 'text', '')}\n")
-                        elif getattr(part, "type", "") == "tool-call":
-                            tool_name = getattr(part, "tool_name", "unknown")
-                            final_output.append(f"\n[动作]: 调用 {tool_name}\n")
+                        if get_attr_robust(part, "type") == "text":
+                            final_parts_text.append(get_attr_robust(part, "text", ""))
+                        elif get_attr_robust(part, "type") == "tool-call":
+                            tool_name = get_attr_robust(part, "tool_name", "unknown")
+                            final_parts_text.append(f"\n[动作]: 调用 {tool_name}\n")
 
+                final_summary = "".join(final_parts_text)
+                
                 if status_reporter:
-                    # 结束时发送最终结果
-                    status_reporter("chunk", {"content": "".join(final_output), "worker_port": "opencode", "session_id": session.id})
-                    # 变绿
-                    status_reporter("finish", {"message": "OpenCode 任务执行完毕。", "worker_port": "opencode", "session_id": session.id})
+                    # [Fix] 检查轨迹中是否已经包含了 final_summary 的关键内容 (忽略首尾空格)
+                    summary_clean = final_summary.strip()
+                    # 为了防止重复展示又不错过真正的新信息，我们只在摘要足够新且不重复时追加
+                    if summary_clean and summary_clean not in shared_context["accumulated_text"]:
+                        full_content = shared_context["accumulated_text"] + "\n\n[任务完成 - 最终回复]:\n" + final_summary
+                    else:
+                        full_content = shared_context["accumulated_text"]
+                    
+                    # 变绿，并将完整内容填入 finish 消息
+                    status_reporter("chunk", {"content": full_content, "worker_port": "opencode", "session_id": session.id})
+                    status_reporter("finish", {"message": full_content, "worker_port": "opencode", "session_id": session.id})
+
                     
             except Exception as e:
                 err_msg = f"OpenCode 执行期间发生后台崩溃: {str(e)}\n{traceback.format_exc()}"
