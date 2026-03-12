@@ -809,6 +809,33 @@ document.addEventListener('DOMContentLoaded', () => {
                                     ${resultHtml}
                                 </div>`;
 
+                    } else if (block.tool_name === 'opencode_delegate' && block.tool_args) {
+                        // === opencode_delegate History Cards (Simulate Swarm Card) ===
+                        const args = block.tool_args;
+                        const taskPreview = args.prompt ? (args.prompt.substring(0, 50) + '...') : 'OpenCode Task';
+
+                        // Peek next block for result (the full accumulated log)
+                        let resultHtml = '';
+                        if (i + 1 < blocks.length && (blocks[i + 1].type === 'tool_result' || blocks[i + 1].type === 'function_response')) {
+                            const resultBlock = blocks[i + 1];
+                            resultHtml = `<details class="swarm-logs-wrapper" open>
+                                             <summary>Execution Logs (Final)</summary>
+                                             <pre class="swarm-terminal">${resultBlock.content}</pre>
+                                           </details>`;
+                        }
+
+                        html += `<div class="swarm-card success" style="margin: 10px 0;">
+                                    <div class="swarm-card-header">
+                                        <div class="swarm-status-icon"><span class="material-symbols-outlined">code_blocks</span></div>
+                                        <div class="swarm-info">
+                                            <div class="swarm-worker-id">Worker-OpenCode</div>
+                                            <div class="swarm-task-preview" title="${args.prompt}">${taskPreview}</div>
+                                        </div>
+                                        <div class="swarm-meta">Completed</div>
+                                    </div>
+                                    ${resultHtml}
+                                </div>`;
+
                     } else if (block.tool_name === 'dispatch_batch_tasks' && block.tool_args) {
                         const tasks = block.tool_args.tasks || [];
 
