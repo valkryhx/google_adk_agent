@@ -37,6 +37,7 @@ def execute_ripgrep(
             "-A", str(context_lines), 
             "-B", str(context_lines),
             "-m", str(max_results),
+            "--glob", "!NUL",  # 排除 Windows 保留设备名文件
         ]
         
         if ignore_case:
