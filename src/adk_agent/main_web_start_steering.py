@@ -293,6 +293,16 @@ class SteeringSession:
         
         print(f"[SteeringSession] Created session for {self.key}")
     
+    def update_llm_config(self, model: str = None, api_key: str = None, api_base: str = None):
+        """[Dynamic Config] 动态更新会话的 LLM 配置并重启 Agent"""
+        if model: self.config.model = model
+        if api_key: self.config.api_key = api_key
+        if api_base: self.config.api_base = api_base
+        
+        # 重新创建 Agent 以应用新配置
+        print(f"[{self.key}] 正在应用新配置: model={self.config.model}, base={self.config.api_base}")
+        self.agent = self._create_agent()
+
     def report_swarm_event(self, event_type: str, payload: dict):
         """
         供 Tool 调用的回调函数，用于实时汇报 Swarm 状态。
@@ -816,6 +826,19 @@ class SteeringSession:
             task: 用户输入的文本
             images: 可选的 Base64 编码图片列表 (data:image/xxx;base64,...)
         """
+        # [DEBUG] 植入配置快照日志
+        print(f"\n[SteeringSession] 🚀 启动任务执行...")
+        print(f"  - 逻辑配置 (Tag): {self.config.active_model}")
+        print(f"  - 物理模型 (Model): {self.config.model}")
+        print(f"  - API 地址 (Base): {self.config.api_base}")
+        # 安全打印 Key 长度和前后缀以供调试，不泄露真实内容
+        ak = self.config.api_key or ""
+        ak_len = len(ak)
+        ak_debug = f"{ak[:4]}...{ak[-4:]}" if ak_len > 8 else "****"
+        print(f"  - API 密钥 (Key): {ak_debug} (长度: {ak_len})")
+        
+        # 准备会话上下文
+        session_key = (self.app_name, self.user_id, self.session_id)
         was_interrupted = False
         
         # ==========================================
@@ -1936,9 +1959,17 @@ async def run_agent(task: str, app_name: str, user_id: str, session_id: str, ima
     # 获取或创建会话
     session = session_manager.get_or_create(app_name, user_id, session_id)
     
+    # [DEBUG] 追踪 run_agent 入口
+    print(f"\n[run_agent] 📨 收到请求: task='{task[:20]}...' [Session: {session_id}]")
+    print(f"  - 当前会话配置引用: model={session.config.model}, base={session.config.api_base}")
+
     # 委托给会话实例执行任务
+    count = 0
     async for chunk in session.run_task(task, images=images):
+        count += 1
         yield chunk
+    
+    print(f"[run_agent] ✅ 任务完成，共发送 {count} 个数据块 [Session: {session_id}]")
 
 # ==========================================
 # Web 服务接口
@@ -2039,6 +2070,148 @@ app = FastAPI()
 app.add_middleware(SmartGatekeeperMiddleware)
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 
+class AgentSettings(BaseModel):
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+    config_name: Optional[str] = None # 逻辑配置标签 (如 "DeepSeek-个人")
+    session_id: Optional[str] = None
+
+@app.get("/api/settings")
+async def get_settings_endpoint():
+    try:
+        from src.adk_agent.config import yaml_path
+        import yaml
+        
+        # 加载物理文件获取预设列表
+        presets = {}
+        if os.path.exists(yaml_path):
+            with open(yaml_path, 'r', encoding='utf-8') as f:
+                disk_config = yaml.safe_load(f) or {}
+                # 提取 llm_configs 作为预设
+                if "llm_configs" in disk_config:
+                    for model_id, details in disk_config["llm_configs"].items():
+                        # 对预设中的 API Key 也进行脱敏处理
+                        p_api_key = details.get("api_key")
+                        p_masked_key = ""
+                        if p_api_key:
+                            if len(p_api_key) > 8:
+                                p_masked_key = p_api_key[:4] + "...." + p_api_key[-4:]
+                            else:
+                                p_masked_key = "********"
+                        
+                        # 提取物理模型：优先使用项内的 model 字段，否则使用项名 (model_id)
+                        physical_model = details.get("model", model_id)
+                        
+                        presets[model_id] = {
+                            "model": physical_model,  # 真实的物理模型 ID
+                            "base": details.get("api_base", ""),
+                            "api_key": p_masked_key,   # 返回脱敏后的密钥
+                            "label": model_id          # 显示用的标签名 (即项名)
+                        }
+        
+        # 获取当前活跃配置的脱敏 key
+        curr_api_key = config.api_key
+        masked_key = None
+        if curr_api_key:
+            if len(curr_api_key) > 8:
+                masked_key = curr_api_key[:4] + "...." + curr_api_key[-4:]
+            else:
+                masked_key = "********"
+        
+        print(f"[Settings] Generated presets count: {len(presets)}, labels: {list(presets.keys())}")
+        print(f"[Settings] Returning active_config: {config.active_model}, physical_model: {config.model}")
+                
+        return {
+            "model": config.model,           # 返回当前活跃的物理模型 ID
+            "active_config": config.active_model, # 返回当前活跃的逻辑配置标签
+            "api_base": config.api_base,
+            "api_key": masked_key,
+            "presets": presets # 返回给前端动态渲染
+        }
+    except Exception as e:
+        print(f"[Settings] Fetch settings error: {e}")
+        return {"error": str(e)}
+
+@app.post("/api/settings")
+async def update_settings_endpoint(settings: AgentSettings):
+    # 1. 更新内存中的全局对象 (AgentConfig 现已支持 Setter 进行热更新)
+    # 特别注意：如果提供了 config_name，则模型 active_model 应该设为该名称
+    if settings.config_name:
+        config.active_model = settings.config_name
+        print(f"[Settings] 🚀 已切换活跃配置标签 (Tag): {config.active_model}")
+        
+    if settings.model: 
+        config.model = settings.model
+        print(f"[Settings] 🔄 物理模型 ID 已同步: {config.model}")
+    
+    if settings.api_key:
+        # 如果是掩码，日志里特殊标记一下
+        is_mask = "*" in settings.api_key
+        config.api_key = settings.api_key
+        print(f"[Settings] 🔑 收到 API Key 更新 (掩码模式: {is_mask})")
+
+    if settings.api_base:
+        config.api_base = settings.api_base
+        print(f"[Settings] 🔗 收到 API Base 更新")
+
+    # 2. 持久化到 private_key.yaml (尽量保护注释)
+    try:
+        from src.adk_agent.config import yaml_path
+        import yaml
+        
+        # 读取原有内容以保留结构和字段顺序
+        content = ""
+        if os.path.exists(yaml_path):
+            with open(yaml_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        
+        # 解析为字典进行逻辑更新
+        current_disk_config = yaml.safe_load(content) or {}
+        
+        # 准备模型相关的层级结构
+        if "llm_configs" not in current_disk_config:
+            current_disk_config["llm_configs"] = {}
+        
+        # 关键修复：优先使用逻辑配置标签
+        target_tag = settings.config_name or config.active_model
+        
+        if target_tag:
+            current_disk_config["active_model"] = target_tag
+            if target_tag not in current_disk_config["llm_configs"]:
+                current_disk_config["llm_configs"][target_tag] = {}
+            
+            # 更新特定标签下的参数
+            if settings.model:
+                current_disk_config["llm_configs"][target_tag]["model"] = settings.model.strip()
+            if settings.api_key: 
+                current_disk_config["llm_configs"][target_tag]["api_key"] = settings.api_key.strip()
+            if settings.api_base: 
+                current_disk_config["llm_configs"][target_tag]["api_base"] = settings.api_base.strip()
+            
+            # 写回文件
+            with open(yaml_path, 'w', encoding='utf-8') as f:
+                yaml.dump(current_disk_config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            
+            print(f"[Settings] ✅ 配置已同步至物理文件: {yaml_path} (Tag: {target_tag})")
+        
+    except Exception as e:
+        print(f"[Settings] ⚠️ 配置文件物理同步失败: {e}")
+
+    print(f"[Settings] 内存配置已即时更新: tag={config.active_model}, physical_model={config.model}")
+
+    # 3. 如果指定了 session_id，则尝试更新内存中的活跃会话实例
+    if settings.session_id and session_manager:
+        found = False
+        for key, session in session_manager._sessions.items():
+            if key[2] == settings.session_id:
+                session.update_llm_config(settings.model or config.active_model, settings.api_key, settings.api_base)
+                found = True
+                break
+        if not found:
+            print(f"[Settings] 会话 {settings.session_id} 未在活动列表中，仅更新了全局配置")
+            
+    return {"status": "success", "message": "配置已成功保存并同步"}
 
 class ChatRequest(BaseModel):
     message: str

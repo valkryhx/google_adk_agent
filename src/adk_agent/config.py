@@ -28,17 +28,113 @@ class AgentConfig:
     """Agent 配置类"""
     
     name: str = "Ciri"#"Dynamic_Expert"
-    model: str =yaml_config.get("model") or "openai/qwen3-32b"
+    
+    # 优先从环境变量获取 active_model，其次从 YAML 获取，默认为原有值
+    active_model: str = field(default_factory=lambda: os.environ.get("ACTIVE_MODEL", "阿里-通义-Qwen3-32B"))
+    
+    def __post_init__(self):
+        # 初始化时也加载一次
+        # 如果 active_model 没有被外部强行指定，则从磁盘加载
+        disk_data = self.load_from_disk()
+        if not os.environ.get("ACTIVE_MODEL"):
+            self.active_model = disk_data.get("active_model", self.active_model)
+
+    def load_from_disk(self) -> dict:
+        """实时从磁盘加载 YAML 配置"""
+        try:
+            if os.path.exists(yaml_path):
+                with open(yaml_path, 'r', encoding='utf-8') as f:
+                    return yaml.safe_load(f) or {}
+        except Exception as e:
+            print(f"[Config] 重新加载 private_key.yaml 失败: {e}")
+        return {}
+
+    # model 现作为真实的物理模型 ID 获取器
+    @property
+    def model(self) -> str:
+        # 1. 优先使用用户在当前会话中手动通过 Setter 设置的内存值
+        if hasattr(self, "_mem_model") and self._mem_model:
+            return self._mem_model
+            
+        # 2. 从 llm_configs 中当前激活的标签下获取
+        configs = self.llm_configs
+        if self.active_model in configs:
+            m = configs[self.active_model].get("model")
+            if m: return m
+        # 3. 兜底：将 active_model 视为物理模型 ID
+        return self.active_model
+
+    @model.setter
+    def model(self, value: str):
+        # 仅更新内存中的物理模型 ID，不干扰 active_model 标签
+        self._mem_model = value
+        # 同时为了持久化能找到位置，我们甚至可以考虑在更新时同步更新 llm_configs (内存中)
+
     skills_path: str = os.path.join(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")), "skills")
     
-    # API 配置: 优先环境变量，其次 YAML，无硬编码默认值
-    api_key: Optional[str] = field(default_factory=lambda: os.environ.get("DASHSCOPE_API_KEY", yaml_config.get("api_key")))
-    api_base: Optional[str] = field(default_factory=lambda: os.environ.get("DASHSCOPE_API_BASE", yaml_config.get("api_base")))
+    # 获取 llm_configs
+    @property
+    def llm_configs(self) -> dict:
+        # 为了支持热加载，直从磁盘重新读取
+        return self.load_from_disk().get("llm_configs", {})
+    
+    # API 配置改为动态属性，支持 Setter 以实现内存热更新
+    _api_key: Optional[str] = field(default=None, repr=False)
+    _api_base: Optional[str] = field(default=None, repr=False)
+
+    @property
+    def api_key(self) -> Optional[str]:
+        # 1. 优先使用 Setter 设置的内存值，但要过滤掉脱敏掩码
+        ak = self._api_key
+        if ak and "..." not in ak and "*" not in ak:
+            return ak
+            
+        # 2. 如果内存中是掩码或为空，则从磁盘/环境变量加载真实值
+        real_key = self._get_active_config("api_key")
+        return real_key
+
+    @api_key.setter
+    def api_key(self, value: Optional[str]):
+        self._api_key = value
+
+    @property
+    def api_base(self) -> Optional[str]:
+        # 如果内存里有非空值，优先用内存的
+        if self._api_base: return self._api_base
+        return self._get_active_config("api_base")
+
+    @api_base.setter
+    def api_base(self, value: Optional[str]):
+        self._api_base = value
+    
+    def _get_active_config(self, key: str) -> Optional[str]:
+        """根据当前的 active_model 获取对应的配置项 (api_key/api_base)"""
+        # 1. 检查环境变量 (LLM_API_KEY, LLM_API_BASE)
+        env_val = os.environ.get(f"LLM_{key.upper()}")
+        if env_val: return env_val
+        
+        # 2. 从层级配置 llm_configs 中根据 active_model 获取
+        disk_data = self.load_from_disk()
+        configs = disk_data.get("llm_configs", {})
+        
+        if self.active_model in configs:
+            val = configs[self.active_model].get(key)
+            if val: 
+                # [DEBUG] 追踪密钥查找
+                if "key" in key:
+                    print(f"[Config] 🔑 成功从节点 [{self.active_model}] 获取 {key} (长度: {len(val)})")
+                return val
+            
+        # 3. 兜底：从顶层获取
+        fallback_val = disk_data.get(key)
+        if fallback_val and "key" in key:
+            print(f"[Config] 🔑 成功从 YAML 顶层获取 {key} (长度: {len(fallback_val)})")
+        return fallback_val
     
     extra_body: dict = field(default_factory=lambda: {"enable_thinking": False})
     
     max_retries: int = 3
-    timeout_seconds: int = 300  # Increased timeout from 60s
+    timeout_seconds: int = 300
     max_tool_calls_per_turn: int = 10
     verbose: bool = True
     log_tool_calls: bool = True

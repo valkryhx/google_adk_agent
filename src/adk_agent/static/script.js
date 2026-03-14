@@ -1728,6 +1728,151 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ========================================
+    // Settings Functionality
+    // ========================================
+    function initSettings() {
+        const settingsBtn = document.getElementById('settingsBtn');
+        const settingsModal = document.getElementById('settingsModal');
+        const closeSettings = document.getElementById('closeSettings');
+        const cancelSettings = document.getElementById('cancelSettings');
+        const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+        const modelPreset = document.getElementById('modelPreset');
+
+        if (!settingsBtn) return;
+
+        settingsBtn.addEventListener('click', openSettings);
+        closeSettings.addEventListener('click', () => settingsModal.classList.remove('visible'));
+        cancelSettings.addEventListener('click', () => settingsModal.classList.remove('visible'));
+
+        saveSettingsBtn.addEventListener('click', saveSettings);
+        modelPreset.addEventListener('change', handlePresetChange);
+
+        // Click outside to close
+        settingsModal.addEventListener('click', (e) => {
+            if (e.target === settingsModal) settingsModal.classList.remove('visible');
+        });
+    }
+
+    let currentPresets = {}; // 全局变量存储从后端获取的预设
+
+    async function openSettings() {
+        const settingsModal = document.getElementById('settingsModal');
+        const settingModel = document.getElementById('settingModel');
+        const settingApiBase = document.getElementById('settingApiBase');
+        const settingApiKey = document.getElementById('settingApiKey');
+        const modelPreset = document.getElementById('modelPreset');
+
+        try {
+            const response = await fetch('/api/settings');
+            const config = await response.json();
+
+            if (config.error) {
+                console.error('Backend error:', config.error);
+                return;
+            }
+
+            // 动态填充预设下拉菜单
+            // 填充预设
+            modelPreset.innerHTML = '<option value="">-- 选择预设模型 --</option>';
+            if (config.presets) {
+                currentPresets = config.presets; // 统一使用全局变量名
+                Object.keys(config.presets).forEach(id => {
+                    const preset = config.presets[id];
+                    const option = document.createElement('option');
+                    option.value = id; // 逻辑标签 (项名)
+                    option.textContent = preset.label || id;
+                    modelPreset.appendChild(option);
+                });
+                console.log('[Settings] Presets loaded:', Object.keys(currentPresets));
+                if (config.active_config) {
+                    modelPreset.value = config.active_config;
+                }
+            }
+
+            settingModel.value = config.model || '';
+            settingApiBase.value = config.api_base || '';
+            settingApiKey.value = '';
+            settingApiKey.placeholder = config.api_key || 'sk-...';
+
+            settingsModal.classList.add('visible');
+        } catch (e) {
+            console.error('Failed to fetch settings:', e);
+            alert('获取设置失败');
+        }
+    }
+
+    async function saveSettings() {
+        const settingsModal = document.getElementById('settingsModal');
+        const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+        const settingModel = document.getElementById('settingModel');
+        const settingApiBase = document.getElementById('settingApiBase');
+        const settingApiKey = document.getElementById('settingApiKey');
+        const modelPreset = document.getElementById('modelPreset');
+
+        const data = {
+            model: settingModel.value.trim(),
+            api_base: settingApiBase.value.trim(),
+            api_key: settingApiKey.value.trim() || undefined,
+            config_name: modelPreset.value, // 修正：必须保存预设标签名，而非物理模型名
+            session_id: getCurrentSessionId()
+        };
+        console.log('[Settings] Saving data package:', data);
+
+        try {
+            saveSettingsBtn.disabled = true;
+            saveSettingsBtn.textContent = '应用中...';
+
+            const response = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (response.ok) {
+                settingsModal.classList.remove('visible');
+                console.log('Settings saved successfully');
+            } else {
+                alert('保存失败');
+            }
+        } catch (e) {
+            console.error('Save settings error:', e);
+            alert('网络请求出错');
+        } finally {
+            saveSettingsBtn.disabled = false;
+            saveSettingsBtn.textContent = '保存并应用';
+        }
+    }
+
+    function handlePresetChange() {
+        const modelPreset = document.getElementById('modelPreset');
+        const settingModel = document.getElementById('settingModel');
+        const settingApiBase = document.getElementById('settingApiBase');
+        const settingApiKey = document.getElementById('settingApiKey');
+
+        const preset = modelPreset.value;
+        console.log('[Settings] Preset changed to:', preset);
+
+        if (preset === '' || preset === 'custom') return;
+
+        // 使用全局变量 currentPresets 查找
+        if (currentPresets && currentPresets[preset]) {
+            const detail = currentPresets[preset];
+            console.log('[Settings] Applying preset detail:', detail);
+            settingModel.value = detail.model || preset;
+            settingApiBase.value = detail.base || '';
+
+            if (detail.api_key) {
+                settingApiKey.value = '';
+                settingApiKey.placeholder = detail.api_key;
+            } else {
+                settingApiKey.placeholder = 'sk-...';
+            }
+        } else {
+            console.warn('[Settings] No detail found for preset:', preset);
+        }
+    }
+
     // 页面加载时初始化
     async function initializePage() {
         // 显示当前用户（调试用）
@@ -1751,6 +1896,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 初始化侧边栏调整大小功能
         initSidebarResize();
+
+        // 初始化设置功能
+        initSettings();
     }
 
     // 初始化侧边栏调整大小功能

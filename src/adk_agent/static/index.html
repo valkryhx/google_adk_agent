@@ -50,7 +50,7 @@
                     <span class="material-symbols-outlined">history</span>
                     <span>活动</span>
                 </div>
-                <div class="nav-item">
+                <div class="nav-item" id="settingsBtn">
                     <span class="material-symbols-outlined">settings</span>
                     <span>设置</span>
                 </div>
@@ -120,6 +120,48 @@
     </div>
     <!-- 手机端侧边栏遮罩 -->
     <div class="mobile-overlay" id="mobileOverlay"></div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>系统设置</h2>
+                <button class="close-btn" id="closeSettings">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <label>模型预设 (Presets)</label>
+                    <select id="modelPreset">
+                        <option value="custom">-- 手动输入 --</option>
+                        <option value="gpt-4o">GPT-4o (OpenAI)</option>
+                        <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                        <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                        <option value="deepseek-chat">DeepSeek V3</option>
+                        <option value="deepseek-reasoner">DeepSeek R1 (Reasoner)</option>
+                        <option value="qwen-plus">Qwen Plus</option>
+                    </select>
+                </div>
+                <div class="setting-group">
+                    <label>模型名称 (Model)</label>
+                    <input type="text" id="settingModel" placeholder="例如: gpt-4o">
+                </div>
+                <div class="setting-group">
+                    <label>API 代理地址 (Base URL)</label>
+                    <input type="text" id="settingApiBase" placeholder="https://api.openai.com/v1">
+                </div>
+                <div class="setting-group">
+                    <label>API 密钥 (API Key)</label>
+                    <input type="password" id="settingApiKey" placeholder="sk-...">
+                    <small style="color: #666; font-size: 11px;">如果不修改，请留空。后端将维持现有配置。</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="secondary-btn" id="cancelSettings">取消</button>
+                <button class="primary-btn" id="saveSettingsBtn">保存并应用</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/script.js?v=1.15"></script>
 </body>
 
