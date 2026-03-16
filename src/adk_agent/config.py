@@ -138,7 +138,20 @@ class AgentConfig:
     max_tool_calls_per_turn: int = 10
     verbose: bool = True
     log_tool_calls: bool = True
-    max_context_tokens: int = 200000  # Default safe limit if dynamic fetch fails
+    @property
+    def max_context_tokens(self) -> int:
+        val = self._get_active_config("max_context_tokens")
+        return int(val) if val is not None else 200000
+
+    @property
+    def warn_turns(self) -> int:
+        val = self._get_active_config("warn_turns")
+        return int(val) if val is not None else 600
+
+    @property
+    def max_turns(self) -> int:
+        val = self._get_active_config("max_turns")
+        return int(val) if val is not None else 700
     
     def validate(self) -> List[str]:
         errors = []

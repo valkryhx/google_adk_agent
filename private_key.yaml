@@ -1,14 +1,35 @@
-
-
-# NOTICE:liteLim needs an openai or vllm prefix before the llm model
+﻿# ==========================================
+# 1. 顶层默认参数 (兼容旧版直接读取)
+# ==========================================
 api_key: "YOUR_API_KEY"
 api_base: "your_llm_api" 
 model: "openai/your_model" 
 
+# 全局自动压缩配置
+warn_turns: 600
+max_turns: 700
+max_context_tokens: 200000
 
 tavily_api_key: "YOUR_API_KEY"
 
-# not need
-#context7_api_key: "YOUR_API_KEY"
+# ==========================================
+# 2. 激活模型参数 (新版特定多账户适配)
+# ==========================================
+active_model: "gemini" 
+
+llm_configs:
+  gemini:
+    model: "gemini-1.5-pro"
+    api_key: "YOUR_GEMINI_API_KEY"
+    api_base: "https://generativelanguage.googleapis.com"
+  openai:
+    model: "openai/gpt-4o"
+    api_key: "YOUR_OPENAI_API_KEY"
+    api_base: "https://api.openai.com/v1"
 
 
+
+
+
+tavily_api_key: "YOUR_API_KEY"
+exa_api_key: "YOUR_API_KEY"

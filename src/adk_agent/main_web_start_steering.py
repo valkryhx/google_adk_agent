@@ -967,12 +967,12 @@ class SteeringSession:
                     session.state['task_type'] = recovered_type
                     await self.session_service.save_session(session)
                     print(f"[系统] 自动恢复 task_type: {recovered_type}")            
-            # === 压缩逻辑 ===
+            # === 自动压缩逻辑 (从配置读取) ===
             turn_count = len(session.events) if session and hasattr(session, 'events') and session.events else 0
             tool_count = len(self.agent.tools) if self.agent.tools else 0
             
-            WARN_TURNS = 600
-            MAX_TURNS = 700
+            WARN_TURNS = self.config.warn_turns
+            MAX_TURNS = self.config.max_turns
             
             if turn_count > WARN_TURNS and turn_count <= MAX_TURNS:
                 print(f"\n[提醒] event个数 ({turn_count}) 超过软阈值 {WARN_TURNS}，建议执行 smart_compact 压缩上下文")
