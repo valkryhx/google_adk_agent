@@ -3,7 +3,7 @@
 # Ciri: An AI Agent from scratch by vibe coding ⚡
 
 
-> **"Vibe Coding" Reimagined.**
+> ** Vibe Coding Reimagined.**
 > 
 > **Ciri** is a modern AI Agent system built entirely from scratch based on the **Google ADK (Agent Development Kit)**.
 > She was created not just to be a powerful assistant, but to **demonstrate the infinite potential of Google ADK**.

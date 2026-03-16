@@ -287,21 +287,34 @@ class SteeringSession:
             self._loop = None
 
         self._current_session = None # [New] 跟踪当前正在执行任务的 Session 对象
+        self._loaded_skills = []  # [Fix] 更改为 list 以严格保持动态技能的物理加载顺序
 
         # 创建会话专属的 Agent（内部会创建自己的 compactor）
         self.agent = self._create_agent()
         
         print(f"[SteeringSession] Created session for {self.key}")
     
-    def update_llm_config(self, model: str = None, api_key: str = None, api_base: str = None):
+    def update_llm_config(self, model: str = None, api_key: str = None, api_base: str = None, active_model: str = None):
         """[Dynamic Config] 动态更新会话的 LLM 配置并重启 Agent"""
+        try:
+            with open(r"d:\git_codes\google_adk_helloworld_git\tmp\debug_steering.log", "a", encoding="utf-8") as f:
+                before_tools = [getattr(t, 'name', getattr(t, '__name__', str(t))) for t in self.agent.tools] if hasattr(self, 'agent') and self.agent else []
+                f.write(f"\n[Debug] 🚀 update_llm_config 触发 | 会话 Key: {self.key}\n")
+                f.write(f"[Debug] 🔄 切换前工具列表 ({len(before_tools)}): {before_tools}\n")
+        except Exception: pass
+        if active_model: self.config.active_model = active_model
         if model: self.config.model = model
         if api_key: self.config.api_key = api_key
         if api_base: self.config.api_base = api_base
         
         # 重新创建 Agent 以应用新配置
-        print(f"[{self.key}] 正在应用新配置: model={self.config.model}, base={self.config.api_base}")
+        print(f"[{self.key}] 正在应用新配置: model={self.config.model}, base={self.config.api_base}, active_tag={self.config.active_model}")
         self.agent = self._create_agent()
+        try:
+            with open(r"d:\git_codes\google_adk_helloworld_git\tmp\debug_steering.log", "a", encoding="utf-8") as f:
+                after_tools = [getattr(t, 'name', getattr(t, '__name__', str(t))) for t in self.agent.tools]
+                f.write(f"[Debug] ✅ 切换后工具列表 ({len(after_tools)}): {after_tools}\n")
+        except Exception: pass
 
     def report_swarm_event(self, event_type: str, payload: dict):
         """
@@ -336,6 +349,19 @@ class SteeringSession:
 
     def _create_agent(self) -> LlmAgent:
         """创建会话专属的 LlmAgent 实例"""
+        # [Fix] 备份旧 agent 里的运行时动态工具集 (如 McpToolset)，防止重启时丢失
+        dynamic_toolsets = []
+        if hasattr(self, 'agent') and self.agent:
+            try:
+                for t in self.agent.tools:
+                    if type(t).__name__ == "McpToolset": # 兼容 dynamic-mcp 产生的副作用工具
+                        dynamic_toolsets.append(t)
+                if dynamic_toolsets:
+                    with open(r"d:\git_codes\google_adk_helloworld_git\tmp\debug_steering.log", "a", encoding="utf-8") as f:
+                        f.write(f"[Debug] 📦 发现并暂存旧运行时的 McpToolset: {len(dynamic_toolsets)} 个\n")
+            except Exception as e:
+                print(f"[SteeringSession] ⚠️ 备份旧工具集失败: {e}")
+
         system_prompt = build_system_prompt(self.config, self.skill_manager.get_discovery_manifests(), user_id=self.user_id)
         
         llm_model = LiteLlm(
@@ -393,6 +419,25 @@ class SteeringSession:
         except Exception as e:
             print(f"[SteeringSession] ⚠️ 加载 search_exp 失败: {e}")
         
+        # [Fix] 恢复之前动态加载的技能
+        if hasattr(self, '_loaded_skills') and self._loaded_skills:
+            try:
+                with open(r"d:\git_codes\google_adk_helloworld_git\tmp\debug_steering.log", "a", encoding="utf-8") as f:
+                    f.write(f"[Debug] 🔄 正在恢复动态技能工具 | _loaded_skills: {self._loaded_skills}\n")
+            except Exception: pass
+            print(f"[SteeringSession] 正在自动恢复动态技能工具: {self._loaded_skills}")
+            for sid in self._loaded_skills:
+                self._load_skill_tools(sid)
+
+        # [Fix] 恢复运行时动态工具集 (McpToolset 副作用工具)
+        if 'dynamic_toolsets' in locals() and dynamic_toolsets:
+            print(f"[SteeringSession] 正在自动迁移运行时动态工具集: {len(dynamic_toolsets)} 个")
+            try:
+                agent.tools.extend(dynamic_toolsets)
+                with open(r"d:\git_codes\google_adk_helloworld_git\tmp\debug_steering.log", "a", encoding="utf-8") as f:
+                    f.write(f"[Debug] 📦 已成功迁移运行时工具集: {len(dynamic_toolsets)} 个\n")
+            except Exception: pass
+
         return agent
     
     async def skill_load(self, skill_id: str) -> str:
@@ -478,6 +523,14 @@ class SteeringSession:
                                         
                 except Exception as e:
                      print(f"Failed to load tools from {tool_file}: {e}")
+        
+        # [Fix] 记录成功加载的技能，排除内置的核心技能
+        if loaded_tools and skill_id not in ('bash', 'search_exp'):
+            if not hasattr(self, '_loaded_skills'):
+                self._loaded_skills = []
+            if skill_id not in self._loaded_skills:
+                self._loaded_skills.append(skill_id)
+
         return loaded_tools
     
     def interruption_guard(self, *args, **kwargs):
@@ -2204,8 +2257,17 @@ async def update_settings_endpoint(settings: AgentSettings):
     if settings.session_id and session_manager:
         found = False
         for key, session in session_manager._sessions.items():
+            try:
+                with open(r"d:\git_codes\google_adk_helloworld_git\tmp\debug_steering.log", "a", encoding="utf-8") as f:
+                    f.write(f"[Settings_Loop] 检查内存会话 Key: {key} | 对比 settings.session_id: {settings.session_id}\n")
+            except Exception: pass
             if key[2] == settings.session_id:
-                session.update_llm_config(settings.model or config.active_model, settings.api_key, settings.api_base)
+                session.update_llm_config(
+                    model=settings.model, 
+                    api_key=settings.api_key, 
+                    api_base=settings.api_base,
+                    active_model=settings.config_name
+                )
                 found = True
                 break
         if not found:
