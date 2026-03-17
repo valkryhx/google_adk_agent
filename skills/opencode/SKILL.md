@@ -21,3 +21,17 @@ description: 自动化的底层自治智能体，专门用于处理复杂的编�
 
 - **优先使用 `file_editor` 的场景**: 当你确切知道要在哪个特定文件中修改哪几行代码时，或者你只需要读取某个文件的内容来回答用户问题。
 - **必须使用 `opencode` 的场景**: 当用户要求开发一个新功能（需要创建多个文件、运行测试、安装依赖），或者需要修复一个你还不完全确定根本原因的复杂 Bug 时。请果断将这种耗时的试错任务委派给本工具！
+
+## 报错提示
+
+- **报错时一定要提示**：如果报错必须向用户提示仔细检查 opencode.json的内容，尤其是该文件的第二行"model": **"provider/model"**配置。**提示用户opencode.json内不能写注释符号//**
+- **正确配置如下：** "model": "nvidia/minimaxai/minimax-m2.5"  或者 "model": "nvidia/qwen/qwen3.5-397b-a17b" 或者 "model": "local-deepseek/deepseek-chat"
+- **报错时必须提示**：让用户检查opencode 服务后台的打印日志，
+```如下很明显就是provider/model配置错误导致的
+  ProviderModelNotFoundError: ProviderModelNotFoundError
+ data: {
+  providerID: "minimaxai",
+  modelID: "minimax-m2.5",
+  suggestions: [],
+},
+```
