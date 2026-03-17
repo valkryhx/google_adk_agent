@@ -1,35 +1,38 @@
-﻿# ==========================================
-# 1. 顶层默认参数 (兼容旧版直接读取)
-# ==========================================
-api_key: "YOUR_API_KEY"
-api_base: "your_llm_api" 
-model: "openai/your_model" 
-
-# 全局自动压缩配置
-warn_turns: 600
+﻿warn_turns: 600
 max_turns: 700
 max_context_tokens: 200000
-
-tavily_api_key: "YOUR_API_KEY"
-
-# ==========================================
-# 2. 激活模型参数 (新版特定多账户适配)
-# ==========================================
-active_model: "gemini" 
-
+active_model: qwen/qwen3.5-122b-a10b
 llm_configs:
-  gemini:
-    model: "gemini-1.5-pro"
-    api_key: "YOUR_GEMINI_API_KEY"
-    api_base: "https://generativelanguage.googleapis.com"
-  openai:
-    model: "openai/gpt-4o"
-    api_key: "YOUR_OPENAI_API_KEY"
-    api_base: "https://api.openai.com/v1"
-
-
-
-
-
-tavily_api_key: "YOUR_API_KEY"
-exa_api_key: "YOUR_API_KEY"
+  jiutian-lan-35b:
+    model: openai/jiutian-lan-35b
+    api_key:"yours"
+    api_base: https://jiutian.10086.cn/largemodel/api/v3
+  nvidia/nemotron-3-super-120b-a12b:
+    model: openai/nvidia/nemotron-3-super-120b-a12b
+    api_key:"yours"
+    api_base: https://integrate.api.nvidia.com/v1/
+  qwen/qwen3.5-397b-a17b:
+    model: openai/qwen/qwen3.5-397b-a17b
+    api_key:"yours"
+    api_base: https://integrate.api.nvidia.com/v1/
+  qwen/qwen3.5-122b-a10b:
+    model: openai/qwen/qwen3.5-122b-a10b
+    api_key:"yours"
+    api_base: https://integrate.api.nvidia.com/v1/
+  stepfun-ai/step-3.5-flash:
+    model: openai/stepfun-ai/step-3.5-flash
+    api_key:"yours"
+    api_base: https://integrate.api.nvidia.com/v1/
+  local-deepseek-chat:
+    model: openai/deepseek-chat
+    api_key:"yours"
+    api_base: http://127.0.0.1:5001/v1
+  local-deepseek-chat-search:
+    model: openai/deepseek-chat-search
+    api_key:"yours"
+    api_base: http://127.0.0.1:5001/v1
+tavily_api_key: "yours"
+exa_api_key: "yours"
+test_api_key: "yours"
+test_api_base: https://integrate.api.nvidia.com/v1/
+test_model: qwen/qwen3.5-122b-a10b
