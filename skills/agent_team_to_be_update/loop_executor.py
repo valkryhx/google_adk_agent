@@ -403,8 +403,12 @@ class LoopExecutor:
                 worker_id = f"{worker_prefix}-{i}"
                 if self.queue.claim_task(task.id, worker_id):
                     print(f"\n  [{worker_id}] 执行: {task.name}")
-                    result = self._execute_task(task)
-                    self.queue.complete_task(task.id)
+                    try:
+                        result = self._execute_task(task)
+                        self.queue.complete_task(task.id)
+                    except Exception as e:
+                        print(f"  [{worker_id}] 任务 {task.id} 执行异常: {e}")
+                        self.queue.fail_task(task.id)
                     self.stats["regular_tasks_completed"] += 1
 
             # 4. 执行就绪的循环组

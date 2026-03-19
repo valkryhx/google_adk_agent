@@ -74,29 +74,29 @@ class Task:
 
     @classmethod
     def from_json(cls, data: dict) -> "Task":
-        """从JSON字典创建任务实例"""
+        """从JSON字典创建任务实例 (增加蛇形和驼峰双向兼容)"""
         return cls(
-            id=data["id"],
-            name=data["name"],
-            description=data["description"],
+            id=data.get("id", ""),
+            name=data.get("name", ""),
+            description=data.get("description", ""),
             status=data.get("status", "pending"),
             owner=data.get("owner"),
-            blocked_by=data.get("blockedBy", []),
-            blocks=data.get("blocks", []),
-            created_at=data.get("createdAt", time.time()),
-            completed_at=data.get("completedAt"),
-            expected_artifacts=data.get("expectedArtifacts", []),
-            verification_commands=data.get("verificationCommands", []),
-            writable_files=data.get("writableFiles", []),
-            read_only_files=data.get("readOnlyFiles", []),
+            blocked_by=data.get("blockedBy", []) or data.get("blocked_by", []),
+            blocks=data.get("blocks", []) or data.get("blocks", []),
+            created_at=data.get("createdAt", time.time()) or data.get("created_at", time.time()),
+            completed_at=data.get("completedAt") or data.get("completed_at"),
+            expected_artifacts=data.get("expectedArtifacts", []) or data.get("expected_artifacts", []),
+            verification_commands=data.get("verificationCommands", []) or data.get("verification_commands", []),
+            writable_files=data.get("writableFiles", []) or data.get("writable_files", []),
+            read_only_files=data.get("readOnlyFiles", []) or data.get("read_only_files", []),
             # Loop fields
-            task_type=data.get("taskType", "regular"),
-            loop_group_id=data.get("loopGroupId"),
-            iteration=data.get("iteration", 0),
-            iteration_status=data.get("iterationStatus", "pending"),
-            max_iterations=data.get("maxIterations", 5),
-            exit_condition=data.get("exitCondition"),
-            loop_exit_result=data.get("loopExitResult")
+            task_type=data.get("taskType", "regular") or data.get("task_type", "regular"),
+            loop_group_id=data.get("loopGroupId") or data.get("loop_group_id"),
+            iteration=data.get("iteration", 0) if "iteration" in data else data.get("iteration", 0),
+            iteration_status=data.get("iterationStatus", "pending") or data.get("iteration_status", "pending"),
+            max_iterations=data.get("maxIterations", 5) if "maxIterations" in data else data.get("max_iterations", 5),
+            exit_condition=data.get("exitCondition") or data.get("exit_condition"),
+            loop_exit_result=data.get("loopExitResult") or data.get("loop_exit_result")
         )
 
     def is_available(self, completed_ids: set) -> bool:

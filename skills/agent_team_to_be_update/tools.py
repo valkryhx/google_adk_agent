@@ -156,6 +156,9 @@ async def dispatch_task(
     _original_user_id: str = "unknown",  # 传递原始人类用户 ID
     _meeting_context: dict = None  # hold_meeting 透传的轮次/角色信息
 ) -> str:
+    # === [去中心化架构] 该函数已废弃且熔断禁用！ ===
+    raise NotImplementedError("dispatch_task is fully disabled. Please use task_create instead.")
+
     # [防御] LLM 可能把 _status_reporter 当普通参数传入字符串，必须校验
     if not callable(_status_reporter):
         _status_reporter = None
@@ -334,6 +337,15 @@ async def dispatch_task(
                                     elif chunk_type == "thought":
                                         # 思考过程，跳过不收集
                                         pass
+                                    elif chunk_type == "error":
+                                        # 遇到内部错误 chunk，说明任务执行失败
+                                        print(f"[Swarm] Worker {worker_port} 内部异常: {content}")
+                                        report('fail', {
+                                            "worker_port": worker_port, 
+                                            "session_id": use_session_id, 
+                                            "error": content
+                                        })
+                                        return f"【调度失败】Worker {worker_port} 内部异常: {content}"
                                     
                                     # [Report] 实时流 (Chunk) - 所有有内容的 chunk 都汇报
                                     if content and chunk_type in ("text", "tool_result"):
@@ -646,6 +658,9 @@ async def dispatch_batch_tasks(
     _original_user_id: str = "unknown",
     _meeting_context: dict = None  # hold_meeting 透传的轮次/角色信息
 ) -> Union[str, List[dict]]:
+    # === [去中心化架构] 该函数已废弃且熔断禁用！ ===
+    raise NotImplementedError("dispatch_batch_tasks is fully disabled. Please use task_create instead.")
+
     """
     【并发加速】同时向集群分发多个并行任务。
     
@@ -1676,7 +1691,8 @@ def get_tools(agent, session_service, app_info, status_reporter=None, **kwargs):
     # 旧工具 (5个): dispatch_task, dispatch_batch_tasks, sync_task_context, hold_meeting, deep_think
     # 新工具 (14个): team_create/join/leave/status/list_workers, task_create/claim/complete/status/list,
     #                mailbox_send/read/broadcast, worker_status/idle_report, dag_create
-    all_tools = [dt, dbt, stc, hm, dpt]
+    # [去中心化架构] 已移除老推模型: dt (dispatch_task), dbt (dispatch_batch_tasks)
+    all_tools = [stc, hm, dpt]
     if DECENTRALIZED_TOOLS_AVAILABLE:
         all_tools.extend(decentralized_wrapped)
 

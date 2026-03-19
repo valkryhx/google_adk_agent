@@ -36,7 +36,25 @@ class TaskQueue:
             base_dir: 基础存储目录
         """
         self.team_id = team_id
+        # 默认标准路径
         self.tasks_dir = os.path.join(base_dir, "tasks", team_id)
+        
+        # 🚨 绝对防御 & 向下兼容 🚨
+        # 检查 base_dir 下是否存在已被发布端直接抛出的 "TaskQueue" 或 ".task_queue" 目录
+        legacy_dirs = [
+            os.path.join(base_dir, "TaskQueue"),
+            os.path.join(base_dir, ".task_queue")
+        ]
+        for l_dir in legacy_dirs:
+            if os.path.exists(l_dir):
+                # 只要里面包含任何一个 .json 工单，全速劫持！
+                try:
+                    if any(f.endswith('.json') for f in os.listdir(l_dir)):
+                        self.tasks_dir = l_dir
+                        break
+                except Exception:
+                    pass
+
         self.locks_dir = os.path.join(self.tasks_dir, "locks")
         self.lock_file = os.path.join(self.tasks_dir, ".lock")
 
@@ -45,8 +63,16 @@ class TaskQueue:
         os.makedirs(self.locks_dir, exist_ok=True)
 
     def _get_task_path(self, task_id: str) -> str:
-        """获取任务文件的完整路径"""
-        return os.path.join(self.tasks_dir, f"{task_id}.json")
+        """获取任务文件的完整路径 (2.3 极致容错版)"""
+        path = os.path.join(self.tasks_dir, f"{task_id}.json")
+        if os.path.exists(path):
+            return path
+            
+        prefix_path = os.path.join(self.tasks_dir, f"task_{task_id}.json")
+        if os.path.exists(prefix_path):
+            return prefix_path
+            
+        return path
 
     def _get_lock_path(self, task_id: str) -> str:
         """获取任务锁文件的完整路径"""
@@ -231,7 +257,7 @@ class TaskQueue:
                 available.append(task)
 
         # 按创建时间排序（先创建的任务优先）
-        return sorted(available, key=lambda t: t.created_at)
+        return sorted(available, key=lambda t: str(t.created_at))
 
     # === 原子性任务认领 ===
 
@@ -262,6 +288,7 @@ class TaskQueue:
                 try:
                     # 重新读取任务状态（防止其他进程已修改）
                     if not os.path.exists(task_path):
+                        print(f"[claim_task] ❌ Path not found: {task_path}")
                         return False
 
                     with open(task_path, 'r', encoding='utf-8') as tf:
@@ -269,25 +296,31 @@ class TaskQueue:
 
                     # 检查是否可认领
                     if task.status != "pending":
+                        print(f"[claim_task] ❌ Status not pending: {task.status}")
                         return False
 
                     completed = self._get_completed_ids()
                     if task.blocked_by and not all(d in completed for d in task.blocked_by):
+                        print(f"[claim_task] ❌ Dependencies not met: {task.blocked_by} vs {completed}")
                         return False
 
                     # 原子性更新
                     task.status = "in_progress"
                     task.owner = agent_id
 
-                    with open(task_path, 'w', encoding='utf-8') as tf:
+                    # 使用临时文件写入防止损坏
+                    temp_path = task_path + ".tmp"
+                    with open(temp_path, 'w', encoding='utf-8') as tf:
                         json.dump(task.to_json(), tf, ensure_ascii=False, indent=2)
+                    os.replace(temp_path, task_path)
 
                     return True
 
                 finally:
                     self._release_file_lock(lock_file)
 
-        except (IOError, OSError):
+        except (IOError, OSError) as e:
+            print(f"[claim_task] ❌ Exception: {e}")
             return False
 
     def complete_task(self, task_id: str) -> bool:
@@ -305,6 +338,32 @@ class TaskQueue:
 
         task.status = "completed"
         task.completed_at = time.time()
+        self._save_task(task)
+
+        # 清理锁文件
+        lock_path = self._get_lock_path(task_id)
+        if os.path.exists(lock_path):
+            try:
+                os.remove(lock_path)
+            except OSError:
+                pass
+
+        return True
+
+    def fail_task(self, task_id: str) -> bool:
+        """标记任务失败
+        
+        Args:
+            task_id: 要失败的任务ID
+            
+        Returns:
+            True 如果成功，False 如果任务不存在
+        """
+        task = self.get_task(task_id)
+        if not task:
+            return False
+
+        task.status = "failed"
         self._save_task(task)
 
         # 清理锁文件

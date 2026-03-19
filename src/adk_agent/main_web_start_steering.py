@@ -2345,10 +2345,20 @@ async def chat_endpoint(request: ChatRequest, response: Response):
                 "suggestion": "Append '[URGENT_INTERRUPT]' to message to force execution if the task is really urgent."
             }
 
-    # 2. 抢锁并执行
+    # 2. 原子化抢锁并执行 (修复 TOCTOU 和幽灵队列排队问题)
     try:
-        # 手动获取锁（确保在 generator 执行期间一直持有）
-        await WORKER_LOCK.acquire()
+        try:
+            # 仅等待极其短暂的时间 (10ms)，充当非阻塞的 trylock
+            await asyncio.wait_for(WORKER_LOCK.acquire(), timeout=0.01)
+        except asyncio.TimeoutError:
+            # 锁被其他并发请求瞬间抢走 (TOCTOU 时间差)
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return {
+                "error": "Worker is busy",
+                "status": "busy",
+                "suggestion": "Worker was locked by another request concurrently."
+            }
+            
         worker_state.set_busy(request.message[:50], request.session_id)
         print(f"[Node-{node_config.port}] 🔒 锁定: 开始执行任务 (Session: {request.session_id})")
 
@@ -3122,7 +3132,74 @@ async def startup_event():
     await create_agent()
     register_self()
     asyncio.create_task(heartbeat_daemon())
+    
+    # === [去中心化拉模型] 动态加载自领守护后台协程 ===
+    asyncio.create_task(init_decentralized_claim_loop())
+    
     print(f"[Node-{node_config.port}] 🚀 服务已完全启动 (已加入 Swarm, Heartbeat ON)")
+
+async def init_decentralized_claim_loop():
+    """动态加载并开启 SelfClaimLoop 后台守护 (2.2 彻底净化版)"""
+    await asyncio.sleep(3) # 留出时间让服务充分启动
+    try:
+        from skills.agent_team_to_be_update.self_claim_loop import SelfClaimLoop
+        
+        # 1. 统一协调目录
+        coord_dir = os.environ.get("ADK_COORDINATION_DIR", "coordination")
+        if not os.path.isabs(coord_dir):
+            coord_dir = os.path.abspath(coord_dir)
+        print(f"[Node-{node_config.port}] 🔍 巡检锚点定向: {coord_dir}")
+
+        # 2. 构造干净、隔离的本地执行器
+        async def task_executor(task):
+            import traceback
+            print(f"[SelfClaimDaemon] ⚔️ 认领工单: {task.id} | {task.name}")
+            old_cwd = os.getcwd()
+            
+            safe_cwd = coord_dir
+            try:
+                t_files = getattr(task, "writable_files", []) or getattr(task, "expected_artifacts", [])
+                if not t_files and hasattr(task, "to_dict"):
+                    t_f_dict = task.to_dict()
+                    t_files = t_f_dict.get("writable_files", []) or t_f_dict.get("writableFiles", [])
+                
+                if t_files and isinstance(t_files, list) and len(t_files) > 0 and os.path.isabs(t_files[0]):
+                    safe_cwd = os.path.dirname(t_files[0])
+            except Exception: pass
+            
+            print(f"[SelfClaimDaemon] 🛡️ 切入安全隔离 CWD: {safe_cwd}")
+            os.makedirs(safe_cwd, exist_ok=True)
+            os.chdir(safe_cwd)
+            
+            try:
+                full_text_response = ""
+                async for chunk in run_agent(
+                    task=task.description,
+                    app_name="decentralized",
+                    user_id=f"worker_{node_config.port}",
+                    session_id=f"task_{task.id[:8]}"
+                ):
+                    if isinstance(chunk, str): full_text_response += chunk
+                    elif isinstance(chunk, dict) and 'content' in chunk: full_text_response += str(chunk['content'])
+                return {"status": "success", "response": full_text_response}
+            except Exception as e:
+                print(f"[SelfClaimDaemon] 执行报错: {e}")
+                raise e
+            finally:
+                os.chdir(old_cwd)
+                print(f"[SelfClaimDaemon] 🔄 恢复 CWD: {old_cwd}")
+
+        daemon = SelfClaimLoop(
+            agent_id=f"Node-{node_config.port}",
+            agent_port=node_config.port, 
+            team_id="swarm_team",        
+            coordination_dir=coord_dir, 
+            task_executor=task_executor
+        )
+        print(f"[Node-{node_config.port}] 去中心化巡检后台巡常启动 ✅")
+        await daemon.run() # 👈 修正为正确的 run() ！！！
+    except Exception as e:
+        print(f"[Node-{node_config.port}] 去中心化后台挂载异常自愈失败 ❌: {e}")
 
 @app.get("/")
 async def root():
