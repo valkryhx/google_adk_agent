@@ -37,12 +37,13 @@ class SimpleFileLogger:
         if self._initialized:
             return
             
-        self.log_file = log_file
+        # 确保路径是绝对路径，防止 CWD 切换导致日志漂移
+        self.log_file = os.path.abspath(log_file)
         self.max_size = max_size
         self.backup_count = backup_count
         
         # 确保目录存在
-        os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
+        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
         
         # 立即写入测试标记，验证可写性
         try:
@@ -105,6 +106,11 @@ class SimpleFileLogger:
             # 写入文件（实时）
             try:
                 self._check_rotation()
+                # 再次确保目录存在（防止运行中被删或 CWD 漂移后需重建）
+                log_dir = os.path.dirname(self.log_file)
+                if not os.path.exists(log_dir):
+                    os.makedirs(log_dir, exist_ok=True)
+                
                 with open(self.log_file, 'a', encoding='utf-8') as f:
                     f.write(log_line)
             except Exception as e:
@@ -140,9 +146,10 @@ class SimpleFileLogger:
     def configure(self, log_file: str):
         """重新配置日志文件路径"""
         with self._lock:
-            self.log_file = log_file
+            # 强制转换为绝对路径
+            self.log_file = os.path.abspath(log_file)
             # 确保新目录存在
-            os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
+            os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
 
 
 # ============================================
