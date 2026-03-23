@@ -33,13 +33,26 @@ Bash 是**系统级操作的通用工具**,但以下场景**必须使用专用 s
 ### bash
 执行系统 Shell 命令，返回标准输出和错误输出。支持无状态执行。
 
+**Windows 多行命令支持**：命令字符串中包含字面换行符（`\n`）时，会自动写入临时脚本文件再执行，支持 `python -c "...多行脚本..."` 写法。
+
 ```python
-bash(
-    command="ping -n 4 8.8.8.8",  # 要执行的命令
-    timeout=30,                   # 超时秒数
-    shell=True,                   # 是否使用 shell (默认: True)
-    restart=False                 # 重启会话 (当前版本仅做兼容，无状态)
-)
+# 执行 Python 脚本片段
+bash(command='python -c "import sys; print(sys.version)"')
+
+# 执行多行 Python 脚本（含换行符，Windows 自动转为临时 .py 文件）
+bash(command='python -c "import os\nfor f in os.listdir(\".\"):\n    print(f)"')
+
+# 执行 CMD 命令
+bash(command='cmd /c dir /b /s *.py')
+
+# 执行 PowerShell 命令
+bash(command='powershell -Command "Get-ChildItem -Recurse -Filter *.log | Select-Object Name, Length"')
+
+# 执行 PowerShell 多行脚本
+bash(command='powershell -Command "$files = Get-ChildItem .\\logs; $files | ForEach-Object { Write-Output $_.Name }"')
+
+# 设置超时（默认 60 秒）
+bash(command='python -c "import time; time.sleep(5); print(done)"', timeout=10)
 ```
 
 ### get_system_info
@@ -78,7 +91,7 @@ bash(
 
 ## 示例
 
-**用户问题**: "检查一下到 Google DNS 的网络连通性"
+**用户问题**:"检查一下到 Google DNS 的网络连通性"
 
 **执行流程**:
 ```

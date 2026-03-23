@@ -84,12 +84,42 @@ async def bash(
     try:
         # 🔑 使用异步 subprocess
         if platform.system() == 'Windows':
-            # Windows needs shell=True for most commands
+            # Windows cmd.exe 把字面换行当命令分隔符，含换行的命令需写入临时脚本执行
+            import tempfile
+            _tmp_file = None
+            if '\n' in command:
+                # 判断是 Python 脚本还是通用 bat
+                if command.strip().startswith('python'):
+                    # 提取 python -c "..." 中的脚本内容，改为临时 .py 文件执行
+                    import re
+                    m = re.match(r'^(python\S*)\s+-c\s+["\']([\s\S]*)["\']\s*$', command.strip())
+                    if m:
+                        py_bin, script = m.group(1), m.group(2)
+                        # 反转义转义序列
+                        script = script.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"').replace("\\'", "'")
+                        _tmp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8')
+                        _tmp_file.write(script)
+                        _tmp_file.close()
+                        command = f'{py_bin} "{_tmp_file.name}"'
+                    else:
+                        _tmp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False, encoding='utf-8')
+                        _tmp_file.write('@echo off\n' + command)
+                        _tmp_file.close()
+                        command = f'cmd /c "{_tmp_file.name}"'
+                else:
+                    _tmp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False, encoding='utf-8')
+                    _tmp_file.write('@echo off\n' + command)
+                    _tmp_file.close()
+                    command = f'cmd /c "{_tmp_file.name}"'
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            env['PYTHONUTF8'] = '1'
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=cwd
+                cwd=cwd,
+                env=env
             )
         else:
             process = await asyncio.create_subprocess_shell(
@@ -191,9 +221,18 @@ async def bash(
             output_parts.append(f"[返回码] {process.returncode}")
         
         if not output_parts:
-            return ""
-        
-        return "\n".join(output_parts)
+            result = ""
+        else:
+            result = "\n".join(output_parts)
+
+        # 清理临时脚本文件（仅 Windows 多行命令）
+        if platform.system() == 'Windows' and '_tmp_file' in dir() and _tmp_file is not None:
+            try:
+                os.unlink(_tmp_file.name)
+            except Exception:
+                pass
+
+        return result
         
     except FileNotFoundError:
         return f"[ERROR] 命令未找到: {command.split()[0]}"

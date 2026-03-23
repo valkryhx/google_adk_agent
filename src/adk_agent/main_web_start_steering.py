@@ -384,7 +384,7 @@ class SteeringSession:
             name=self.config.name,
             model=llm_model,
             instruction=system_prompt,
-            tools=[self.skill_load],  # 绑定实例方法
+            tools=[self.skill_load, self.skill_reload],  # 绑定实例方法
             sub_agents=[session_compactor],  # 使用会话专属的实例
             on_tool_error_callback=handle_tool_error,
             before_model_callback=self.interruption_guard,  # 绑定实例方法
@@ -445,22 +445,41 @@ class SteeringSession:
         print(f"[{self.key}] 激活技能: {skill_id}")
         if not self.skill_manager.skill_exists(skill_id):
             return f"[ERROR] 技能 '{skill_id}' 不存在。"
-        
+
         self._load_skill_tools(skill_id)
         return f"""[OK] 技能 '{skill_id}' 已加载。Instructions:\n{self.skill_manager.load_full_sop(skill_id)}"""
+
+    async def skill_reload(self, skill_id: str) -> str:
+        """热重载技能工具：卸载旧版本并重新从磁盘加载，用于调试时快速生效。"""
+        print(f"[{self.key}] 热重载技能: {skill_id}")
+        if not self.skill_manager.skill_exists(skill_id):
+            return f"[ERROR] 技能 '{skill_id}' 不存在。"
+
+        tools = self._load_skill_tools(skill_id, force_reload=True)
+        if not tools:
+            return f"[WARN] 技能 '{skill_id}' 热重载完成，但未找到任何工具（请检查 tools.py 是否有语法错误）。"
+        names = [t.__name__ for t in tools]
+        return f"[OK] 技能 '{skill_id}' 热重载成功，已加载工具: {names}\nInstructions:\n{self.skill_manager.load_full_sop(skill_id)}"
     
-    def _load_skill_tools(self, skill_id: str):
-        """加载技能工具到当前 agent"""
+    def _load_skill_tools(self, skill_id: str, force_reload: bool = False):
+        """加载技能工具到当前 agent。force_reload=True 时先卸载旧版本再重新加载。"""
         import importlib.util
         import functools
-        
+
         # [Security] Verify user_id before binding
         print(f"[{self.key}] Loading tools for {skill_id} with User ID: {self.user_id}")
-        
+
+        # [HotReload] 若强制重载，先移除该 skill 之前注册的工具
+        if force_reload and hasattr(self, '_skill_tools_map') and skill_id in self._skill_tools_map:
+            old_names = self._skill_tools_map[skill_id]
+            self.agent.tools = [t for t in self.agent.tools if getattr(t, '__name__', None) not in old_names]
+            del self._skill_tools_map[skill_id]
+            print(f"[{self.key}] 🔄 已卸载旧版 {skill_id} 工具: {old_names}")
+
         tool_files = [
             os.path.join(self.config.skills_path, skill_id, "tools.py")
         ]
-        
+
         loaded_tools = []
         # 获取当前已加载工具的名称集合
         existing_names = {t.__name__ for t in self.agent.tools if hasattr(t, '__name__')}
@@ -530,6 +549,12 @@ class SteeringSession:
                 self._loaded_skills = []
             if skill_id not in self._loaded_skills:
                 self._loaded_skills.append(skill_id)
+
+        # [HotReload] 记录该 skill 对应的工具名，供 force_reload 时卸载使用
+        if loaded_tools:
+            if not hasattr(self, '_skill_tools_map'):
+                self._skill_tools_map = {}
+            self._skill_tools_map[skill_id] = {t.__name__ for t in loaded_tools if hasattr(t, '__name__')}
 
         return loaded_tools
     
