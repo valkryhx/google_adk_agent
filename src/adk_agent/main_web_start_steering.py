@@ -2211,6 +2211,34 @@ async def get_settings_endpoint():
         print(f"[Settings] Fetch settings error: {e}")
         return {"error": str(e)}
 
+@app.get("/api/skills")
+async def list_skills_endpoint():
+    """返回所有可用技能的 id/name/description 列表，供前端 / 补全使用"""
+    skills = []
+    if not os.path.exists(config.skills_path):
+        return {"skills": []}
+    for skill_id in sorted(os.listdir(config.skills_path)):
+        skill_dir = os.path.join(config.skills_path, skill_id)
+        skill_md = os.path.join(skill_dir, "SKILL.md")
+        if not os.path.isdir(skill_dir) or not os.path.exists(skill_md):
+            continue
+        try:
+            with open(skill_md, "r", encoding="utf-8") as f:
+                content = f.read()
+            parts = content.split("---", 2)
+            if len(parts) >= 3:
+                import yaml as _yaml
+                meta = _yaml.safe_load(parts[1]) or {}
+                skills.append({
+                    "id": skill_id,
+                    "name": meta.get("name", skill_id),
+                    "description": meta.get("description", ""),
+                })
+        except Exception:
+            skills.append({"id": skill_id, "name": skill_id, "description": ""})
+    return {"skills": skills}
+
+
 @app.post("/api/settings")
 async def update_settings_endpoint(settings: AgentSettings):
     # 1. 更新内存中的全局对象 (AgentConfig 现已支持 Setter 进行热更新)

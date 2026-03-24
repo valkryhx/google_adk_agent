@@ -22,13 +22,126 @@ document.addEventListener('DOMContentLoaded', () => {
         if (this.value === '') {
             this.style.height = 'auto';
         }
+        // Skill dropdown trigger
+        const val = this.value;
+        const slashMatch = val.match(/^\/([\w-]*)$/);
+        if (slashMatch) {
+            showSkillDropdown(slashMatch[1]);
+        } else {
+            hideSkillDropdown();
+        }
     });
 
     // Handle Enter key
     userInput.addEventListener('keydown', (e) => {
+        const dropdown = document.getElementById('skillDropdown');
+        if (dropdown && dropdown.style.display !== 'none') {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                skillDropdownMove(1);
+                return;
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                skillDropdownMove(-1);
+                return;
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                skillDropdownSelect();
+                return;
+            } else if (e.key === 'Escape') {
+                hideSkillDropdown();
+                return;
+            }
+        }
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendMessage();
+        }
+    });
+
+    // ==========================================
+    // Skill Dropdown
+    // ==========================================
+    let _skillCache = null;
+    let _skillActiveIdx = -1;
+
+    async function fetchSkills() {
+        if (_skillCache) return _skillCache;
+        try {
+            const res = await fetch('/api/skills');
+            const data = await res.json();
+            _skillCache = data.skills || [];
+        } catch (e) {
+            _skillCache = [];
+        }
+        return _skillCache;
+    }
+
+    async function showSkillDropdown(filter) {
+        const skills = await fetchSkills();
+        const filtered = filter
+            ? skills.filter(s => s.id.includes(filter) || s.name.toLowerCase().includes(filter.toLowerCase()))
+            : skills;
+        const dropdown = document.getElementById('skillDropdown');
+        if (!filtered.length) { hideSkillDropdown(); return; }
+        _skillActiveIdx = -1;
+        dropdown.innerHTML = filtered.map((s, i) =>
+            `<div class="skill-dropdown-item" data-id="${s.id}" data-idx="${i}">
+                <span class="skill-name">${s.name || s.id}</span>
+                <span class="skill-desc">${s.description || ''}</span>
+            </div>`
+        ).join('');
+        dropdown.querySelectorAll('.skill-dropdown-item').forEach(item => {
+            item.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                userInput.value = item.dataset.id + ' ';
+                userInput.style.height = 'auto';
+                userInput.style.height = (userInput.scrollHeight) + 'px';
+                hideSkillDropdown();
+                userInput.focus();
+            });
+        });
+        // Position using fixed coords relative to textarea
+        const rect = userInput.getBoundingClientRect();
+        dropdown.style.display = 'block';
+        const ddHeight = Math.min(dropdown.scrollHeight, 280);
+        dropdown.style.left = rect.left + 'px';
+        dropdown.style.width = rect.width + 'px';
+        dropdown.style.top = (rect.top - ddHeight - 6) + 'px';
+    }
+
+    function hideSkillDropdown() {
+        const dropdown = document.getElementById('skillDropdown');
+        if (dropdown) dropdown.style.display = 'none';
+        _skillActiveIdx = -1;
+    }
+
+    function skillDropdownMove(dir) {
+        const dropdown = document.getElementById('skillDropdown');
+        const items = dropdown.querySelectorAll('.skill-dropdown-item');
+        if (!items.length) return;
+        items[_skillActiveIdx]?.classList.remove('active');
+        _skillActiveIdx = (_skillActiveIdx + dir + items.length) % items.length;
+        items[_skillActiveIdx].classList.add('active');
+        items[_skillActiveIdx].scrollIntoView({ block: 'nearest' });
+    }
+
+    function skillDropdownSelect() {
+        const dropdown = document.getElementById('skillDropdown');
+        const items = dropdown.querySelectorAll('.skill-dropdown-item');
+        const idx = _skillActiveIdx >= 0 ? _skillActiveIdx : 0;
+        if (items[idx]) {
+            userInput.value = items[idx].dataset.id + ' ';
+            userInput.style.height = 'auto';
+            userInput.style.height = (userInput.scrollHeight) + 'px';
+            hideSkillDropdown();
+            userInput.focus();
+        }
+    }
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#skillDropdown') && e.target !== userInput) {
+            hideSkillDropdown();
         }
     });
 
