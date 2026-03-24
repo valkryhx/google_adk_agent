@@ -1574,11 +1574,103 @@ async def deep_think(
 # 导入新架构的工具集
 try:
     from . import decentralized_tools as dx_tools
+    from .self_claim_loop import SelfClaimLoop
     DECENTRALIZED_TOOLS = dx_tools.get_decentralized_tools()
     DECENTRALIZED_TOOLS_AVAILABLE = True
 except ImportError:
     DECENTRALIZED_TOOLS = []
     DECENTRALIZED_TOOLS_AVAILABLE = False
+    SelfClaimLoop = None
+
+# 进程级别单例守卫：确保每个 Worker 进程只启动一个 SelfClaimLoop
+_SELF_CLAIM_LOOP_STARTED = False
+_self_claim_loop_instance = None
+
+
+def _start_worker_self_claim_loop():
+    """为 Worker 节点启动后台自主任务认领循环。
+
+    仅当以下条件全部满足时才启动：
+    - ADK_NODE_TYPE == "worker"
+    - DECENTRALIZED_TOOLS_AVAILABLE == True
+    - 尚未启动过（进程级单例守卫）
+    """
+    global _SELF_CLAIM_LOOP_STARTED, _self_claim_loop_instance
+    if _SELF_CLAIM_LOOP_STARTED:
+        return
+    if not DECENTRALIZED_TOOLS_AVAILABLE or SelfClaimLoop is None:
+        return
+    node_type = os.environ.get("ADK_NODE_TYPE", "agent")
+    if node_type != "worker":
+        return
+
+    _SELF_CLAIM_LOOP_STARTED = True
+
+    team_id = os.environ.get("ADK_TEAM_ID", "default_team")
+    agent_id = dx_tools._get_current_agent_id()
+    agent_port = dx_tools._get_current_port()
+    coord_dir = dx_tools._get_coordination_dir(team_id)
+
+    async def _local_task_executor(task):
+        """通过 HTTP 调用自身 /api/chat 端点执行任务，与 dispatch_task 执行路径一致。"""
+        payload = {
+            "message": (
+                f"[TASK_FROM_QUEUE]\n"
+                f"Task ID: {task.id}\n"
+                f"Task Name: {task.name}\n\n"
+                f"{task.description}"
+            ),
+            "app_name": f"worker_self_claim_{agent_port}",
+            "user_id": "system",
+            "session_id": f"task_{task.id}"
+        }
+        timeout_config = httpx.Timeout(300.0, connect=5.0)
+        full_response = ""
+        try:
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
+                async with client.stream(
+                    "POST", f"http://localhost:{agent_port}/api/chat", json=payload
+                ) as resp:
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                            chunk = data.get("chunk", {})
+                            if chunk.get("type") == "text":
+                                full_response += chunk.get("content", "")
+                        except Exception:
+                            continue
+        except Exception as e:
+            full_response = f"[EXECUTOR_ERROR] {e}"
+        return full_response
+
+    _self_claim_loop_instance = SelfClaimLoop(
+        agent_id=agent_id,
+        agent_port=agent_port,
+        team_id=team_id,
+        coordination_dir=coord_dir,
+        task_executor=_local_task_executor,
+        poll_interval=2.0
+    )
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_self_claim_loop_instance.run())
+        skill_log(f"[SelfClaimLoop] Worker {agent_id} 已在主事件循环启动后台任务认领")
+    except RuntimeError:
+        # 没有正在运行的事件循环（如单元测试环境），在独立线程中运行
+        import threading
+        def _run_in_thread():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                new_loop.run_until_complete(_self_claim_loop_instance.run())
+            finally:
+                new_loop.close()
+        t = threading.Thread(target=_run_in_thread, daemon=True, name="SelfClaimLoop")
+        t.start()
+        skill_log(f"[SelfClaimLoop] Worker {agent_id} 已在独立线程启动后台任务认领")
 
 
 def get_tools(agent, session_service, app_info, status_reporter=None, **kwargs):
@@ -1695,6 +1787,10 @@ def get_tools(agent, session_service, app_info, status_reporter=None, **kwargs):
     all_tools = [stc, hm, dpt]
     if DECENTRALIZED_TOOLS_AVAILABLE:
         all_tools.extend(decentralized_wrapped)
+
+    # [缺陷修复] 启动 Worker 自主任务认领后台循环
+    # 仅在 ADK_NODE_TYPE=worker 时生效，进程级单例，不影响 Leader 节点
+    _start_worker_self_claim_loop()
 
     return all_tools
 
