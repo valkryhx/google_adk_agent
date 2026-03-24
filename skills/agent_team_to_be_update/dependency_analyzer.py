@@ -116,8 +116,12 @@ class TaskDependencyAnalyzer:
                 temperature=0.2
             )
             return self._parse_task_response(response)
+        except ValueError as e:
+            # LLM 输出解析失败：记录警告后 fallback，让调用方可感知
+            print(f"[WARNING] dependency_analyzer: {e}")
+            return self._analyze_with_heuristics(user_request)
         except Exception as e:
-            # Fallback to heuristic analysis on LLM failure
+            # LLM 调用本身失败：静默 fallback 到启发式分析
             return self._analyze_with_heuristics(user_request)
     
     def _analyze_with_heuristics(self, user_request: str) -> List[Dict[str, Any]]:
@@ -253,15 +257,8 @@ class TaskDependencyAnalyzer:
                 validated_tasks.append(validated_task)
             
             return validated_tasks
-        except json.JSONDecodeError:
-            # Return a single task if parsing fails
-            return [{
-                "id": "task-001",
-                "name": "Execute Request",
-                "description": response,
-                "blockedBy": [],
-                "expectedArtifacts": [],
-                "writableFiles": [],
-                "readOnlyFiles": [],
-                "verificationCommands": []
-            }]
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"[parse_error] LLM 输出无法解析为 JSON: {e}\n"
+                f"原始输出 (前500字符): {response[:500]}"
+            ) from e
