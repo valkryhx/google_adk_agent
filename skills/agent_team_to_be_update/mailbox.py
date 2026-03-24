@@ -11,8 +11,21 @@ import json
 import os
 import time
 import uuid
+import threading
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+# 进程内按文件路径分组的互斥锁，防止同进程多线程并发写入损坏 JSONL
+_inbox_locks: Dict[str, threading.Lock] = {}
+_inbox_locks_meta = threading.Lock()
+
+
+def _get_inbox_lock(path: str) -> threading.Lock:
+    """获取或创建指定收件箱文件的进程内互斥锁。"""
+    with _inbox_locks_meta:
+        if path not in _inbox_locks:
+            _inbox_locks[path] = threading.Lock()
+        return _inbox_locks[path]
 
 
 @dataclass
@@ -126,12 +139,12 @@ class Mailbox:
             overlapped = struct.pack('QQ', 0, 0)  # Offset and length
             
             if exclusive:
-                # Exclusive lock
-                msvcrt.locking(file_handle.fileno(), msvcrt.LK_NBLCK, 0)
+                # Exclusive lock — nbytes 必须 >= 1，0 表示锁 0 字节（无效）
+                msvcrt.locking(file_handle.fileno(), msvcrt.LK_NBLCK, 1)
                 return True
             else:
                 # Shared lock not directly supported, use exclusive
-                msvcrt.locking(file_handle.fileno(), msvcrt.LK_NBLCK, 0)
+                msvcrt.locking(file_handle.fileno(), msvcrt.LK_NBLCK, 1)
                 return True
         except ImportError:
             # Fallback for non-Windows systems
@@ -155,10 +168,13 @@ class Mailbox:
         """
         try:
             import msvcrt
-            msvcrt.locking(file_handle.fileno(), msvcrt.LK_UNLCK, 0)
+            msvcrt.locking(file_handle.fileno(), msvcrt.LK_UNLCK, 1)
         except (ImportError, OSError):
-            # On Unix, use fcntl; on Windows without msvcrt, ignore
-            pass
+            try:
+                import fcntl
+                fcntl.flock(file_handle.fileno(), fcntl.LOCK_UN)
+            except (ImportError, OSError):
+                pass
 
     def send_message(
         self,
@@ -193,20 +209,17 @@ class Mailbox:
         )
 
         inbox_path = self._get_inbox_path(to_agent)
-        
-        # Open file and acquire lock
-        # Note: On Windows, file locks are automatically released when file is closed
-        # So we don't need explicit unlock - the 'with' statement handles it
-        with open(inbox_path, 'a', encoding='utf-8') as f:
-            # Try to acquire lock (non-blocking)
-            if self._acquire_file_lock(f, exclusive=True):
-                f.write(json.dumps(msg.to_json(), ensure_ascii=False) + "\n")
-                f.flush()
-                os.fsync(f.fileno())
-            else:
-                # If lock fails, write anyway (best effort)
-                f.write(json.dumps(msg.to_json(), ensure_ascii=False) + "\n")
-                f.flush()
+
+        # 进程内互斥锁，防止同进程多线程并发写入同一收件箱损坏 JSONL
+        with _get_inbox_lock(inbox_path):
+            with open(inbox_path, 'a', encoding='utf-8') as f:
+                if self._acquire_file_lock(f, exclusive=True):
+                    f.write(json.dumps(msg.to_json(), ensure_ascii=False) + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                else:
+                    f.write(json.dumps(msg.to_json(), ensure_ascii=False) + "\n")
+                    f.flush()
 
         return msg.id
 
@@ -309,6 +322,12 @@ class Mailbox:
         if not os.path.exists(inbox_path):
             return
 
+        # 进程内互斥锁，防止 _mark_read 重写时与并发 send_message 竞争
+        with _get_inbox_lock(inbox_path):
+            self._mark_read_locked(inbox_path, msg_ids)
+
+    def _mark_read_locked(self, inbox_path: str, msg_ids: list) -> None:
+        """Internal: rewrite inbox with read flags updated (must be called under inbox lock)."""
         msg_id_set = set(msg_ids)
         all_messages = []
 
