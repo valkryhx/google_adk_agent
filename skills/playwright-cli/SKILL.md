@@ -20,6 +20,27 @@ playwright-cli type "page.click"
 playwright-cli press Enter
 ```
 
+## Opening Local HTML Files
+
+`playwright-cli open` does **NOT** support `file://` protocol. Local HTML files must be served via HTTP first.
+
+**Windows — one-liner（推荐）：**
+```bash
+powershell -Command "Start-Process python -ArgumentList '-m http.server <PORT> --directory <DIR>' -WindowStyle Hidden" && timeout /t 2 /nobreak >nul && playwright-cli open http://localhost:<PORT>/index.html
+```
+
+**示例** — 打开 `MISC/eight_qs/index.html`：
+```bash
+powershell -Command "Start-Process python -ArgumentList '-m http.server 8765 --directory MISC/eight_qs' -WindowStyle Hidden" && timeout /t 2 /nobreak >nul && playwright-cli open http://localhost:8765/index.html
+```
+
+**端口选择**：避免常用端口冲突，推荐 8700-8799 随机选一个。
+
+**用完停止服务器：**
+```bash
+powershell -Command "Get-NetTCPConnection -LocalPort 8765 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }"
+```
+
 ## Core workflow
 
 1. Navigate: `playwright-cli open https://example.com`
