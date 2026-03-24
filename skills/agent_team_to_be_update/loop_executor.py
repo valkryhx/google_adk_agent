@@ -43,6 +43,7 @@ executor.execute_mixed_dag()
 ```
 """
 
+import asyncio
 import re
 import time
 import random
@@ -177,21 +178,26 @@ class LoopExecutor:
         
         return loop_group
 
-    def _execute_task(self, task: Task, iteration: int = 0) -> Dict[str, Any]:
+    async def _execute_task(self, task: Task, iteration: int = 0) -> Dict[str, Any]:
         """执行单个任务
-        
+
         Args:
             task: 任务对象
             iteration: 当前迭代次数
-            
+
         Returns:
             执行结果
         """
         if self.task_executor:
-            return self.task_executor(task)
-        
+            if asyncio.iscoroutinefunction(self.task_executor):
+                return await self.task_executor(task)
+            else:
+                return await asyncio.get_event_loop().run_in_executor(
+                    None, self.task_executor, task
+                )
+
         # 默认模拟执行
-        time.sleep(0.1)
+        await asyncio.sleep(0.1)
         
         result = {"success": True}
         
@@ -250,7 +256,7 @@ class LoopExecutor:
         
         return False
 
-    def execute_loop_iteration(
+    async def execute_loop_iteration(
         self,
         loop_group_id: str,
         iteration: int,
@@ -293,7 +299,7 @@ class LoopExecutor:
             print(f"    [{worker_id}] {task.name} (iter {iteration})")
             
             # 执行任务
-            result = self._execute_task(task, iteration)
+            result = await self._execute_task(task, iteration)
             task.loop_exit_result = result
             self.queue._save_task(task)
             
@@ -341,7 +347,7 @@ class LoopExecutor:
         
         return state
 
-    def execute_mixed_dag(
+    async def execute_mixed_dag(
         self,
         max_waves: int = 100,
         worker_prefix: str = "worker"
@@ -395,7 +401,7 @@ class LoopExecutor:
                     break
                 
                 # 有任务在进行中或有循环组在运行，等待
-                time.sleep(0.1)
+                await asyncio.sleep(0.1)
                 continue
 
             # 3. 执行就绪的普通任务
@@ -404,7 +410,7 @@ class LoopExecutor:
                 if self.queue.claim_task(task.id, worker_id):
                     print(f"\n  [{worker_id}] 执行: {task.name}")
                     try:
-                        result = self._execute_task(task)
+                        result = await self._execute_task(task)
                         self.queue.complete_task(task.id)
                     except Exception as e:
                         print(f"  [{worker_id}] 任务 {task.id} 执行异常: {e}")
@@ -422,7 +428,7 @@ class LoopExecutor:
                 next_iteration = loop_group.current_iteration + 1
                 
                 # 执行一次迭代
-                state = self.execute_loop_iteration(
+                state = await self.execute_loop_iteration(
                     loop_group.id,
                     next_iteration,
                     f"loop-{loop_group.name}"

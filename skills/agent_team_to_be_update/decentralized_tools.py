@@ -27,11 +27,15 @@ try:
     from .task_queue import TaskQueue, Task
     from .team_config import TeamConfig, TeamMember
     from .verification_hooks import TaskCompletedHook, TeammateIdleHook
+    from .path_guard import PathGuard
+    from .loop_executor import LoopExecutor
 except ImportError:
     from mailbox import Mailbox, Message
     from task_queue import TaskQueue, Task
     from team_config import TeamConfig, TeamMember
     from verification_hooks import TaskCompletedHook, TeammateIdleHook
+    from path_guard import PathGuard
+    from loop_executor import LoopExecutor
 
 # ==========================================
 # 协调目录解析
@@ -1010,6 +1014,42 @@ async def dag_create(
 # get_tools - 返回去中心化工具集
 # ==========================================
 
+async def dag_execute(
+    team_id: str,
+    max_waves: int = 100
+) -> str:
+    """
+    【Leader 专用】执行已创建的 DAG 任务队列。
+
+    使用 LoopExecutor 驱动任务队列（含循环组支持），
+    在 asyncio 环境中非阻塞地轮询并执行所有就绪任务。
+
+    Args:
+        team_id: 团队唯一标识
+        max_waves: 最大执行波次（防止死循环）
+
+    Returns:
+        执行摘要报告
+    """
+    coord_dir = _get_coordination_dir(team_id)
+
+    queue = TaskQueue(team_id=team_id, base_dir=coord_dir)
+    executor = LoopExecutor(queue)
+
+    stats = await executor.execute_mixed_dag(max_waves=max_waves)
+
+    task_stats = stats.get("tasks", {})
+    loop_stats = stats.get("loops", {})
+    return (
+        f"[DAG EXECUTED]\n"
+        f"Team: {team_id}\n"
+        f"Waves: {stats.get('waves', 0)}\n"
+        f"Tasks: {task_stats.get('completed', 0)}/{task_stats.get('total', 0)} 完成\n"
+        f"Loops: {loop_stats.get('completed', 0)}/{loop_stats.get('total', 0)} 完成\n"
+        f"Total Iterations: {stats.get('executor', {}).get('total_iterations', 0)}"
+    )
+
+
 def get_decentralized_tools():
     """
     返回去中心化自协调工具集。
@@ -1038,4 +1078,5 @@ def get_decentralized_tools():
         worker_idle_report,
         # DAG
         dag_create,
+        dag_execute,
     ]
