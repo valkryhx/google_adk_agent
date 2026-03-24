@@ -26,10 +26,12 @@ try:
     from .mailbox import Mailbox, Message
     from .task_queue import TaskQueue, Task
     from .team_config import TeamConfig, TeamMember
+    from .verification_hooks import TaskCompletedHook, TeammateIdleHook
 except ImportError:
     from mailbox import Mailbox, Message
     from task_queue import TaskQueue, Task
     from team_config import TeamConfig, TeamMember
+    from verification_hooks import TaskCompletedHook, TeammateIdleHook
 
 # ==========================================
 # 协调目录解析
@@ -482,6 +484,25 @@ async def task_complete(
     if task is None:
         return f"[ERROR] 任务 {task_id} 不存在。"
 
+    # VerificationHooks 集成：完成前校验产出物与质量门禁
+    workdir = os.getcwd()
+    hook = TaskCompletedHook(workdir)
+    # 从任务字段中读取期望产出文件和验证命令（若无则跳过对应项）
+    if task.expected_artifacts:
+        hook.set_required_files(task.expected_artifacts)
+    if task.verification_commands:
+        hook.set_verification_commands(task.verification_commands)
+    # git 检查默认关闭（Agent 环境不保证 git 干净）
+    hook.require_git_clean = False
+
+    vr = hook.verify()
+    if not vr.allowed:
+        return (
+            f"[BLOCKED] 任务 {task_id} 未通过完成验证，操作被拦截。\n"
+            f"原因: {vr.reason}\n"
+            f"建议: {vr.action}"
+        )
+
     queue.complete_task(task_id)
 
     # 通知 Leader
@@ -832,6 +853,17 @@ async def worker_idle_report(team_id: str, reason: str = "available") -> str:
     mailbox = Mailbox(base_dir=coord_dir)
     config = TeamConfig(team_id=team_id, base_dir=base_dir)
     leader = config.get_leader()
+
+    # VerificationHooks 集成：空闲前校验产出物与验证命令
+    workdir = os.getcwd()
+    idle_hook = TeammateIdleHook(workdir)
+    vr = idle_hook.verify()
+    if not vr.allowed:
+        return (
+            f"[BLOCKED] Worker 空闲上报被拦截，请先完成待处理工作。\n"
+            f"原因: {vr.reason}\n"
+            f"建议: {vr.action}"
+        )
 
     if leader:
         idle_msg = json.dumps({
