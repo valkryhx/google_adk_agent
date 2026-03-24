@@ -24,11 +24,13 @@ try:
     from .task_queue import TaskQueue, Task
     from .team_config import TeamConfig
     from .polling_daemon import PollingDaemon
+    from .path_guard import PathGuard
 except ImportError:
     from mailbox import Mailbox, Message
     from task_queue import TaskQueue, Task
     from team_config import TeamConfig
     from polling_daemon import PollingDaemon
+    from path_guard import PathGuard
 
 
 class SelfClaimLoop:
@@ -329,6 +331,31 @@ class SelfClaimLoop:
             if not self.task_queue.claim_task(task_id, self.agent_id):
                 print(f"[SelfClaimLoop] ❌ claim_task({task_id}) 返回 False！抢单失败")
                 return
+
+            # PathGuard 集成：只校验 writable_files，读取不限制
+            if task.writable_files:
+                import os as _os
+                guard = PathGuard(allowed_root=_os.getcwd())
+                violations = [
+                    f for f in task.writable_files
+                    if not guard.is_allowed(f)
+                ]
+                if violations:
+                    self.task_queue.fail_task(task_id)
+                    self.mailbox.send_message(
+                        from_agent=self.agent_id,
+                        to_agent=self._leader_agent_id,
+                        content=json.dumps({
+                            "type": "task_failed",
+                            "taskId": task_id,
+                            "taskName": task.name,
+                            "error": "PathGuard: 非法写路径 " + "; ".join(violations)
+                        }),
+                        msg_type="task_failed"
+                    )
+                    self._current_task = None
+                    print(f"[SelfClaimLoop] 🚫 PathGuard 拦截任务 {task_id}，非法写路径: {violations}")
+                    return
 
             print(f"[SelfClaimLoop] ✅ claim_task({task_id}) 成功！即将进入执行器")
             self._current_task = task

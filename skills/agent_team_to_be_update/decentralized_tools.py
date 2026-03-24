@@ -437,6 +437,22 @@ async def task_claim(
 
     if queue.claim_task(target_id, agent_id):
         task = queue.get_task(target_id)
+
+        # PathGuard 集成：只校验 writable_files，读取不限制
+        if task and task.writable_files:
+            import os as _os
+            guard = PathGuard(allowed_root=_os.getcwd())
+            violations = [
+                f for f in task.writable_files
+                if not guard.is_allowed(f)
+            ]
+            if violations:
+                queue.fail_task(target_id)
+                return (
+                    f"[BLOCKED] 任务 {target_id} 包含非法写路径，认领被拒绝。\n"
+                    f"违规路径:\n" + "\n".join(f"  - {v}" for v in violations)
+                )
+
         return (
             f"[TASK CLAIMED]\n"
             f"Task ID: {target_id}\n"
