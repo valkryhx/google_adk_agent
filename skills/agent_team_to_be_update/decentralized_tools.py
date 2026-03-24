@@ -44,7 +44,7 @@ def _get_coordination_dir(team_id: str) -> str:
     3. 当前目录/coordination/{team_id}
     """
     if os.environ.get("ADK_COORDINATION_DIR"):
-        return os.environ["ADK_COORDINATION_DIR"]
+        return os.path.join(os.environ["ADK_COORDINATION_DIR"], team_id)
     project_root = os.environ.get(
         "ADK_PROJECT_ROOT",
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
