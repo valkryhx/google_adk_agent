@@ -75,6 +75,11 @@ class SelfClaimLoop:
         self.task_queue = TaskQueue(team_id=team_id, base_dir=coordination_dir)
         self.team_config = TeamConfig(team_id=team_id, base_dir=coordination_dir)
 
+        # [缺陷修复] 动态解析 Leader 的完整 agent_id，避免硬编码 "leader"
+        # 格式如 leader_8000@adk_swarm，与 Mailbox 收件箱文件名匹配
+        _leader = self.team_config.get_leader()
+        self._leader_agent_id: str = _leader.agent_id if _leader else "leader"
+
         self._event_queue: asyncio.Queue = asyncio.Queue()
         self._claim_lock = asyncio.Lock() # 👈 内存锁：解决进入抢占时的时序竞争 (Race Condition)
         self._running = False
@@ -184,7 +189,7 @@ class SelfClaimLoop:
         request_id = content_data.get("requestId", "")
         self.mailbox.send_message(
             from_agent=self.agent_id,
-            to_agent="leader",
+            to_agent=self._leader_agent_id,
             content=json.dumps({
                 "type": "shutdown_response",
                 "requestId": request_id,
@@ -253,7 +258,7 @@ class SelfClaimLoop:
                     if idle_count >= 3:
                         self.mailbox.send_message(
                             from_agent=self.agent_id,
-                            to_agent="leader",
+                            to_agent=self._leader_agent_id,
                             content=json.dumps({
                                 "type": "idle_notification",
                                 "from": self.agent_id,
@@ -344,7 +349,7 @@ class SelfClaimLoop:
 
         self.mailbox.send_message(
             from_agent=self.agent_id,
-            to_agent="leader",
+            to_agent=self._leader_agent_id,
             content=json.dumps({
                 "type": "task_completed" if error is None else "task_failed",
                 "taskId": task_id,
