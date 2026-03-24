@@ -47,9 +47,21 @@ class TaskQueue:
         ]
         for l_dir in legacy_dirs:
             if os.path.exists(l_dir):
-                # 只要里面包含任何一个 .json 工单，全速劫持！
+                # 必须找到至少一个包含任务字段（id + status）的 .json 文件才触发劫持
                 try:
-                    if any(f.endswith('.json') for f in os.listdir(l_dir)):
+                    has_task_file = False
+                    for f in os.listdir(l_dir):
+                        if not f.endswith('.json'):
+                            continue
+                        try:
+                            with open(os.path.join(l_dir, f), 'r', encoding='utf-8') as fp:
+                                data = json.load(fp)
+                            if isinstance(data, dict) and 'id' in data and 'status' in data:
+                                has_task_file = True
+                                break
+                        except Exception:
+                            continue
+                    if has_task_file:
                         self.tasks_dir = l_dir
                         break
                 except Exception:
