@@ -34,10 +34,13 @@ def execute_ripgrep(
     try:
         cmd = [
             "rg", "--color", "never", "-n",
-            "-A", str(context_lines), 
+            "-A", str(context_lines),
             "-B", str(context_lines),
             "-m", str(max_results),
-            "--glob", "!NUL",  # 排除 Windows 保留设备名文件
+            "--iglob", "!nul",   # 排除 Windows 保留设备名（大小写不敏感）
+            "--iglob", "!con",   # 排除其他 Windows 保留设备名
+            "--iglob", "!prn",
+            "--iglob", "!aux",
         ]
         
         if ignore_case:
@@ -147,8 +150,14 @@ def list_files(
         文件列表
     """
     try:
-        cmd = ["rg", "--files", "--max-depth", str(max_depth)]
-        
+        cmd = [
+            "rg", "--files", "--max-depth", str(max_depth),
+            "--iglob", "!nul",   # 排除 Windows 保留设备名
+            "--iglob", "!con",
+            "--iglob", "!prn",
+            "--iglob", "!aux",
+        ]
+
         if pattern != "*":
             cmd.extend(["--glob", pattern])
         if file_type:
