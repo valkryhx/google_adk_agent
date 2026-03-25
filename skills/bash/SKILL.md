@@ -84,8 +84,63 @@ bash(command='python -c "import time; time.sleep(5); print(done)"', timeout=10)
 - `uname -a` - 系统信息
 - `find <path> -name <pattern>` - 查找文件
 
-## 安全注意事项
-1. **禁止执行高危命令**（如 `rm -rf`, `mkfs` 等），工具会自动拦截。
+## Windows 后台启动服务（重要）
+
+在 Windows 上启动 Flask/uvicorn 等服务时，**必须使用后台方式**，否则会阻塞对话。
+
+### 方式一：`subprocess.Popen` + `DETACHED_PROCESS`（推荐，可获取 PID）
+
+```python
+# 启动 Flask 服务到后台，不阻塞，返回 PID 方便后续 kill
+bash(command='python -c "
+import subprocess
+CREATE_NO_WINDOW = 0x08000000
+DETACHED_PROCESS = 0x00000008
+proc = subprocess.Popen(
+    [\"python\", \"app.py\"],
+    creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+    stdout=open(\"flask.log\", \"w\"),
+    stderr=subprocess.STDOUT
+)
+print(\"PID:\", proc.pid)
+"')
+```
+
+### 方式二：`START /B`（快捷，日志重定向到文件）
+
+```python
+# 用 CMD 的 START /B 在后台启动，输出写入 flask.log
+bash(command='cmd /c start /b python app.py > flask.log 2>&1')
+```
+
+### 验证服务已启动
+
+```python
+import time, urllib.request
+time.sleep(3)  # 等待服务就绪
+try:
+    r = urllib.request.urlopen('http://localhost:5000/', timeout=3)
+    print('服务正常:', r.status)
+except Exception as e:
+    print('服务未就绪:', e)
+    # 查看日志排查原因
+    bash(command='type flask.log')
+```
+
+### 停止后台服务
+
+```python
+# 按端口 kill（推荐）
+bash(command='powershell -Command "Get-NetTCPConnection -LocalPort 5000 | Select-Object -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force }"')
+
+# 按 PID kill（已知 PID 时）
+bash(command='taskkill /PID 12345 /F')
+```
+
+> ❌ **禁止**直接 `bash(command='python app.py')` 启动服务，这会前台阻塞，导致对话挂起。
+
+
+## 安全注意事项（如 `rm -rf`, `mkfs` 等），工具会自动拦截。
 2. 对于耗时命令，设置合理的超时时间。
 3. 敏感信息（密码、密钥）不要在命令中明文传递。
 
