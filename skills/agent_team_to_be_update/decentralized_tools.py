@@ -1015,7 +1015,9 @@ async def dag_create(
 
 async def dag_execute(
     team_id: str,
-    max_waves: int = 100
+    max_waves: int = 100,
+    _status_reporter=None,
+    task_timeout: float = 180.0,
 ) -> str:
     """
     【Leader 专用】等待 DAG 任务队列全部由 Worker 执行完成。
@@ -1030,11 +1032,31 @@ async def dag_execute(
     Returns:
         执行摘要报告
     """
+    import re as _re
+
+    if not callable(_status_reporter):
+        _status_reporter = None
+
+    def _report(event_type, task):
+        if not _status_reporter:
+            return
+        # 从 owner 格式 "worker_8001@adk_swarm" 解析端口
+        port_match = _re.search(r'_(\d+)@', task.owner or "")
+        worker_port = int(port_match.group(1)) if port_match else 0
+        _status_reporter(event_type, {
+            "worker_port": worker_port,
+            "worker_name": task.owner or f"worker_{worker_port}",
+            "session_id": task.id,
+            "task_preview": f"{task.name}: {task.description[:60]}..."
+                            if len(task.description) > 60 else f"{task.name}: {task.description}",
+        })
+
     coord_dir = _get_coordination_dir(team_id)
     queue = TaskQueue(team_id=team_id, base_dir=coord_dir)
 
     poll_interval = 3.0  # 秒
     wave = 0
+    seen_states: dict = {}  # task_id -> last known status
 
     while wave < max_waves:
         wave += 1
@@ -1043,6 +1065,30 @@ async def dag_execute(
         if not all_tasks:
             await asyncio.sleep(poll_interval)
             continue
+
+        # 超时检测：in_progress 任务超过 task_timeout 秒未完成则回收
+        now = time.time()
+        for t in all_tasks:
+            if t.status == "in_progress" and t.claimed_at and (now - t.claimed_at) > task_timeout:
+                print(f"[dag_execute] ⏰ 任务 {t.name} ({t.id}) 超时 ({task_timeout}s)，回收为 pending")
+                queue.reset_task(t.id)
+                if _status_reporter:
+                    _report("fail", t)
+                seen_states[t.id] = "pending"  # 重置跃迁记录，允许重新上报 init
+
+        # 检测状态跃迁并上报
+        for t in all_tasks:
+            prev = seen_states.get(t.id)
+            cur = t.status
+            if cur == prev:
+                continue
+            seen_states[t.id] = cur
+            if cur == "in_progress":
+                _report("init", t)
+            elif cur == "completed":
+                _report("finish", t)
+            elif cur == "failed":
+                _report("fail", t)
 
         total = len(all_tasks)
         completed = [t for t in all_tasks if t.status == "completed"]
@@ -1073,6 +1119,11 @@ async def dag_execute(
         f"Waves(polls): {wave}",
         f"Tasks: {completed}/{total} 完成" + (f", {failed} 失败" if failed else ""),
     ]
+    lines.append("---")
+    for t in all_tasks:
+        status_icon = {"completed": "✓", "failed": "✗", "in_progress": "⋯", "pending": "○"}.get(t.status, "?")
+        owner_str = t.owner or "unowned"
+        lines.append(f"[TASK] {status_icon} {t.name} | owner={owner_str} | status={t.status} | id={t.id}")
     if failed:
         failed_tasks = [t for t in all_tasks if t.status == "failed"]
         lines.append("失败任务:")
@@ -1081,10 +1132,11 @@ async def dag_execute(
     return "\n".join(lines)
 
 
-def get_decentralized_tools():
+def get_decentralized_tools(status_reporter=None):
     """
     返回去中心化自协调工具集。
     team_id 固定为 ADK_TEAM_ID 环境变量（默认 swarm_team），LLM 无需传入。
+    status_reporter: 可选，用于 dag_execute 实时上报任务状态卡片。
     """
     import functools
     import inspect
@@ -1092,14 +1144,17 @@ def get_decentralized_tools():
     FIXED_TEAM_ID = os.environ.get("ADK_TEAM_ID", "swarm_team")
 
     def bind_team(fn):
-        """返回一个移除了 team_id 参数、固定注入 FIXED_TEAM_ID 的 wrapper。"""
+        """返回一个移除了 team_id 和 _status_reporter 参数、固定注入的 wrapper。"""
         sig = inspect.signature(fn)
-        new_params = [p for name, p in sig.parameters.items() if name != "team_id"]
+        exclude = {"team_id", "_status_reporter"}
+        new_params = [p for name, p in sig.parameters.items() if name not in exclude]
         new_sig = sig.replace(parameters=new_params)
 
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
             kwargs["team_id"] = FIXED_TEAM_ID
+            if "_status_reporter" in inspect.signature(fn).parameters:
+                kwargs["_status_reporter"] = status_reporter
             return await fn(*args, **kwargs)
 
         wrapper.__signature__ = new_sig

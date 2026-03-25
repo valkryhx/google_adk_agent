@@ -604,7 +604,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // Build header info based on meeting or deep think context
-            let workerLabel = `Worker-${workerPort}`;
+            let workerLabel = data.worker_name || `Worker-${workerPort}`;
             let metaLabel = 'Running';
             let statusIcon = 'sync';
 
@@ -998,9 +998,47 @@ document.addEventListener('DOMContentLoaded', () => {
                                         ${resultHtml}
                                     </div>`;
                         });
+                    } else if (block.tool_name === 'dag_execute' && block.tool_args) {
+                        // === dag_execute History Cards ===
+                        let dagResultContent = '';
+                        if (i + 1 < blocks.length && (blocks[i + 1].type === 'tool_result' || blocks[i + 1].type === 'function_response')) {
+                            dagResultContent = blocks[i + 1].tool_result_clean || blocks[i + 1].content || '';
+                        }
+                        const dagSummaryMatch = dagResultContent.match(/Tasks: ([0-9]+\/[0-9]+[^\n]*)/);
+                        const dagSummary = dagSummaryMatch ? dagSummaryMatch[1] : 'DAG Executed';
+
+                        // Parse [TASK] lines to render individual worker cards
+                        const taskLines = dagResultContent.split('\n').filter(l => l.startsWith('[TASK]'));
+                        if (taskLines.length > 0) {
+                            taskLines.forEach(line => {
+                                // [TASK] ✓ 任务名 | owner=worker_8003@adk_swarm | status=completed | id=xxx
+                                const nameMatch = line.match(/\] [✓✗⋯○?] (.+?) \|/);
+                                const ownerMatch = line.match(/owner=([^|]+)/);
+                                const statusMatch = line.match(/status=([^|]+)/);
+                                const taskName = nameMatch ? nameMatch[1].trim() : 'Task';
+                                const workerName = ownerMatch ? ownerMatch[1].trim() : 'unknown';
+                                const taskStatus = statusMatch ? statusMatch[1].trim() : 'unknown';
+                                const cardClass = taskStatus === 'completed' ? 'success' : taskStatus === 'failed' ? 'failed' : 'success';
+                                const iconName = taskStatus === 'completed' ? 'check_circle' : taskStatus === 'failed' ? 'cancel' : 'history';
+                                html += `<div class="swarm-card ${cardClass}" style="margin: 10px 0;">
+                                    <div class="swarm-card-header">
+                                        <div class="swarm-status-icon"><span class="material-symbols-outlined">${iconName}</span></div>
+                                        <div class="swarm-info">
+                                            <div class="swarm-worker-id">${workerName}</div>
+                                            <div class="swarm-task-preview">${taskName}</div>
+                                        </div>
+                                        <div class="swarm-meta">History</div>
+                                    </div>
+                                </div>`;
+                            });
+                        } else {
+                            // Fallback: single summary card
+                            const dagResultHtml = dagResultContent ? '<details class="swarm-logs-wrapper"><summary>Execution Summary</summary><pre class="swarm-terminal">' + dagResultContent + '</pre></details>' : '';
+                            html += '<div class="swarm-card success" style="margin: 10px 0;"><div class="swarm-card-header"><div class="swarm-status-icon"><span class="material-symbols-outlined">account_tree</span></div><div class="swarm-info"><div class="swarm-worker-id">DAG Execute</div><div class="swarm-task-preview">' + dagSummary + '</div></div><div class="swarm-meta">History</div></div>' + dagResultHtml + '</div>';
+                        }
+
                     } else if (block.tool_name === 'hold_meeting' && block.tool_args) {
                         // === hold_meeting History Cards ===
-                        const args = block.tool_args;
                         const meetingTopic = args.topic || 'Meeting';
                         const maxRounds = args.max_rounds || '?';
                         const participantCount = args.participant_count || '?';

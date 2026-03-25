@@ -1779,7 +1779,8 @@ def get_tools(agent, session_service, app_info, status_reporter=None, **kwargs):
     # 组合所有工具：去中心化工具直接暴露原始函数，保留完整参数签名供 LLM 调用
     all_tools = [stc, hm, dpt]
     if DECENTRALIZED_TOOLS_AVAILABLE:
-        all_tools.extend(DECENTRALIZED_TOOLS)
+        # 在 get_tools() 内重新构建，以便注入 status_reporter 给 dag_execute
+        all_tools.extend(dx_tools.get_decentralized_tools(status_reporter=status_reporter))
 
     # [缺陷修复] 启动 Worker 自主任务认领后台循环
     # 仅在 ADK_NODE_TYPE=worker 时生效，进程级单例，不影响 Leader 节点

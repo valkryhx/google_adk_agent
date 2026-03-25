@@ -319,6 +319,7 @@ class TaskQueue:
                     # 原子性更新
                     task.status = "in_progress"
                     task.owner = agent_id
+                    task.claimed_at = time.time()
 
                     # 使用临时文件写入防止损坏
                     temp_path = task_path + ".tmp"

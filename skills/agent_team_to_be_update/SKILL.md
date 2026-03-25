@@ -67,6 +67,10 @@ await dag_create(
 
 ### 第二步：触发执行（`dag_execute`）
 
+> **关键：创建完 DAG 后立即调用 `dag_execute`，无需检查 Worker 是否在线。**
+> Worker 节点在后台自主抢占任务，不会向 Leader 注册，`team_list_workers()` 可能返回空但任务仍在执行。
+> **严禁**以 `team_list_workers()` 返回空为由跳过或推迟 `dag_execute`。
+
 ```python
 await dag_execute(max_waves=100)
 ```

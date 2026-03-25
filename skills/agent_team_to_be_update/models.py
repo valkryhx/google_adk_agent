@@ -28,6 +28,7 @@ class Task:
     blocks: List[str] = field(default_factory=list)  # 被这个任务阻塞的任务
     created_at: float = field(default_factory=time.time)
     completed_at: Optional[float] = None
+    claimed_at: Optional[float] = None  # Worker 认领时间，用于超时检测
 
     # 产物信息
     expected_artifacts: List[str] = field(default_factory=list)  # 期望产出文件
@@ -62,6 +63,7 @@ class Task:
             "blocks": self.blocks,
             "createdAt": self.created_at,
             "completedAt": self.completed_at,
+            "claimedAt": self.claimed_at,
             "expectedArtifacts": self.expected_artifacts,
             "verificationCommands": self.verification_commands,
             "writableFiles": self.writable_files,
@@ -91,6 +93,7 @@ class Task:
             blocks=data.get("blocks", []) or data.get("blocks", []),
             created_at=data.get("createdAt", time.time()) or data.get("created_at", time.time()),
             completed_at=data.get("completedAt") or data.get("completed_at"),
+            claimed_at=data.get("claimedAt") or data.get("claimed_at"),
             expected_artifacts=data.get("expectedArtifacts", []) or data.get("expected_artifacts", []),
             verification_commands=data.get("verificationCommands", []) or data.get("verification_commands", []),
             writable_files=data.get("writableFiles", []) or data.get("writable_files", []),
