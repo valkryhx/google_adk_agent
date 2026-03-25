@@ -479,12 +479,12 @@ def get_environment_variables(filter_key: Optional[str] = None) -> str:
 # 工具函数字典
 bash_TOOLS = {
     "bash": bash,  # Renamed from bash
-    "get_system_info": get_system_info,
-    "list_processes": list_processes,
-    "get_network_info": get_network_info,
-    "ping_host": ping_host,
-    "check_port": check_port,
-    "get_environment_variables": get_environment_variables,
+    # "get_system_info": get_system_info,
+    # "list_processes": list_processes,
+    # "get_network_info": get_network_info,
+    # "ping_host": ping_host,
+    # "check_port": check_port,
+    # "get_environment_variables": get_environment_variables,
 }
 
 

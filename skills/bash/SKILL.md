@@ -152,11 +152,99 @@ bash(command='taskkill /PID 12345 /F')
 **执行流程**:
 ```
 Action: bash(command="ping -n 4 8.8.8.8", timeout=30)
-Observation: 
+Observation:
 正在 Ping 8.8.8.8 具有 32 字节的数据:
 来自 8.8.8.8 的回复: 字节=32 时间=35ms TTL=117
 ...
 数据包: 已发送 = 4，已接收 = 4，丢失 = 0 (0% 丢失)
 
 Final Answer: 网络连通正常，到 8.8.8.8 的平均延迟约 35ms，无丢包。
+```
+
+---
+
+## Windows 实用命令示例
+
+### 进程与端口管理
+
+```python
+# 查看占用某端口的进程
+bash(command='powershell -Command "Get-NetTCPConnection -LocalPort 5000 | Select-Object LocalPort, State, OwningProcess"')
+
+# 按端口强制 kill 进程
+bash(command='powershell -Command "Get-NetTCPConnection -LocalPort 5000 | Select-Object -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force }"')
+
+# 查看所有 Python 进程
+bash(command='tasklist /fi "imagename eq python.exe"')
+
+# 按 PID kill
+bash(command='taskkill /PID 12345 /F')
+```
+
+### 文件与目录操作
+
+```python
+# 查看目录内容（含大小）
+bash(command='powershell -Command "Get-ChildItem D:\\myproject | Select-Object Name, Length, LastWriteTime"')
+
+# 递归查找特定文件
+bash(command='cmd /c dir /s /b D:\\myproject\\*.py')
+
+# 查看文件末尾 N 行（tail 等价）
+bash(command='powershell -Command "Get-Content D:\\myproject\\app.log -Tail 20"')
+
+# 实时监控日志文件（tail -f 等价，超时后停止）
+bash(command='powershell -Command "Get-Content D:\\myproject\\flask.log -Wait -Tail 10"', timeout=10)
+
+# 创建多级目录
+bash(command='cmd /c mkdir D:\\myproject\\static\\css')
+
+# 复制文件
+bash(command='cmd /c copy D:\\src\\file.py D:\\dst\\file.py')
+```
+
+### Python 环境
+
+```python
+# 检查已安装的包
+bash(command='pip list')
+
+# 安装依赖
+bash(command='pip install flask requests -q')
+
+# 从 requirements.txt 安装
+bash(command='pip install -r D:\\myproject\\requirements.txt -q')
+
+# 检查 Python 版本和路径
+bash(command='python --version && where python')
+
+# 运行 Python 脚本（前台，适合短命令）
+bash(command='python D:\\myproject\\init_db.py', timeout=30)
+```
+
+### 网络诊断
+
+```python
+# 检查端口是否监听
+bash(command='netstat -an | findstr :5000')
+
+# HTTP 请求测试（curl 等价）
+bash(command='powershell -Command "Invoke-WebRequest -Uri http://localhost:5000/api/test -Method GET | Select-Object StatusCode, Content"')
+
+# 发送 POST 请求
+bash(command='powershell -Command "Invoke-WebRequest -Uri http://localhost:5000/api/items -Method POST -Body \'{\'\"title\'\":\'\"test\'\'\"}\'\' -ContentType application/json | Select-Object StatusCode"')
+```
+
+### 系统信息
+
+```python
+# 查看磁盘空间
+bash(command='powershell -Command "Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{N=\'Used(GB)\';E={[math]::Round($_.Used/1GB,1)}}, @{N=\'Free(GB)\';E={[math]::Round($_.Free/1GB,1)}}"')
+
+# 查看内存使用
+bash(command='powershell -Command "Get-Process | Sort-Object WorkingSet -Descending | Select-Object -First 10 Name, @{N=\'Mem(MB)\';E={[math]::Round($_.WorkingSet/1MB,1)}}"')
+
+# 查看环境变量
+bash(command='cmd /c set PATH')
+bash(command='powershell -Command "$env:PYTHONPATH"')
 ```
