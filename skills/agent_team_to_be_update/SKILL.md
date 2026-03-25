@@ -72,8 +72,12 @@ await dag_create(
 > **严禁**以 `team_list_workers()` 返回空为由跳过或推迟 `dag_execute`。
 
 ```python
-await dag_execute(max_waves=100)
+await dag_execute(max_polls=100)
 ```
+
+> `max_polls`：最大轮询次数，每次间隔 3 秒，总等待上限 = `max_polls × 3` 秒。
+> 默认 100 次 = 5 分钟。任务链较长时可适当调大（如 `max_polls=200`）。
+> 单任务超时固定为 180 秒，超时自动回收并由其他 Worker 重新认领。
 
 返回示例：
 ```
@@ -99,7 +103,7 @@ await task_status(task_id="task-a3f7c2d1")
 | 工具 | 用途 |
 |------|------|
 | `dag_create(tasks)` | 批量创建 DAG 任务（推荐）|
-| `dag_execute(max_waves)` | 触发 DAG 执行，等待所有任务完成 |
+| `dag_execute(max_polls)` | 触发 DAG 执行，等待所有任务完成 |
 | `task_list()` | 查看所有任务状态 |
 | `task_status(task_id)` | 查看单个任务详情 |
 | `task_create(name, description, ...)` | 单独创建一个任务（低级 API）|
@@ -156,7 +160,7 @@ await dag_create(
         },
     ]
 )
-await dag_execute(max_waves=50)
+await dag_execute(max_polls=50)
 ```
 
 ---

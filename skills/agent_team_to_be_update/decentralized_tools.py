@@ -1015,7 +1015,7 @@ async def dag_create(
 
 async def dag_execute(
     team_id: str,
-    max_waves: int = 100,
+    max_polls: int = 100,
     _status_reporter=None,
     task_timeout: float = 180.0,
 ) -> str:
@@ -1027,7 +1027,7 @@ async def dag_execute(
 
     Args:
         team_id: 团队唯一标识
-        max_waves: 最大轮询次数（每次间隔 3 秒，防止无限等待）
+        max_polls: 最大轮询次数（每次间隔 3 秒，总等待上限 = max_polls × 3 秒）
 
     Returns:
         执行摘要报告
@@ -1058,7 +1058,7 @@ async def dag_execute(
     wave = 0
     seen_states: dict = {}  # task_id -> last known status
 
-    while wave < max_waves:
+    while wave < max_polls:
         wave += 1
         all_tasks = queue.list_tasks()
 
