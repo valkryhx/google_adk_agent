@@ -362,6 +362,36 @@ class TaskQueue:
 
         return True
 
+    def reset_task(self, task_id: str) -> bool:
+        """重置任务为可认领状态（超时/验证不通过后回收）
+        
+        将任务状态从 in_progress 恢复为 pending，清除 owner，
+        使其可被其他 Worker 重新认领。
+        
+        Args:
+            task_id: 要重置的任务ID
+            
+        Returns:
+            True 如果成功重置
+        """
+        task = self.get_task(task_id)
+        if not task:
+            return False
+
+        task.status = "pending"
+        task.owner = None
+        self._save_task(task)
+
+        # 清理锁文件
+        lock_path = self._get_lock_path(task_id)
+        if os.path.exists(lock_path):
+            try:
+                os.remove(lock_path)
+            except OSError:
+                pass
+
+        return True
+
     def fail_task(self, task_id: str) -> bool:
         """标记任务失败
         
@@ -386,6 +416,45 @@ class TaskQueue:
             except OSError:
                 pass
 
+        return True
+
+    def handle_task_error(self, task_id: str) -> bool:
+        """处理任务执行异常或验证失败时的退避熔断。
+        
+        基于 task 的当前重试次数，决定是继续重试（返还回 pending 供后续可用节点抢占），
+        还是直接 fail_task（彻底熔断卡死，等待人工干预/主节点派发修正）。
+        
+        Args:
+            task_id: 发生异常的任务 ID
+            
+        Returns:
+            True 表示重置为 pending 可继续被抢占执行，False 表示超过最大次数彻底失败。
+        """
+        task = self.get_task(task_id)
+        if not task:
+            return False
+
+        task.retries += 1
+        if task.retries >= getattr(task, 'max_retries', 3):
+            # 彻底熔断
+            print(f"[TaskQueue] 🚨 任务 {task_id} 已连续重试 {task.retries} 次，达到上限，彻底失败！")
+            self.fail_task(task_id)
+            return False
+            
+        # 重置回待执行状态
+        print(f"[TaskQueue] ⚠️ 任务 {task_id} 当前重试 {task.retries}/{getattr(task, 'max_retries', 3)} 次，重置为 pending")
+        task.status = "pending"
+        task.owner = None
+        self._save_task(task)
+
+        # 清除旧的抢占锁，以便其他节点接单
+        lock_path = self._get_lock_path(task_id)
+        if os.path.exists(lock_path):
+            try:
+                os.remove(lock_path)
+            except OSError:
+                pass
+                
         return True
 
     def _save_task(self, task: Task):

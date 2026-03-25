@@ -50,7 +50,7 @@ def _get_coordination_dir(team_id: str) -> str:
     3. 当前目录/coordination/{team_id}
     """
     if os.environ.get("ADK_COORDINATION_DIR"):
-        return os.path.join(os.environ["ADK_COORDINATION_DIR"], team_id)
+        return os.path.join(os.environ["ADK_COORDINATION_DIR"].strip(), team_id.strip())
     project_root = os.environ.get(
         "ADK_PROJECT_ROOT",
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -964,7 +964,6 @@ async def dag_create(
             expected_artifacts=task_def.get("expected_artifacts", []),
             writable_files=task_def.get("writable_files", []),
             read_only_files=task_def.get("read_only_files", []),
-            task_type=task_def.get("task_type", "regular")
         )
         name_to_id[task_def["name"]] = task.id
         created_tasks.append(task)
@@ -1019,44 +1018,94 @@ async def dag_execute(
     max_waves: int = 100
 ) -> str:
     """
-    【Leader 专用】执行已创建的 DAG 任务队列。
+    【Leader 专用】等待 DAG 任务队列全部由 Worker 执行完成。
 
-    使用 LoopExecutor 驱动任务队列（含循环组支持），
-    在 asyncio 环境中非阻塞地轮询并执行所有就绪任务。
+    本函数为纯监控轮询：不执行任何任务，只等待 SelfClaimLoop
+    后台协程（Worker/Leader 节点）将所有任务认领并完成。
 
     Args:
         team_id: 团队唯一标识
-        max_waves: 最大执行波次（防止死循环）
+        max_waves: 最大轮询次数（每次间隔 3 秒，防止无限等待）
 
     Returns:
         执行摘要报告
     """
     coord_dir = _get_coordination_dir(team_id)
-
     queue = TaskQueue(team_id=team_id, base_dir=coord_dir)
-    executor = LoopExecutor(queue)
 
-    stats = await executor.execute_mixed_dag(max_waves=max_waves)
+    poll_interval = 3.0  # 秒
+    wave = 0
 
-    task_stats = stats.get("tasks", {})
-    loop_stats = stats.get("loops", {})
-    return (
-        f"[DAG EXECUTED]\n"
-        f"Team: {team_id}\n"
-        f"Waves: {stats.get('waves', 0)}\n"
-        f"Tasks: {task_stats.get('completed', 0)}/{task_stats.get('total', 0)} 完成\n"
-        f"Loops: {loop_stats.get('completed', 0)}/{loop_stats.get('total', 0)} 完成\n"
-        f"Total Iterations: {stats.get('executor', {}).get('total_iterations', 0)}"
-    )
+    while wave < max_waves:
+        wave += 1
+        all_tasks = queue.list_tasks()
+
+        if not all_tasks:
+            await asyncio.sleep(poll_interval)
+            continue
+
+        total = len(all_tasks)
+        completed = [t for t in all_tasks if t.status == "completed"]
+        failed = [t for t in all_tasks if t.status == "failed"]
+        in_progress = [t for t in all_tasks if t.status == "in_progress"]
+        pending = [t for t in all_tasks if t.status == "pending"]
+
+        print(
+            f"[dag_execute] Wave {wave} | "
+            f"completed={len(completed)} failed={len(failed)} "
+            f"in_progress={len(in_progress)} pending={len(pending)}"
+        )
+
+        # 全部完成（含失败算结束）
+        if len(completed) + len(failed) == total:
+            break
+
+        await asyncio.sleep(poll_interval)
+
+    all_tasks = queue.list_tasks()
+    total = len(all_tasks)
+    completed = sum(1 for t in all_tasks if t.status == "completed")
+    failed = sum(1 for t in all_tasks if t.status == "failed")
+
+    lines = [
+        f"[DAG EXECUTED]",
+        f"Team: {team_id}",
+        f"Waves(polls): {wave}",
+        f"Tasks: {completed}/{total} 完成" + (f", {failed} 失败" if failed else ""),
+    ]
+    if failed:
+        failed_tasks = [t for t in all_tasks if t.status == "failed"]
+        lines.append("失败任务:")
+        for t in failed_tasks:
+            lines.append(f"  - {t.name} ({t.id})")
+    return "\n".join(lines)
 
 
 def get_decentralized_tools():
     """
     返回去中心化自协调工具集。
-    
-    供 Agent (Leader 或 Worker) 注册使用。
+    team_id 固定为 ADK_TEAM_ID 环境变量（默认 swarm_team），LLM 无需传入。
     """
-    return [
+    import functools
+    import inspect
+
+    FIXED_TEAM_ID = os.environ.get("ADK_TEAM_ID", "swarm_team")
+
+    def bind_team(fn):
+        """返回一个移除了 team_id 参数、固定注入 FIXED_TEAM_ID 的 wrapper。"""
+        sig = inspect.signature(fn)
+        new_params = [p for name, p in sig.parameters.items() if name != "team_id"]
+        new_sig = sig.replace(parameters=new_params)
+
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            kwargs["team_id"] = FIXED_TEAM_ID
+            return await fn(*args, **kwargs)
+
+        wrapper.__signature__ = new_sig
+        return wrapper
+
+    raw_tools = [
         # Team Management
         team_create,
         team_join,
@@ -1080,3 +1129,4 @@ def get_decentralized_tools():
         dag_create,
         dag_execute,
     ]
+    return [bind_team(fn) for fn in raw_tools]

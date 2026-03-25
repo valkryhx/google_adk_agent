@@ -3197,10 +3197,12 @@ async def init_decentralized_claim_loop():
     try:
         from skills.agent_team_to_be_update.self_claim_loop import SelfClaimLoop
         
-        # 1. 统一协调目录
-        coord_dir = os.environ.get("ADK_COORDINATION_DIR", "coordination")
+        # 1. 统一协调目录（必须与 _get_coordination_dir(team_id) 保持一致，加上 team_id 子目录）
+        _team_id_for_dir = os.environ.get("ADK_TEAM_ID", "swarm_team").strip()
+        coord_dir = os.environ.get("ADK_COORDINATION_DIR", "coordination").strip()
         if not os.path.isabs(coord_dir):
             coord_dir = os.path.abspath(coord_dir)
+        coord_dir = os.path.join(coord_dir, _team_id_for_dir)
         print(f"[Node-{node_config.port}] 🔍 巡检锚点定向: {coord_dir}")
 
         # 2. 构造干净、隔离的本地执行器

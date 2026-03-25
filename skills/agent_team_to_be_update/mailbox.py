@@ -209,17 +209,29 @@ class Mailbox:
         )
 
         inbox_path = self._get_inbox_path(to_agent)
+        line = json.dumps(msg.to_json(), ensure_ascii=False) + "\n"
 
         # 进程内互斥锁，防止同进程多线程并发写入同一收件箱损坏 JSONL
-        with _get_inbox_lock(inbox_path):
-            with open(inbox_path, 'a', encoding='utf-8') as f:
-                if self._acquire_file_lock(f, exclusive=True):
-                    f.write(json.dumps(msg.to_json(), ensure_ascii=False) + "\n")
-                    f.flush()
-                    os.fsync(f.fileno())
+        # [修复] Windows 多进程并发 open() 同一文件可能抛 PermissionError，
+        # 增加重试机制避免瞬时文件锁冲突导致整个守护进程崩溃。
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                with _get_inbox_lock(inbox_path):
+                    with open(inbox_path, 'a', encoding='utf-8') as f:
+                        if self._acquire_file_lock(f, exclusive=True):
+                            f.write(line)
+                            f.flush()
+                            os.fsync(f.fileno())
+                        else:
+                            f.write(line)
+                            f.flush()
+                break  # 成功写入，跳出重试
+            except PermissionError:
+                if attempt < max_retries - 1:
+                    time.sleep(0.1 * (attempt + 1))  # 退避重试
                 else:
-                    f.write(json.dumps(msg.to_json(), ensure_ascii=False) + "\n")
-                    f.flush()
+                    raise  # 重试耗尽，向上抛出
 
         return msg.id
 

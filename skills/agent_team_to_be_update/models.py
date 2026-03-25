@@ -37,6 +37,10 @@ class Task:
     writable_files: List[str] = field(default_factory=list)  # 可写文件
     read_only_files: List[str] = field(default_factory=list)  # 只读文件
 
+    # 容错熔断 (新增)
+    retries: int = 0
+    max_retries: int = 3
+
     # ========== 循环/迭代相关字段 (新增) ==========
     task_type: str = "regular"  # "regular" | "loop" | "gate"
     loop_group_id: Optional[str] = None  # 所属循环组 ID
@@ -62,6 +66,8 @@ class Task:
             "verificationCommands": self.verification_commands,
             "writableFiles": self.writable_files,
             "readOnlyFiles": self.read_only_files,
+            "retries": self.retries,
+            "maxRetries": self.max_retries,
             # Loop fields
             "taskType": self.task_type,
             "loopGroupId": self.loop_group_id,
@@ -89,6 +95,8 @@ class Task:
             verification_commands=data.get("verificationCommands", []) or data.get("verification_commands", []),
             writable_files=data.get("writableFiles", []) or data.get("writable_files", []),
             read_only_files=data.get("readOnlyFiles", []) or data.get("read_only_files", []),
+            retries=data.get("retries", 0),
+            max_retries=data.get("maxRetries", 3) if "maxRetries" in data else data.get("max_retries", 3),
             # Loop fields
             task_type=data.get("taskType", "regular") or data.get("task_type", "regular"),
             loop_group_id=data.get("loopGroupId") or data.get("loop_group_id"),

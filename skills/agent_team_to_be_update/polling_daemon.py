@@ -81,6 +81,11 @@ class PollingDaemon:
         self._thread: Optional[threading.Thread] = None
         self._last_message_count = 0
         self._last_task_states: dict = {}
+        self._is_busy = False
+
+    def set_busy(self, is_busy: bool):
+        """Set whether the agent is currently busy executing a task."""
+        self._is_busy = is_busy
 
     def start(self):
         """
@@ -124,7 +129,7 @@ class PollingDaemon:
             try:
                 self._check_inbox()
                 self._check_tasks()
-                if self.on_idle:
+                if not self._is_busy and self.on_idle:
                     self.on_idle()
             except Exception as e:
                 # Wrap exceptions to prevent daemon from crashing

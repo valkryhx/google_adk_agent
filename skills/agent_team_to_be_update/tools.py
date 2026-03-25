@@ -1578,9 +1578,23 @@ try:
     DECENTRALIZED_TOOLS = dx_tools.get_decentralized_tools()
     DECENTRALIZED_TOOLS_AVAILABLE = True
 except ImportError:
-    DECENTRALIZED_TOOLS = []
-    DECENTRALIZED_TOOLS_AVAILABLE = False
-    SelfClaimLoop = None
+    # 相对导入失败时（如 skill_load 用 spec_from_file_location 加载），改用绝对路径 + sys.path 注入
+    try:
+        import sys as _sys
+        import importlib.util as _ilu
+        import os as _os
+        _skill_dir = _os.path.dirname(_os.path.abspath(__file__))
+        _added = _skill_dir not in _sys.path
+        if _added:
+            _sys.path.insert(0, _skill_dir)
+        import decentralized_tools as dx_tools
+        from self_claim_loop import SelfClaimLoop
+        DECENTRALIZED_TOOLS = dx_tools.get_decentralized_tools()
+        DECENTRALIZED_TOOLS_AVAILABLE = True
+    except Exception:
+        DECENTRALIZED_TOOLS = []
+        DECENTRALIZED_TOOLS_AVAILABLE = False
+        SelfClaimLoop = None
 
 # 进程级别单例守卫：确保每个 Worker 进程只启动一个 SelfClaimLoop
 _SELF_CLAIM_LOOP_STARTED = False
@@ -1762,31 +1776,10 @@ def get_tools(agent, session_service, app_info, status_reporter=None, **kwargs):
     dpt.__doc__ = deep_think.__doc__
     functools.update_wrapper(dpt, deep_think)
 
-    # --- decentralized tools wrappers ---
-    # 为去中心化工具添加异步 wrapper，注入 original_user_id
-    decentralized_wrapped = []
-    if DECENTRALIZED_TOOLS_AVAILABLE:
-        import functools as dx_functools
-        for tool in DECENTRALIZED_TOOLS:
-            # 判断是否为 async 函数
-            if asyncio.iscoroutinefunction(tool):
-                @dx_functools.wraps(tool)
-                async def wrapped_tool(t, **kw):
-                    # 去中心化工具使用 team_id 参数，不依赖 app_info
-                    return await t(**kw)
-                wrapped = wrapped_tool.__get__(tool, type(tool))
-            else:
-                wrapped = tool
-            decentralized_wrapped.append(wrapped)
-
-    # 组合所有工具
-    # 旧工具 (5个): dispatch_task, dispatch_batch_tasks, sync_task_context, hold_meeting, deep_think
-    # 新工具 (14个): team_create/join/leave/status/list_workers, task_create/claim/complete/status/list,
-    #                mailbox_send/read/broadcast, worker_status/idle_report, dag_create
-    # [去中心化架构] 已移除老推模型: dt (dispatch_task), dbt (dispatch_batch_tasks)
+    # 组合所有工具：去中心化工具直接暴露原始函数，保留完整参数签名供 LLM 调用
     all_tools = [stc, hm, dpt]
     if DECENTRALIZED_TOOLS_AVAILABLE:
-        all_tools.extend(decentralized_wrapped)
+        all_tools.extend(DECENTRALIZED_TOOLS)
 
     # [缺陷修复] 启动 Worker 自主任务认领后台循环
     # 仅在 ADK_NODE_TYPE=worker 时生效，进程级单例，不影响 Leader 节点
