@@ -93,23 +93,39 @@ def main():
             # 这样用户可以用 "python a.py > out.txt" 这种写法
             full_cmd_str = subprocess.list2cmdline(command_parts)
             
-            # 再次记录实际执行的命令串
+            # 记录实际执行的命令串
+            full_cmd_str = subprocess.list2cmdline(command_parts)
             f_log.write(f"Executing: {full_cmd_str}\n\n")
             f_log.flush()
-            
+
             # Prepare environment with UTF-8 enforcement to prevent garbled logs on Windows
             env = os.environ.copy()
             env["PYTHONIOENCODING"] = "utf-8"
             env["PYTHONUTF8"] = "1"
 
+            # 使用列表形式执行（shell=False），避免 list2cmdline 破坏含括号/引号的命令
+            # 如果 command_parts 只有一个元素且含管道符，降级到 shell=True
+            use_shell = len(command_parts) == 1 and any(c in command_parts[0] for c in ('|', '>', '<', '&&', '||'))
+            cmd_to_run = command_parts[0] if use_shell else command_parts
+
             proc = subprocess.run(
-                full_cmd_str,
-                shell=True,
-                stdout=f_log,
+                cmd_to_run,
+                shell=use_shell,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 env=env
             )
             exit_code = proc.returncode
+            output_bytes = proc.stdout or b''
+            # 优先 utf-8 解码，失败则用 gbk，再失败用 replace
+            for enc in ('utf-8', 'gbk'):
+                try:
+                    decoded = output_bytes.decode(enc)
+                    break
+                except Exception:
+                    decoded = output_bytes.decode('utf-8', errors='replace')
+            f_log.write(decoded)
+            f_log.flush()
             
         # 读取最后 N 行作为摘要
         try:

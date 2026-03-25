@@ -140,11 +140,18 @@ class DexManager:
         
         if sys.platform == "win32":
             DETACHED_PROCESS = 0x00000008
+            CREATE_NO_WINDOW = 0x08000000
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
             subprocess.Popen(
                 cmd_args,
-                creationflags=DETACHED_PROCESS,
+                creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
                 close_fds=True,
-                cwd=self.base_dir
+                cwd=self.base_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env
             )
         else:
             subprocess.Popen(
