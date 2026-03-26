@@ -1,12 +1,11 @@
-#  AI Agent 开发实战演进 (2026版)
+#  AI Agent 开发实战 (2026版)
 
 > **前言**：
-> 以前我们写代码是定义规则，现在我们写代码是管理和指示AI。
-> 本次分享将和大家一起学习构建从简单的LLM聊天功能到写代码、操作浏览器以及能力可扩展的（貌似）全能 Agent。
+> 以前我们写代码是定义规则，现在我们通过指示AI来帮助我们写代码，或者直接让AI来完成任务。
+> 本次分享将和大家一起学习AI Agent开发的内容，从构建简单的LLM聊天功能到2026年当下的可以写代码、操作浏览器以及能力可扩展的（貌似）全能 Agent。
 
 ## 目录
-
-- [AI Agent 开发实战演进 (2026版)](#ai-agent-开发实战演进-2026版)
+- [AI Agent 开发实战 (2026版)](#ai-agent-开发实战-2026版)
   - [目录](#目录)
   - [第1章 Agent的大脑：LLM API 与意图识别](#第1章-agent的大脑llm-api-与意图识别)
     - [1.1 基础：如何唤醒LLM (Standard Completion)](#11-基础如何唤醒llm-standard-completion)
@@ -96,7 +95,7 @@
     - [5.4.1.8 外部合作接口：Dynamic MCP](#5418-外部合作接口dynamic-mcp)
       - [什么是 MCP 协议？](#什么是-mcp-协议)
       - [Dynamic MCP Loader 概述](#dynamic-mcp-loader-概述)
-      - [connect_mcp 工具详解](#connect_mcp-工具详解)
+      - [connect\_mcp 工具详解](#connect_mcp-工具详解)
       - [典型使用场景](#典型使用场景)
       - [工作原理](#工作原理)
     - [5.4.1.9 外部非合作接口：Skill Creator](#5419-外部非合作接口skill-creator)
@@ -105,35 +104,35 @@
       - [复杂 Skill 的标准布局](#复杂-skill-的标准布局)
       - [生命周期管理](#生命周期管理)
       - [核心价值：方法论的工具化](#核心价值方法论的工具化)
-  - [5.4.2 语音接入](#542-语音接入)
-    - [sherpa_onnx 集成](#sherpa_onnx-集成)
-    - [语音交互流程](#语音交互流程)
-    - [使用场景](#使用场景)
-  - [5.4.3 Playwright 浏览器自动化](#543-playwright-浏览器自动化)
-    - [Playwright-CLI Skill](#playwright-cli-skill)
-    - [典型使用场景](#典型使用场景-1)
-    - [工作原理](#工作原理-1)
-  - [5.4.4 Agent-Team Swarm 集群协作](#544-agent-team-swarm-集群协作)
-    - [Swarm 架构概述](#swarm-架构概述)
-    - [决策指南](#决策指南)
-    - [dispatch_task（任务分发）](#dispatch_task任务分发)
-    - [dispatch_batch_tasks（并发分发）](#dispatch_batch_tasks并发分发)
-    - [sync_task_context（三模式查询）](#sync_task_context三模式查询)
-    - [hold_meeting（群体会议）](#hold_meeting群体会议)
-    - [服务发现与心跳](#服务发现与心跳)
-    - [Swarm 协作架构](#swarm-协作架构)
-    - [自愈机制](#自愈机制)
-  - [5.4.5 Agent-Team Swarm 2.0：去中心化拉模型架构](#545-agent-team-swarm-20去中心化拉模型架构)
-    - [5.4.5.1 两种架构对比：推 vs 拉](#5451-两种架构对比推-vs-拉)
-    - [5.4.5.2 核心模块架构](#5452-核心模块架构)
-    - [5.4.5.3 任务队列系统](#5453-任务队列系统)
-    - [5.4.5.4 Worker 自抢领循环](#5454-worker-自抢领循环)
-    - [5.4.5.5 去中心化工具集](#5455-去中心化工具集)
-    - [5.4.5.6 任务规划器：DAG 与 Wave 执行](#5456-任务规划器dag-与-wave-执行)
-    - [5.4.5.7 文件安全守卫](#5457-文件安全守卫)
-    - [5.4.5.8 协调目录与环境变量](#5458-协调目录与环境变量)
-    - [5.4.5.9 完整执行流程图](#5459-完整执行流程图)
-    - [5.4.5.10 去中心化 vs 中心化对比总结](#54510-去中心化-vs-中心化对比总结)
+    - [5.4.2 语音接入](#542-语音接入)
+      - [sherpa\_onnx 集成](#sherpa_onnx-集成)
+      - [语音交互流程](#语音交互流程)
+      - [使用场景](#使用场景)
+    - [5.4.3 Playwright 浏览器自动化](#543-playwright-浏览器自动化)
+      - [Playwright-CLI Skill](#playwright-cli-skill)
+      - [典型使用场景](#典型使用场景-1)
+      - [工作原理](#工作原理-1)
+    - [5.4.4 Agent-Team Swarm 集群协作](#544-agent-team-swarm-集群协作)
+      - [Swarm 架构概述](#swarm-架构概述)
+      - [决策指南](#决策指南)
+      - [dispatch\_task（任务分发）](#dispatch_task任务分发)
+      - [dispatch\_batch\_tasks（并发分发）](#dispatch_batch_tasks并发分发)
+      - [sync\_task\_context（三模式查询）](#sync_task_context三模式查询)
+      - [hold\_meeting（群体会议）](#hold_meeting群体会议)
+      - [服务发现与心跳](#服务发现与心跳)
+      - [Swarm 协作架构](#swarm-协作架构)
+      - [自愈机制](#自愈机制)
+    - [5.4.5 Agent-Team Swarm 2.0：去中心化拉模型架构](#545-agent-team-swarm-20去中心化拉模型架构)
+      - [5.4.5.1 两种架构对比：推 vs 拉](#5451-两种架构对比推-vs-拉)
+      - [5.4.5.2 核心模块架构](#5452-核心模块架构)
+      - [5.4.5.3 任务队列系统](#5453-任务队列系统)
+      - [5.4.5.4 Worker 自抢领循环](#5454-worker-自抢领循环)
+      - [5.4.5.5 去中心化工具集](#5455-去中心化工具集)
+      - [5.4.5.6 任务规划器：DAG 与 Wave 执行](#5456-任务规划器dag-与-wave-执行)
+      - [5.4.5.7 文件安全守卫](#5457-文件安全守卫)
+      - [5.4.5.8 协调目录与环境变量](#5458-协调目录与环境变量)
+      - [5.4.5.9 完整执行流程图](#5459-完整执行流程图)
+      - [5.4.5.10 去中心化 vs 中心化对比总结](#54510-去中心化-vs-中心化对比总结)
 
 ---
 
@@ -148,12 +147,12 @@
 ```mermaid
 sequenceDiagram
     participant User
-    participant Script
+    participant SDK
     participant LLM
-    User->>Script: 输入文本 "你好"
-    Script->>LLM: API Request (Messages)
-    LLM-->>Script: API Response ("你好！我是AI助手")
-    Script-->>User: 打印回复
+    User->>SDK: 输入文本 "你好"
+    SDK->>LLM: API Request (Messages)
+    LLM-->>SDK: API Response ("你好！我是AI助手")
+    SDK-->>User: 打印回复
 ```
 
 🔗 **代码演示**：
@@ -166,7 +165,8 @@ sequenceDiagram
 
 大模型最强的地方不在于聊天，而在于它能把自然语言通过“理解”转化为程序能读懂的 JSON。
 
-**场景**： 用户说“帮我查一下昨天北京的天气”，LLM 不应该直接回复天气（因为它不知道），而应该告诉程序去查数据库，提取出 `{"location": "北京", "date": "2026-02-09"}`。
+**场景**： 用户说“帮我查一下昨天北京的天气”，LLM 不应该直接回复天气（因为它不知道），而应该告诉程序去查外部接口获取真实的值，
+需要根据用户的输入填入外部接口需要的入参形式，例如 `{"location": "北京", "date": "2026-02-09"}`，然后程序调用外部接口获取真实的天气信息。
 
 ```mermaid
 flowchart LR
@@ -185,8 +185,12 @@ flowchart LR
 
 ### 1.3 Agent的双手：Tool Call / Function Calling
 
-**历史背景**： OpenAI 于 2023 年中旬引入，从“让 LLM 拼凑 JSON”进化为“原生连接函数”。
+**历史背景**： OpenAI 于 2023 年中旬引入，从“让 LLM 拼凑 JSON”进化为“原生支持函数调用”。
 **原理**： LLM 不执行函数，它只“想”要调用函数，真正的执行在本地（Local Execution）。
+
+**为什么 OpenAI 的 Function Calling 效果更好？** 因为它不是让模型把函数调用硬塞进普通对话文本里，而是在返回体里设计了专门的结构化字段来承载调用意图。典型响应里，`content` 与 `tool_calls` 是分开的：当模型决定调用工具时，参数会落在 `tool_calls` 字段中，而不是混在自然语言里；同时还会配合 `finish_reason: "tool_calls"` 这类明确标记。这样做的好处是：客户端无需用正则或字符串解析去“猜”模型是不是要调函数，解析更稳定；而且 `tool_calls` 是数组，天然支持一次返回多个工具调用。换句话说，OpenAI 的进步不只是 API 多了个字段，而是“**结构化输出格式 + 针对函数调用场景的专项微调**”一起让工具调用从 prompt 技巧变成了原生能力。
+
+下面这张图 可以看出 tool 执行的部分被划分为user的操作而非LLM，因为这属于LLM之外的输出内容。
 
 ```mermaid
 sequenceDiagram
