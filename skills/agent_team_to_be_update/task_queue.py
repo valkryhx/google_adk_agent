@@ -45,7 +45,7 @@ class TaskQueue:
         """
         self.team_id = team_id
         # 默认标准路径
-        self.tasks_dir = os.path.join(base_dir, "tasks", team_id)
+        self.tasks_dir = os.path.join(base_dir, "tasks")
         
         # 🚨 绝对防御 & 向下兼容 🚨
         # 检查 base_dir 下是否存在已被发布端直接抛出的 "TaskQueue" 或 ".task_queue" 目录

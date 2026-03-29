@@ -104,7 +104,7 @@ async def team_create(
 
     os.makedirs(coord_dir, exist_ok=True)
 
-    config = TeamConfig(team_id=team_id, base_dir=os.path.dirname(coord_dir), team_name=team_name)
+    config = TeamConfig(team_id=team_id, base_dir=coord_dir, team_name=team_name)
 
     # 注册 Leader 自身
     leader = TeamMember(
@@ -159,7 +159,7 @@ async def team_join(
         加入结果报告
     """
     coord_dir = _get_coordination_dir(team_id)
-    base_dir = os.path.dirname(coord_dir)
+    base_dir = coord_dir
     current_port = _get_current_port()
     agent_id = _get_current_agent_id()
 
@@ -214,7 +214,7 @@ async def team_leave(team_id: str, reason: str = "") -> str:
     Returns:
         离开结果报告
     """
-    base_dir = os.path.dirname(_get_coordination_dir(team_id))
+    base_dir = _get_coordination_dir(team_id)
     agent_id = _get_current_agent_id()
     current_port = _get_current_port()
 
@@ -257,7 +257,7 @@ async def team_status(
     Returns:
         团队状态报告
     """
-    base_dir = os.path.dirname(_get_coordination_dir(team_id))
+    base_dir = _get_coordination_dir(team_id)
     config = TeamConfig(team_id=team_id, base_dir=base_dir)
 
     all_members = config.get_all_members()
@@ -298,7 +298,7 @@ async def team_list_workers(team_id: str, status_filter: str = None) -> str:
     Returns:
         Worker 列表报告
     """
-    base_dir = os.path.dirname(_get_coordination_dir(team_id))
+    base_dir = _get_coordination_dir(team_id)
     config = TeamConfig(team_id=team_id, base_dir=base_dir)
 
     workers = config.get_worker_members()
@@ -352,7 +352,7 @@ async def task_create(
         创建结果，包含 task_id
     """
     coord_dir = _get_coordination_dir(team_id)
-    base_dir = os.path.dirname(coord_dir)
+    base_dir = coord_dir
 
     queue = TaskQueue(team_id=team_id, base_dir=coord_dir)
 
@@ -495,7 +495,7 @@ async def task_complete(
         完成结果报告
     """
     coord_dir = _get_coordination_dir(team_id)
-    base_dir = os.path.dirname(coord_dir)
+    base_dir = coord_dir
     agent_id = _get_current_agent_id()
 
     queue = TaskQueue(team_id=team_id, base_dir=coord_dir)
@@ -682,7 +682,7 @@ async def mailbox_send(
         发送结果
     """
     coord_dir = _get_coordination_dir(team_id)
-    base_dir = os.path.dirname(coord_dir)
+    base_dir = coord_dir
     agent_id = _get_current_agent_id()
 
     mailbox = Mailbox(base_dir=coord_dir)
@@ -774,7 +774,7 @@ async def mailbox_broadcast(
         广播结果
     """
     coord_dir = _get_coordination_dir(team_id)
-    base_dir = os.path.dirname(coord_dir)
+    base_dir = coord_dir
     agent_id = _get_current_agent_id()
 
     mailbox = Mailbox(base_dir=coord_dir)
@@ -828,7 +828,7 @@ async def worker_status(
     Returns:
         更新结果
     """
-    base_dir = os.path.dirname(_get_coordination_dir(team_id))
+    base_dir = _get_coordination_dir(team_id)
     current_port = _get_current_port()
 
     config = TeamConfig(team_id=team_id, base_dir=base_dir)
@@ -867,7 +867,7 @@ async def worker_idle_report(team_id: str, reason: str = "available") -> str:
         报告结果
     """
     coord_dir = _get_coordination_dir(team_id)
-    base_dir = os.path.dirname(coord_dir)
+    base_dir = coord_dir
     agent_id = _get_current_agent_id()
 
     mailbox = Mailbox(base_dir=coord_dir)
@@ -940,7 +940,7 @@ async def dag_create(
         ])
     """
     coord_dir = _get_coordination_dir(team_id)
-    base_dir = os.path.dirname(coord_dir)
+    base_dir = coord_dir
     agent_id = _get_current_agent_id()
 
     queue = TaskQueue(team_id=team_id, base_dir=coord_dir)
