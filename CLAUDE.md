@@ -2,17 +2,34 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Windows 中文/Emoji 命令执行
+
+在 Windows 上执行任何会输出中文或 emoji 的命令时，必须加环境变量，否则会得到乱码或 UnicodeDecodeError：
+
+```bash
+# Python 脚本
+PYTHONIOENCODING=utf-8 python script.py
+
+# 启动 Agent 服务
+PYTHONIOENCODING=utf-8 python -m src.adk_agent.main_web_start_steering --port 8000
+
+# 读取 Python 脚本输出时（subprocess）
+# 使用 encoding='utf-8' + PYTHONIOENCODING=utf-8 环境变量
+```
+
+日志文件重定向（`> logs/xxx.log 2>&1`）同样需要此变量，否则 emoji 会导致进程在写入 log 前崩溃。
+
 ## Running the Agent
 
 All commands run from the project root:
 
 ```bash
 # Start the main agent server (multi-tenant steering version)
-python -m src.adk_agent.main_web_start_steering [--port 8000]
+PYTHONIOENCODING=utf-8 python -m src.adk_agent.main_web_start_steering [--port 8000]
 
 # Alternative entry points
-python -m src.adk_agent.main_web_start_steering_single_agent
-python -m src.adk_agent.main_web_start
+PYTHONIOENCODING=utf-8 python -m src.adk_agent.main_web_start_steering_single_agent
+PYTHONIOENCODING=utf-8 python -m src.adk_agent.main_web_start
 ```
 
 Install dependencies:
