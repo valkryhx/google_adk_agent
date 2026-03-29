@@ -143,6 +143,32 @@ await dag_create(
 )
 ```
 
+### Windows 编码规范（在 Windows 环境部署时必读）
+
+**规则：任何生成 Python 脚本的任务，`description` 中必须包含以下要求：**
+
+> 脚本顶部（import 语句之后）必须加入 Windows UTF-8 编码修复块：
+> ```python
+> import sys
+> if sys.platform == "win32":
+>     import codecs
+>     if hasattr(sys.stdout, "buffer"):
+>         sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "strict")
+>     if hasattr(sys.stderr, "buffer"):
+>         sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "strict")
+> ```
+> 否则任何包含中文或 emoji 的 `print()` 会触发 `UnicodeEncodeError` 崩溃。
+
+**`verification_commands` 中运行 Python 的命令必须加 `PYTHONIOENCODING=utf-8` 前缀：**
+
+```
+# 正确
+verification_commands: ["PYTHONIOENCODING=utf-8 pytest tests/test_foo.py -v"]
+
+# 错误（中文输出会乱码或崩溃）
+verification_commands: ["pytest tests/test_foo.py -v"]
+```
+
 ---
 
 ## 5. TDD 工作流（必读）
