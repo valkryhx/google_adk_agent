@@ -8,6 +8,9 @@ set LEADER_PORT=8000
 set WORKER_COUNT=4
 set START_PORT=8001
 set MODULE_PATH=src.adk_agent.main_web_start_steering
+:: 集群协调目录（所有节点共享，存放任务队列和邮箱文件）
+:: 留空则自动使用项目根目录下的 coordination/ 子目录
+set ADK_COORDINATION_DIR=D:\test123
 :: ==========================================
 
 :: 切换到脚本所在目录，防止路径错误
@@ -26,7 +29,7 @@ echo.
 
 :: 2. 启动 Leader (保留窗口 cmd /k 用于调试)
 echo [Leader] Launching Orchestrator Node (Port %LEADER_PORT%)...
-start "LEADER AGENT (Port %LEADER_PORT%)" cmd /k "set PYTHONIOENCODING=utf8 && python -m %MODULE_PATH% --port %LEADER_PORT%"
+start "LEADER AGENT (Port %LEADER_PORT%)" cmd /k "set PYTHONIOENCODING=utf8 && set ADK_COORDINATION_DIR=%ADK_COORDINATION_DIR% && python -m %MODULE_PATH% --port %LEADER_PORT%"
 
 :: 等待 Leader 初始化数据库
 timeout /t 3 /nobreak >nul
@@ -40,7 +43,7 @@ for /L %%i in (0, 1, 3) do (
     echo    -> Spawning Worker on Port !CURRENT_PORT!...
     
     :: 启动独立窗口 (保留窗口 cmd /k 用于调试)
-    start "WORKER - Port !CURRENT_PORT!" cmd /k "set PYTHONIOENCODING=utf8 && python -m %MODULE_PATH% --port !CURRENT_PORT!"
+    start "WORKER - Port !CURRENT_PORT!" cmd /k "set PYTHONIOENCODING=utf8 && set ADK_COORDINATION_DIR=%ADK_COORDINATION_DIR% && python -m %MODULE_PATH% --port !CURRENT_PORT!"
     
     :: 稍微错开启动时间
     timeout /t 1 /nobreak >nul

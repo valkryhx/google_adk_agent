@@ -62,6 +62,7 @@ await dag_create(
 | `description` | str | 任务描述，**越详细越好**，Worker 靠这个理解任务 |
 | `blocked_by` | list[str] | 依赖的任务名列表 |
 | `expected_artifacts` | list[str] | 预期产物文件路径 |
+| `verification_commands` | list[str] | **验收命令**，Worker 完成后框架自动运行，全部通过才能 complete；失败则任务重置 pending 等待重试 |
 | `writable_files` | list[str] | Worker 可写的文件路径 |
 | `read_only_files` | list[str] | Worker 只读的参考文件 |
 
@@ -144,7 +145,59 @@ await dag_create(
 
 ---
 
-## 5. 循环任务（loop task）
+## 5. TDD 工作流（必读）
+
+**规则：任何会产生可执行代码的任务，必须满足：**
+1. `description` 包含「验收标准」小节，说明如何验证正确性。
+2. `verification_commands` 非空，填写可直接运行的测试/检查命令。
+
+Worker 节点框架会在代码执行完毕后**自动运行** `verification_commands`。全部通过才允许上报 `completed`；任意一条失败则任务重置为 `pending`，等待重新认领修复。
+
+### 三段式任务描述模板
+
+```
+【实现】: <做什么，输出什么文件>
+【验收标准】: <怎么验证——测试文件路径 / 运行命令 / 期望输出>
+【产物】: <expected_artifacts 中列出的文件路径>
+```
+
+### 示例：后端 API + 自动测试
+
+```python
+await dag_create(
+    tasks=[
+        {
+            "name": "实现用户 API",
+            "description": """
+【实现】: 在 D:\\myproject\\app.py 创建 Flask 后端
+- GET /api/users 返回用户列表
+- POST /api/users 新增用户（body: {name: str}）
+- 使用 SQLite（D:\\myproject\\data.db），端口 5000
+
+【验收标准】:
+- 运行 pytest D:\\myproject\\tests\\test_api.py -v
+- 所有测试用例通过
+
+【产物】: D:\\myproject\\app.py, D:\\myproject\\tests\\test_api.py
+""",
+            "expected_artifacts": [
+                "D:\\\\myproject\\\\app.py",
+                "D:\\\\myproject\\\\tests\\\\test_api.py",
+            ],
+            "verification_commands": [
+                "pytest D:\\\\myproject\\\\tests\\\\test_api.py -v"
+            ],
+            "writable_files": ["D:\\\\myproject\\\\"],
+        },
+    ]
+)
+```
+
+> **注意**：`verification_commands` 中的命令需要在 Worker 的工作环境中可直接执行。优先使用 `pytest <path>` 或 `python -m pytest <path>`。
+
+---
+
+## 6. 循环任务（loop task）
 
 适用于需要迭代优化直到满足退出条件的任务：
 

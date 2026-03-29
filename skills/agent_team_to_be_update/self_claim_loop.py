@@ -25,12 +25,14 @@ try:
     from .team_config import TeamConfig
     from .polling_daemon import PollingDaemon
     from .path_guard import PathGuard
+    from .verification_hooks import TaskCompletedHook
 except ImportError:
     from mailbox import Mailbox, Message
     from task_queue import TaskQueue, Task
     from team_config import TeamConfig
     from polling_daemon import PollingDaemon
     from path_guard import PathGuard
+    from verification_hooks import TaskCompletedHook
 
 
 class SelfClaimLoop:
@@ -344,10 +346,11 @@ class SelfClaimLoop:
             # PathGuard 集成：只校验 writable_files，读取不限制
             if task.writable_files:
                 import os as _os
-                # [修复] allowed_root 应基于协调目录的父目录（ADK_COORDINATION_DIR），
-                # 而非 os.getcwd()（项目源码目录）。任务的 writable_files 通常指向
-                # 协调目录下的工作区（如 D:\agent_team_test\todoapp），不在源码目录里。
-                _guard_root = _os.path.dirname(self.coordination_dir)  # 例: D:\agent_team_test
+                # [修复] allowed_root 应基于协调目录的祖父目录（ADK_COORDINATION_DIR 本身），
+                # coordination_dir = ADK_COORDINATION_DIR/team_id（多加了一层 team_id），
+                # 因此需要 dirname 两次才能还原到 ADK_COORDINATION_DIR 的父目录。
+                # 例: coordination_dir=D:\test123\swarm_team\swarm_team → guard_root=D:\test123
+                _guard_root = _os.path.dirname(_os.path.dirname(self.coordination_dir))
                 guard = PathGuard(allowed_root=_guard_root)
                 violations = [
                     f for f in task.writable_files
@@ -403,10 +406,6 @@ class SelfClaimLoop:
             # [反摸鱼] 通过 TaskCompletedHook 验证产物是否存在、验证命令是否通过
             verification_passed = True
             if task.expected_artifacts or task.verification_commands:
-                try:
-                    from skills.agent_team_to_be_update.verification_hooks import TaskCompletedHook
-                except ImportError:
-                    from verification_hooks import TaskCompletedHook
                 import os as _os
                 # 修复核心 BUG: 此处的 _os.getcwd() 是被 task_executor() 恢复后的主工程顶层目录，
                 # 这会导致所有相对于工作区的产物都判定为缺失，并且会在本工程做强校验 (导致无限判定摸鱼重试)！

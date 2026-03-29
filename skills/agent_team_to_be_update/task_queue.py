@@ -13,6 +13,14 @@ import time
 import uuid
 from typing import List, Optional, Set, Dict, Any
 
+import sys
+if sys.platform == "win32":
+    import codecs
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "strict")
+    if hasattr(sys.stderr, "buffer"):
+        sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "strict")
+
 try:
     from .models import Task, LoopGroup
 except ImportError:
