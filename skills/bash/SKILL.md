@@ -88,30 +88,37 @@ bash(command='python -c "import time; time.sleep(5); print(done)"', timeout=10)
 
 在 Windows 上启动 Flask/uvicorn 等服务时，**必须使用后台方式**，否则会阻塞对话。
 
-### 方式一：`subprocess.Popen` + `DETACHED_PROCESS`（推荐，可获取 PID）
+### 方式一：写临时启动脚本 + 执行（推荐，Windows 唯一可靠方式）
+
+> `python -c "..."` 内联多行代码在 Windows CMD 下会失败（换行符解析问题）。
+> **必须先用 `file_editor` 写脚本文件，再用 `bash` 执行。**
 
 ```python
-# 启动 Flask 服务到后台，不阻塞，返回 PID 方便后续 kill
-bash(command='python -c "
+# 第一步：创建启动脚本
+file_editor(command="create", path="D:\\myproject\\start_server.py", file_text="""
 import subprocess
+import os
+
 CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
+
 proc = subprocess.Popen(
-    [\"python\", \"app.py\"],
+    ['python', 'app.py'],
     creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
-    stdout=open(\"flask.log\", \"w\"),
-    stderr=subprocess.STDOUT
+    stdout=open('flask.log', 'w', encoding='utf-8'),
+    stderr=subprocess.STDOUT,
+    cwd='D:\\\\myproject'
 )
-print(\"PID:\", proc.pid)
-"')
+print('PID:', proc.pid)
+""")
+
+# 第二步：执行脚本（会立即返回 PID，不阻塞）
+bash(command='python D:\\myproject\\start_server.py', timeout=10)
 ```
 
-### 方式二：`START /B`（快捷，日志重定向到文件）
+### 方式二：`START /B`（❌ 不推荐，bash 工具会等待子进程，导致卡住）
 
-```python
-# 用 CMD 的 START /B 在后台启动，输出写入 flask.log
-bash(command='cmd /c start /b python app.py > flask.log 2>&1')
-```
+> 此方式在 bash 工具中实测会阻塞，**不要使用**。
 
 ### 验证服务已启动
 
@@ -137,7 +144,12 @@ bash(command='powershell -Command "Get-NetTCPConnection -LocalPort 5000 | Select
 bash(command='taskkill /PID 12345 /F')
 ```
 
-> ❌ **禁止**直接 `bash(command='python app.py')` 启动服务，这会前台阻塞，导致对话挂起。
+> ❌ **禁止**以下所有前台阻塞写法：
+> - `bash(command='python app.py')`
+> - `bash(command='cd D:\\xxx && python app.py')`
+> - `bash(command='cmd /c start /b python app.py > app.log 2>&1')` ← start /b 在 bash 工具中同样会阻塞
+>
+> **唯一正确方式：方式一的 `subprocess.Popen + DETACHED_PROCESS`**
 
 
 ## 安全注意事项
