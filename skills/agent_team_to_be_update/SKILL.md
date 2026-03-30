@@ -202,8 +202,22 @@ verification_commands: ["pytest tests/test_foo.py -v"]
 **规则：任何会产生可执行代码的任务，必须满足：**
 1. `description` 包含「验收标准」小节，说明如何验证正确性。
 2. `verification_commands` 非空，填写可直接运行的测试/检查命令。
+3. **测试代码必须作为独立任务拆出，不能合并进实现任务。**
 
 Worker 节点框架会在代码执行完毕后**自动运行** `verification_commands`。全部通过才允许上报 `completed`；任意一条失败则任务重置为 `pending`，等待重新认领修复。
+
+### DAG 强制结构（禁止省略）
+
+每个功能模块的 DAG 必须包含以下三类任务，缺一不可：
+
+| 任务类型 | 说明 | 依赖 |
+|----------|------|------|
+| **实现任务** | 写业务代码 | 无（或依赖设计任务）|
+| **测试任务** | 写测试文件（`tests/test_xxx.py`）| 依赖实现任务 |
+| **自测任务** | 运行测试并验证全部通过 | 依赖测试任务 |
+
+> ❌ **禁止**把「写测试」和「写实现」合并成一个任务描述里的文字要求——Worker 会忽略测试部分只写实现代码。
+> ✅ **必须**把测试单独拆成一个任务，`blocked_by` 实现任务，`verification_commands` 填运行测试的命令。
 
 ### 三段式任务描述模板
 
@@ -213,7 +227,7 @@ Worker 节点框架会在代码执行完毕后**自动运行** `verification_com
 【产物】: <expected_artifacts 中列出的文件路径>
 ```
 
-### 示例：后端 API + 自动测试
+### 示例：后端 API + 独立测试任务
 
 ```python
 await dag_create(
@@ -226,20 +240,38 @@ await dag_create(
 - POST /api/users 新增用户（body: {name: str}）
 - 使用 SQLite（D:\\myproject\\data.db），端口 5000
 
-【验收标准】:
-- 运行 pytest D:\\myproject\\tests\\test_api.py -v
-- 所有测试用例通过
-
-【产物】: D:\\myproject\\app.py, D:\\myproject\\tests\\test_api.py
+【产物】: D:\\myproject\\app.py
 """,
-            "expected_artifacts": [
-                "D:\\\\myproject\\\\app.py",
-                "D:\\\\myproject\\\\tests\\\\test_api.py",
-            ],
-            "verification_commands": [
-                "pytest D:\\\\myproject\\\\tests\\\\test_api.py -v"
-            ],
+            "expected_artifacts": ["D:\\\\myproject\\\\app.py"],
             "writable_files": ["D:\\\\myproject\\\\"],
+        },
+        {
+            "name": "编写测试用例",
+            "description": """
+【实现】: 在 D:\\myproject\\tests\\test_api.py 编写 pytest 测试
+- 测试 GET /api/users 返回 200 和列表
+- 测试 POST /api/users 新增成功
+- 使用 requests 库调用本地服务
+
+【产物】: D:\\myproject\\tests\\test_api.py
+""",
+            "expected_artifacts": ["D:\\\\myproject\\\\tests\\\\test_api.py"],
+            "writable_files": ["D:\\\\myproject\\\\tests\\\\"],
+            "blocked_by": ["实现用户 API"],
+        },
+        {
+            "name": "运行测试验证",
+            "description": """
+【实现】: 启动 Flask 服务并运行全部测试，确保测试全部通过
+
+【验收标准】:
+- PYTHONIOENCODING=utf-8 pytest D:\\myproject\\tests\\test_api.py -v
+- 所有用例 PASSED，无 FAILED
+""",
+            "verification_commands": [
+                "PYTHONIOENCODING=utf-8 pytest D:\\\\myproject\\\\tests\\\\test_api.py -v"
+            ],
+            "blocked_by": ["编写测试用例"],
         },
     ]
 )
