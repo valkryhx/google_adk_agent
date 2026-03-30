@@ -581,3 +581,96 @@ start_demo_swarm.bat
 其中 `coord_dir = ADK_COORDINATION_DIR/team_id`，例如 `D:/test123/swarm_team`。
 
 **规则**：所有组件都传 `coord_dir`，由组件内部追加子目录名，不在外部拼接。
+
+---
+
+## 十、用例三：TodoList Web 应用（含需求澄清流程演示）
+
+> 本用例演示 v3.2 新增的**第 0 步需求澄清**机制，以及四段式任务描述和 TDD 三任务结构的实际效果。
+
+### 任务输入（故意模糊，触发需求澄清）
+
+```
+skill_load("agent_team_to_be_update")
+帮我做一个 todolist 在 D:\t123
+```
+
+### 第 0 步：Leader 自动发起需求澄清
+
+Leader 加载技能后，不会直接 `dag_create`，而是列出五个维度向用户提问：
+
+| 维度 | Leader 的提问 |
+|------|---------------|
+| 目标 | 命令行工具、桌面应用还是网页应用？ |
+| 产物 | 交付哪些文件？存放路径？ |
+| 约束 | 技术栈偏好？需要兼容现有代码？ |
+| 验收 | 如何判断做对了？有没有测试命令？ |
+| 优先级 | 哪部分最重要？ |
+
+用户回复后，Leader **复述理解并请求确认**，确认后才进入 DAG 规划。
+
+### 用户补充信息
+
+```
+网页应用 html前端 sqlite数据库 python flask后端
+其他你仔细想想，注意一定要有自测环节
+```
+
+### Leader 复述确认
+
+Leader 列出完整方案（技术栈、产物路径、DAG 任务规划），等用户回复「开始」后才执行。
+
+### 产出 DAG（5 个任务，含独立测试任务）
+
+```
+设计数据库Schema          (第 1 波)
+实现Flask后端API          (第 2 波，依赖 Schema)
+实现前端页面              (第 3 波，依赖后端)
+编写测试用例              (第 3 波，依赖后端，与前端并发)
+运行测试验证              (第 4 波，依赖测试用例)
+```
+
+### DAG 结构要点
+
+每个任务均使用**四段式描述模板**：
+
+```
+【前置阅读】: 明确指出需要读哪些上游文件，理解什么接口
+【实现】:     具体要做什么，产出哪些文件
+【验收标准】: 如何验证（命令 + 期望结果）
+【产物】:     expected_artifacts 中的文件路径
+```
+
+`read_only_files` 字段同步填写，框架会自动将其注入 Worker 的执行 prompt，强制 Worker 在写代码前先读指定文件。
+
+### 产出目录结构
+
+```
+D:\t123\
+├── app.py                  # Flask 后端（含 UTF-8 编码修复块）
+├── todo.db                 # SQLite 数据库（运行后生成）
+├── templates\
+│   └── index.html          # 前端页面
+├── static\
+│   ├── style.css           # 样式
+│   └── script.js           # 前端逻辑（fetch API）
+├── tests\
+│   ├── __init__.py
+│   └── test_api.py         # pytest 测试（独立临时数据库）
+└── docs\
+    └── schema.md           # 数据库 Schema 文档
+```
+
+### 访问与验证
+
+```bash
+# 启动服务
+cd D:\t123
+PYTHONIOENCODING=utf-8 python app.py
+
+# 浏览器访问
+http://localhost:5000
+
+# 运行测试
+PYTHONIOENCODING=utf-8 pytest D:\t123\tests\test_api.py -v
+```
