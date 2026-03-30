@@ -18,7 +18,7 @@ cd /d %~dp0
 
 :: 1. 清理环境 (防止僵尸节点)
 echo [System] Cleaning up old registry for a fresh demo...
-if exist sqlite_db/swarm_registry.db del sqlite_db/swarm_registry.db
+if exist sqlite_db\swarm_registry.db del sqlite_db\swarm_registry.db
 if not exist logs mkdir logs
 
 :: 清理团队成员注册表（config.json 记录上次节点端口，不清会导致 Leader 向死端口广播任务）
