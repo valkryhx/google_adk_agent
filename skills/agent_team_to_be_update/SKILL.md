@@ -150,6 +150,22 @@ await task_status(task_id="task-a3f7c2d1")
 
 Worker 没有上下文，只能靠 `description` 理解任务。**描述越详细，执行越准确。**
 
+### 前置阅读规则（禁止跳过）
+
+> **硬性规则：Worker 在写任何一行代码之前，必须先读懂现有代码。Leader 有责任在 `description` 和 `read_only_files` 中明确告知 Worker 需要读哪些文件。**
+
+**规则一：`read_only_files` 必须填写**
+
+只要项目目录中已有相关代码，就必须把需要参考的文件路径填入 `read_only_files`。不填等于让 Worker 盲写，必然产生不兼容代码。
+
+**规则二：依赖链任务必须声明上游接口**
+
+当任务有 `blocked_by` 时，上游任务的所有 `expected_artifacts` **必须出现在本任务的 `read_only_files` 中**，且 `description` 的 `【前置阅读】` 段要说明需要从上游文件理解什么接口/约定。
+
+**规则三：`description` 必须使用四段式模板（见第 5 节）**
+
+`【前置阅读】` 段不可省略。如确实无现有代码可读，填「无现有代码，从零开始」。
+
 ```python
 await dag_create(
     tasks=[
@@ -219,9 +235,10 @@ Worker 节点框架会在代码执行完毕后**自动运行** `verification_com
 > ❌ **禁止**把「写测试」和「写实现」合并成一个任务描述里的文字要求——Worker 会忽略测试部分只写实现代码。
 > ✅ **必须**把测试单独拆成一个任务，`blocked_by` 实现任务，`verification_commands` 填运行测试的命令。
 
-### 三段式任务描述模板
+### 四段式任务描述模板
 
 ```
+【前置阅读】: <必须先读哪些文件，从中理解哪些接口/数据结构/约定；无现有代码则填「无」>
 【实现】: <做什么，输出什么文件>
 【验收标准】: <怎么验证——测试文件路径 / 运行命令 / 期望输出>
 【产物】: <expected_artifacts 中列出的文件路径>
@@ -235,10 +252,14 @@ await dag_create(
         {
             "name": "实现用户 API",
             "description": """
+【前置阅读】: 无现有代码，从零开始
+
 【实现】: 在 D:\\myproject\\app.py 创建 Flask 后端
 - GET /api/users 返回用户列表
 - POST /api/users 新增用户（body: {name: str}）
 - 使用 SQLite（D:\\myproject\\data.db），端口 5000
+
+【验收标准】: 服务启动无报错，curl http://localhost:5000/api/users 返回 200
 
 【产物】: D:\\myproject\\app.py
 """,
@@ -248,26 +269,42 @@ await dag_create(
         {
             "name": "编写测试用例",
             "description": """
+【前置阅读】: 必须先读 D:\\myproject\\app.py，理解：
+- 所有 API 路由和请求/响应格式
+- 数据库路径和表结构
+- 端口号
+测试代码的接口调用必须与实现完全一致，不得假设。
+
 【实现】: 在 D:\\myproject\\tests\\test_api.py 编写 pytest 测试
 - 测试 GET /api/users 返回 200 和列表
 - 测试 POST /api/users 新增成功
-- 使用 requests 库调用本地服务
+
+【验收标准】: 测试文件语法正确，可被 pytest 发现
 
 【产物】: D:\\myproject\\tests\\test_api.py
 """,
             "expected_artifacts": ["D:\\\\myproject\\\\tests\\\\test_api.py"],
+            "read_only_files": ["D:\\\\myproject\\\\app.py"],
             "writable_files": ["D:\\\\myproject\\\\tests\\\\"],
             "blocked_by": ["实现用户 API"],
         },
         {
             "name": "运行测试验证",
             "description": """
+【前置阅读】: 先读 D:\\myproject\\tests\\test_api.py 确认测试内容，再读 D:\\myproject\\app.py 确认服务启动方式。
+
 【实现】: 启动 Flask 服务并运行全部测试，确保测试全部通过
 
 【验收标准】:
 - PYTHONIOENCODING=utf-8 pytest D:\\myproject\\tests\\test_api.py -v
 - 所有用例 PASSED，无 FAILED
+
+【产物】: 无（验证任务）
 """,
+            "read_only_files": [
+                "D:\\\\myproject\\\\app.py",
+                "D:\\\\myproject\\\\tests\\\\test_api.py",
+            ],
             "verification_commands": [
                 "PYTHONIOENCODING=utf-8 pytest D:\\\\myproject\\\\tests\\\\test_api.py -v"
             ],
