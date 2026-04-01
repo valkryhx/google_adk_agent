@@ -1627,11 +1627,23 @@ def _start_worker_self_claim_loop():
 
     async def _local_task_executor(task):
         """通过 HTTP 调用自身 /api/chat 端点执行任务，与 dispatch_task 执行路径一致。"""
+        # 构建前置阅读提示（如果有 read_only_files）
+        read_only_section = ""
+        read_only = getattr(task, 'read_only_files', None) or []
+        if read_only:
+            files_list = "\n".join(f"  - {f}" for f in read_only)
+            read_only_section = (
+                f"\n【前置阅读 - 必须在写任何代码前完成】\n"
+                f"以下文件包含你需要了解的现有代码和接口，必须先读懂再动手：\n"
+                f"{files_list}\n"
+                f"严禁在未读这些文件前就开始编写代码，否则会产生接口不兼容问题。\n"
+            )
         payload = {
             "message": (
                 f"[TASK_FROM_QUEUE]\n"
                 f"Task ID: {task.id}\n"
-                f"Task Name: {task.name}\n\n"
+                f"Task Name: {task.name}\n"
+                f"{read_only_section}\n"
                 f"{task.description}"
             ),
             "app_name": f"worker_self_claim_{agent_port}",

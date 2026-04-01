@@ -25,6 +25,13 @@ import base64 as b64_module
 # 将项目根目录添加到路径 (3层目录向上)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+if sys.platform == "win32":
+    import codecs
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "strict")
+    if hasattr(sys.stderr, "buffer"):
+        sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "strict")
+
 import argparse
 from src.adk_agent.core.manager import SkillManager
 from src.adk_agent.core.executor import execute_python_code
@@ -1187,7 +1194,6 @@ class SteeringSession:
                             if not pending_runner_get.done(): pending_runner_get.cancel()
                             if not pending_stream_get.done(): pending_stream_get.cancel()
                             driver_task.cancel()
-                            from src.adk_agent.core.worker_state import UserInterruption
                             raise UserInterruption("Task cancelled by user.")
                             
                     # 1. 处理 Runner 的消息 (LLM Token, Tool Call 等)

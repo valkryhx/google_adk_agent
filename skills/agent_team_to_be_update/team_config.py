@@ -100,7 +100,7 @@ class TeamConfig:
         """
         self.team_id = team_id
         self.team_name = team_name or team_id
-        self.config_dir = os.path.join(base_dir, "coordination", team_id)
+        self.config_dir = os.path.join(base_dir, "coordination")
         self.config_file = os.path.join(self.config_dir, "config.json")
 
         # 确保目录存在
