@@ -12,7 +12,7 @@
     - [1.2 进阶：意图识别与结构化输出 (Structured Output)](#12-进阶意图识别与结构化输出-structured-output)
     - [1.3 Agent的双手：Tool Call / Function Calling](#13-agent的双手tool-call--function-calling)
     - [1.4 兼容旧时代：手动拼接 Tool Call](#14-兼容旧时代手动拼接-tool-call)
-    - [1.4.1 进阶：流式输出与手动工具调用](#141-进阶流式输出与手动工具调用)
+    - [1.4.1 早期的LLM流式输出与工具调用（古法）](#141-早期的llm流式输出与工具调用古法)
     - [1.5 极简 RAG (无向量库版)](#15-极简-rag-无向量库版)
   - [第2章 Agent的工具箱：MCP 协议 (The USB of AI)](#第2章-agent的工具箱mcp-协议-the-usb-of-ai)
     - [2.1 为何需要 MCP？](#21-为何需要-mcp)
@@ -24,10 +24,10 @@
     - [3.2 推理：ReAct (Reason + Act)](#32-推理react-reason--act)
     - [3.3 进阶能力：计划与执行 (Plan and Do)](#33-进阶能力计划与执行-plan-and-do)
     - [3.4 上下文工程 (Context Engineering, 2025)](#34-上下文工程-context-engineering-2025)
-- [第4章：Agent 的职业技能 (Skills)](#第4章agent-的职业技能-skills)
+- [第4章 Agent 的能力插件：Skills](#第4章-agent-的能力插件skills)
   - [4.1 Skill 的本质：为上下文工程而生](#41-skill-的本质为上下文工程而生)
   - [4.2 实战案例：File Editor Skill 深度解析](#42-实战案例file-editor-skill-深度解析)
-    - [4.2.1 说明书：SKILL.md (YAML 前言 + 指导)](#421-说明书skillmd-yaml-前言--指导)
+    - [4.2.1 说明书：SKILL.md = YAML 前言 + 指导](#421-说明书skillmd--yaml-前言--指导)
     - [4.2.2 核心逻辑：tools.py (工具实现)](#422-核心逻辑toolspy-工具实现)
     - [4.2.3 适配协议：get\_tools 入口](#423-适配协议get_tools-入口)
   - [4.3 从哪里找 Skill？](#43-从哪里找-skill)
@@ -37,7 +37,7 @@
       - [3. 生命周期二：自动化校验 (quick\_validate)](#3-生命周期二自动化校验-quick_validate)
       - [4. 生命周期三：集成打包 (package\_skill)](#4-生命周期三集成打包-package_skill)
       - [5. 核心价值：方法论的工具化](#5-核心价值方法论的工具化)
-- [第5章 Agent的骨架：Google ADK (2026生产级框架)](#第5章-agent的骨架google-adk-2026生产级框架)
+- [第5章 Agent的骨架：Google ADK (框架越来越多，OAI，Anthropic，Google的Agent SDK，阿里的agentscope等)](#第5章-agent的骨架google-adk-框架越来越多oaianthropicgoogle的agent-sdk阿里的agentscope等)
   - [5.1 什么是 ADK？(Why Framework?)](#51-什么是-adkwhy-framework)
     - [5.1.1 深度对比：OpenAI Agents SDK vs Anthropic Agent SDK vs Google ADK](#511-深度对比openai-agents-sdk-vs-anthropic-agent-sdk-vs-google-adk)
   - [5.2 深入解剖：ADK 的核心概念](#52-深入解剖adk-的核心概念)
@@ -51,7 +51,7 @@
     - [5.3.1 核心理念：AgentTool](#531-核心理念agenttool)
     - [5.3.2 两种协作模式](#532-两种协作模式)
   - [5.4 总结：利用大厂生态实现更现代化的Agent](#54-总结利用大厂生态实现更现代化的agent)
-  - [subagent / 压缩 / rewind / 多模态 / callbacks(hooks,钩子 before-llm-callbacks,before-tool-callbacks,以及对应的after-xxx-callbacks) / skills( bash file\_editor skill\_load) / 外部合作接口dynamic-mcp  exa-mcp / 外部非合作接口 skill-creator 适当讲解/ 语音 / 手机连接ssh远程 / playwrite / 经验库 / 记忆 / drawio  / agent-team](#subagent--压缩--rewind--多模态--callbackshooks钩子-before-llm-callbacksbefore-tool-callbacks以及对应的after-xxx-callbacks--skills-bash-file_editor-skill_load--外部合作接口dynamic-mcp--exa-mcp--外部非合作接口-skill-creator-适当讲解-语音--手机连接ssh远程--playwrite--经验库--记忆--drawio---agent-team)
+    - [subagent / 压缩 / rewind / 多模态 / callbacks(hooks,钩子 before-llm-callbacks,before-tool-callbacks,以及对应的after-xxx-callbacks) / skills( bash file\_editor skill\_load) / 外部合作接口dynamic-mcp  exa-mcp / 外部非合作接口 skill-creator 适当讲解/ 语音 / 手机连接ssh远程 / playwrite / 经验库 / 记忆 / drawio  / agent-team](#subagent--压缩--rewind--多模态--callbackshooks钩子-before-llm-callbacksbefore-tool-callbacks以及对应的after-xxx-callbacks--skills-bash-file_editor-skill_load--外部合作接口dynamic-mcp--exa-mcp--外部非合作接口-skill-creator-适当讲解-语音--手机连接ssh远程--playwrite--经验库--记忆--drawio---agent-team)
   - [5.4.1 高级特性：SubAgent / Callbacks / 压缩 / 多模态 / Skills](#541-高级特性subagent--callbacks--压缩--多模态--skills)
     - [5.4.1.1 SubAgent（子智能体）](#5411-subagent子智能体)
       - [什么是 SubAgent？](#什么是-subagent)
@@ -62,7 +62,7 @@
       - [ADK Callbacks 体系](#adk-callbacks-体系)
       - [before\_model\_callback（LLM 调用前拦截）](#before_model_callbackllm-调用前拦截)
       - [on\_tool\_error\_callback（工具异常处理）](#on_tool_error_callback工具异常处理)
-      - [实战：用户中断机制](#实战用户中断机制)
+      - [实战：用户中断机制（steering）](#实战用户中断机制steering)
     - [5.4.1.3 上下文压缩（Context Compaction）](#5413-上下文压缩context-compaction)
       - [为什么需要上下文压缩？](#为什么需要上下文压缩)
       - [AutoCompactAgent 实现原理](#autocompactagent-实现原理)
@@ -213,7 +213,7 @@ sequenceDiagram
 
 ### 1.4 兼容旧时代：手动拼接 Tool Call
 
-**场景**： 如果模型不支持原生 Tool Call，如何让它拥有双手？通过 System Prompt 约定一种特殊的 JSON 格式。
+**场景**： 如果模型不支持原生 Tool Call，如何让它拥有双手？通过 System Prompt 约定一种特殊的 JSON 格式。之前deepseek似乎有这个问题，function calling 的支持不是很好。
 
 🔗 **代码演示**：
 - [1_4_manual_tool_call.py](./codes/chapter1/1_4_manual_tool_call.py)
@@ -221,8 +221,8 @@ sequenceDiagram
 
 ---
 
-### 1.4.1 进阶：流式输出与手动工具调用
-在实际应用中，用户不喜欢等待一个完整的 JSON 生成后再看到结果。我们需要结合**流式输出 (Streaming)** 和**手动工具调用**。
+### 1.4.1 早期的LLM流式输出与工具调用（古法）
+在实际应用中，用户不喜欢等待一个完整的 JSON 生成后再看到结果。我们需要让LLM的服务可以结合**流式输出 (Streaming)** 和**工具调用**，在去年我们使用的LLM对原生tool calling支持度一般时 就这么做。
 
 **策略**：
 1.  流式打印原始响应。
@@ -234,9 +234,10 @@ sequenceDiagram
 
 ### 1.5 极简 RAG (无向量库版)
 
-**本质**： RAG = 检索 (Retrieval) + 增强 (Augmented)。
+**本质**： RAG = 检索 (Retrieval) + 增强 (Augmented)。在23年年底到24年年初，RAG非常火，很多公司都基于RAG做了自己的Agent。
+“构造一个RAG系统”也是初代网络卖课从业者的口头禅。
 
-我们将使用 Numpy 做本地相似度计算，展示 RAG 的核心逻辑。
+本次我们将使用 Numpy 做本地相似度计算，展示 RAG 的核心逻辑。
 
 <div align="center">
 
@@ -276,7 +277,7 @@ graph LR
         F -- Standard --> H[SQLite Server]
         F -- Standard --> I[Browser Server]
     end
-    subgraph "Before MCP"
+    subgraph "Without MCP"
         A[Agent A] -- Custom Adapter --> B[SQLite]
         C[Agent B] -- Custom Adapter --> B
         A -- Custom Adapter --> D[Browser]
@@ -288,7 +289,7 @@ graph LR
 
 ### 2.2 快速上手：FastMCP
 
-使用 `fastmcp` 库，我们可以像写 Flask 接口一样极速构建一个 MCP Server。
+使用 `fastmcp` 库，我们可以像写 Flask 接口一样极速构建一个 MCP Server。fastmcp持续维护，而且比mcp官方库更活跃。
 
 🔗 **代码演示**：
 - [2_2_fastmcp_server.py](./codes/chapter2/2_2_fastmcp_server.py)
@@ -296,21 +297,21 @@ graph LR
   
 ### 2.3 MCP Client
 
-有了 Server，我们需要一个 Client 来连接它。在实际应用中，Client 通常是 Claude Desktop 或者是你的 Agent 主程序。
+有了 Server，我们需要一个 Client 来连接它。在实际应用中，Client 通常是你的 Agent 程序。
 
 🔗 **代码演示**：
 - [2_3_mcp_client.py](./codes/chapter2/2_3_mcp_client.py)
-  - 演示如何通过 Python 代码连接并调用本地的 MCP Server。
+  - 演示使用mcp库（与server的fastmcp不同，表明协议是大家共同遵守的从而可以互相调用）如何通过 Python 代码连接并调用本地的 MCP Server。
 
 ---
 
 ### 2.4 终极形态：LLM + MCP (Agent雏形)
 
-前面的 2.3 只是 Python 脚本在调用工具。真正的 Agent 需要让 **LLM 自己决定**何时调用 MCP 工具。
+前面的 2.3 只是 Python 脚本在调用工具。真正的场景下需要让 **LLM 自己决定**何时调用 MCP 工具。
 
 **逻辑流**：
 1.  **Discovery (Discover)**: **MCP Client** (脚本) 向 **MCP Server** 查询可用工具列表。
-2.  **Thinking (Think)**: **User** 提问，**MCP Client** 将问题与工具定义提交给 **LLM**。**LLM** 判断需要调用 `get_weather`。
+2.  **Thinking (Think)**: **User** 提问，**MCP Client** 将问题与工具定义提交给 **LLM**。**LLM** 判断需要调用什么工具。
 3.  **Execution (Act)**: **MCP Client** 根据 **LLM** 的指令，请求 **MCP Server** 执行具体工具。
 4.  **Response (Observe)**: **MCP Server** 执行并返回结果，**MCP Client** 将结果传回 **LLM** 进行润色，最终回复给 **User**。
 
@@ -319,36 +320,36 @@ graph LR
 ```mermaid
 sequenceDiagram
     participant User
-    participant Script
+    participant SDK
     participant LLM
     participant MCP_Server
     
-    Note over Script, MCP_Server: Initialization
-    Script->>MCP_Server: List Tools
-    MCP_Server-->>Script: Tool Definitions
+    Note over SDK, MCP_Server: Initialization
+    SDK->>MCP_Server: List Tools
+    MCP_Server-->>SDK: Tool Definitions
     
     Note over User, LLM: Interaction
-    User->>Script: Query ("查上海天气")
-    Script->>LLM: User Query + Tool Definitions
-    LLM-->>Script: Call "get_weather"
-    Script->>MCP_Server: Execute "get_weather"
-    MCP_Server-->>Script: Result "Rainy"
-    Script->>LLM: Tool Result "Rainy"
-    LLM-->>Script: Final Answer
-    Script-->>User: Final Answer
+    User->>SDK: Query ("查上海天气")
+    SDK->>LLM: User Query + Tool Definitions
+    LLM-->>SDK: Call "get_weather"
+    SDK->>MCP_Server: Execute "get_weather"
+    MCP_Server-->>SDK: Result "Rainy"
+    SDK->>LLM: Tool Result "Rainy"
+    LLM-->>SDK: Final Answer
+    SDK-->>User: Final Answer
 ```
 
 </div>
 
 🔗 **代码演示**：
 - [2_4_llm_mcp_integration.py](./codes/chapter2/2_4_llm_mcp_integration.py)
-  - 实现了上述完整的闭环，你的 Agent 从此拥有了无限扩展的能力。
+  - 实现了上述完整的闭环，你的 Agent 从此拥有了可扩展的外部工具调用能力。
 
 ---
 
 ## 第3章 Agent的灵魂：记忆与推理 (Memory & Reasoning)
 
-如果说 Tool Calling 给了 Agent 双手，MCP 给了它工具箱，那么 **Memory (记忆)** 和 **Reasoning (推理)** 则是赋予了在这个世界中持续生存和解决复杂问题的能力。
+如果说 Tool Calling 给了 Agent 双手，MCP 给了它工具箱，那么 **Memory (记忆，这里指多轮会话的history)** 和 **Reasoning (推理)** 则是赋予了在这个世界中保持持续交互和解决复杂问题的能力。
 
 ### 3.1 记忆：从“1秒金鱼”到“7秒金鱼”
 
@@ -376,7 +377,7 @@ graph TD
 
 ### 3.2 推理：ReAct (Reason + Act)
 
-面对复杂问题（例如：“马斯克的年龄乘以3是多少？”），一次性回答往往会出错。**ReAct** 框架让 Agent 学会“自言自语”，把大任务拆解为小步骤。
+面对复杂问题（例如：“马斯克的年龄乘以3是多少？”），一次性回答往往会出错。**ReAct**（本质是在LLM的prompt中加入Thought和Action的模板，让LLM自己生成，在LLM能力还不够强的时候效果不好） 框架让 Agent 学会“俺寻思”，把大任务拆解为小步骤。中间有时会自我纠错。
 
 **核心循环**：
 1.  **Thought**: 我应该做什么？
@@ -410,7 +411,7 @@ flowchart LR
 
 ### 3.3 进阶能力：计划与执行 (Plan and Do)
 
-ReAct 虽然强大，但它是"短视"的——只看眼前的一步。对于复杂任务（比如写整个游戏），我们需要一种更宏观的模式：**Plan and Execute**。
+ReAct 虽然强大，但它是"短视"的——只看眼前的一步。对于复杂任务（比如写整个游戏），我们需要一种更深思熟虑（至少看上去是这样）的模式：**Plan and Execute**。
 
 既然我们拥有了即强大的 LLM，我们不需要复杂的 LangChain 框架也能实现它！
 
@@ -418,7 +419,7 @@ ReAct 虽然强大，但它是"短视"的——只看眼前的一步。对于复
 1.  **Planner (规划师)**: 接收大目标，生成 Step-by-Step 的计划清单。
 2.  **Executor (执行者)**: 这里通过循环，一步步执行 Planner 给出的步骤。
 
-这种模式充分利用了强模型（如 GPT-5, Claude 4.6 等）的规划能力，让 Agent 更有条理，一些code agent也是利用这种模式 先做编码计划再动手写代码。
+这种模式充分利用了强模型（如 GPT-5, Claude 4.6 等）的规划能力，让 Agent 更有条理，一些code agent也是利用这种模式，先做计划再动手写代码。
 
 <div align="center">
 
@@ -438,49 +439,50 @@ graph TD
 
 🔗 **代码演示**：
 - [3_3_plan_and_execute.py](./codes/chapter3/3_3_plan_and_execute.py)
-  - 展示了如何用两个 Prompt (Planner Prompt + Executor Prompt) 配合 Python 循环，构建一个可以解决长链条任务的 Agent。(仅作过程展示)
+  - 展示了如何用两个 Prompt (Planner Prompt + Executor Prompt) 配合 Python 循环，构建一个可以解决长链条任务的 Agent。(仅作流程展示，非真实可用)
 
 ---
 
 ### 3.4 上下文工程 (Context Engineering, 2025)
 
-> *"Prompt Engineering is dead. Long live Context Engineering."* — Andrej Karpathy (Idea)
+> *"Prompt Engineering is dead. Long live Context Engineering."* — Andrej Karpathy 
 
-在 LLM 发展的早期（2023），我们痴迷于 **Prompt Engineering**（提示词工程），研究"怎么问"才能让模型更聪明。我们学习各种咒语，比如 "Take a deep breath", "Think step by step"。
+在 LLM 发展的早期（2023），我们痴迷于 **Prompt Engineering**（提示词工程），研究"怎么问"才能让模型更聪明。我们学习各种咒语让模型表现的更聪明，比如 "Take a deep breath", "Think step by step"。
 
-到了 2025 年，随着模型智商的普及，焦点已经转移到了 **Context Engineering**（上下文工程），即研究"喂什么"。
+到了 2025 年，随着模型能力的提升，焦点已经转移到了 **Context Engineering**（上下文工程），即研究"喂什么上下文给LLM才能更好的解决问题"。
 
 **为什么需要上下文工程？**
 
 1.  **Prompt 是脆弱的，Context 是鲁棒的**：
-    你在这个模型上调教好的 Prompt，换个模型可能就失效了。但如果你能在 Context 中提供**高质量的示例代码**、**准确的相关文档**、**清晰的历史记忆**，任何模型都能表现得更好。这也常被称为 "In-Context Learning"。
+    你在这个模型上调教好的 Prompt，换个模型可能就失效了。但如果你能在 Context 中提供**高质量的示例代码**、**准确的相关文档**、**清晰的历史记忆**，大部分模型都能比没有这些上下文表现得更好。这也常被称为 "In-Context Learning" 或者 "Few-Shot Learning"。
 
 2.  **有限的注意力**：
-    虽然现在的模型（如 Gemini 3 Pro）拥有巨大的上下文窗口（1M+ tokens），但这并不意味着我们可以无脑塞入所有垃圾信息。
-    -   **Context Pollution (上下文污染)**：无关信息会分散模型注意力，导致"幻觉"或逻辑混乱。
+    虽然现在的模型（如 Gemini 3 Pro, Claude-opus-4.6 ,GPT-5.4等）拥有巨大的上下文窗口（1M+ tokens），但这并不意味着我们可以无脑塞入所有信息。
+    -   **Context Rot (上下文腐烂)**：无关信息会分散模型注意力，导致"幻觉"或逻辑混乱。比如GPT-5.4 号称上下文窗口1M，但是在272k token的时候，准确率就会下降。
     -   **Needle In A Haystack (大海捞针)**：关键信息埋得越深，被忽略的概率越大。
+    -   **token花费**：上下文窗口越大，每次都把历史传入，token花费越大。
 
 **核心实践：如何做 Context Engineering？**
 
 一些前人的实践经验：
 
-*   **动态过滤**：只放入与当前任务最相关的 3 个工具定义，而不是全部 100 个。
-*   **记忆压缩**：将 10 轮前的对话总结为摘要，而不是保留原始对话。
+*   **动态过滤**：只放入与当前任务最相关的 N 个工具定义，而不是全部 100+ 个。目前实践来看，50个工具作为上限比较合适。
+*   **记忆压缩**：在一定的总token窗口触发压缩，将对话总结为摘要，而不是保留原始对话。
 *   **示例增强**：在 Prompt 中动态插入一个与当前任务相似的 successfully solved example（Few-Shot）。
-*   **文档切片**：不喂整本手册，只喂检索到的相关章节。
+*   **文档切片**：不喂整本手册，只喂检索到的相关章节，rag或者 agentic rag（像人类一样翻书）。
 
 **总结**：
-未来的 Agent 开发，核心不在于写出多么精妙的 Prompt，而在于构建科学合理的**上下文工程**，能实时地把**最正确的信息**塞进**有限的窗口**里。
+目前的 Agent 开发，核心不在于写出多么精妙的 Prompt，而在于构建科学合理的**上下文工程**，能实时地把**最正确的信息**塞进**有限的窗口**里。
 
 ---
 
-# 第4章：Agent 的职业技能 (Skills)
+# 第4章 Agent 的能力插件：Skills
 
-如果说 LLM 是大脑，Tool 是手，那么 **Skill (技能)** 就是 Agent 的**职业资格证书**。
+如果说 LLM 是大脑，Tool 是手，那么 **Skill (技能)** 就是 Agent 的**技能书**，讲究的是一个**模块化**，**可插拔**。
 
 ## 4.1 Skill 的本质：为上下文工程而生
 
-Anthropic 在 Claude Desktop 中引入 "Skills" 概念（或者叫 "Computer Use" 的打包方式），其核心原因正是我们在 3.4 节讨论的 **Context Engineering**。
+Anthropic 在 ClaudeCode中引入 "Skills" 概念，其核心原因正是我们在 3.4 节讨论的 **Context Engineering**。
 
 试想，如果你有一个全能 Agent，我们要教它 1000 个工具：Excel处理、PDF阅读、网页抓取、数据库查询...
 如果把这 1000 个工具的定义（Schema）一次性全部塞进 System Prompt：
@@ -488,17 +490,17 @@ Anthropic 在 Claude Desktop 中引入 "Skills" 概念（或者叫 "Computer Use
 2.  **注意力分散**：模型在浩如烟海的工具中迷失，不知道该用哪个。
 
 **Skill 的解决方案**：
-Skill 本质上是一个**自包含的上下文包 (Context Package)**。
+Skill 本质上是一个**自包含的上下文片段 (Context Snippet)**。
 它通常包含：
 -   `SKILL.md`: 技能说明书（Prompt 片段）。
 -   `tools/`: 该技能专属的工具脚本。
 
-**Context Engineering 的极致实践**：
+**Context Engineering 的落地实践**：
 Agent 运行时，默认是一个"白板"。只有当用户说 "帮我分析这周的销售报表" 时，Agent 才会：
 1.  **识别意图**：需要 Excel 分析技能。
 2.  **动态加载 (Load)**：将 `Excel Skill` 的 prompt 和 tools 注入到当前的 Context Window。
 3.  **执行任务**。
-4.  **动态卸载 (Unload)**：任务完成后，清理 Context，防止污染。
+4.  **动态卸载 (Unload)**：任务完成后，可以清理 Context，防止污染。
 
 > **Skill = Group of Tools + Instructions + Resources (Load/Unload on demand)**
 
@@ -509,16 +511,16 @@ Agent 运行时，默认是一个"白板"。只有当用户说 "帮我分析这�
 
 ## 4.2 实战案例：File Editor Skill 深度解析
 
-为了更好地理解 Skill 的构造，我们以 `file_editor` 为例。这是一个典型的“文件编辑”技能，它让 Agent 拥有了读写本地文件的专业能力。
+为了更好地理解 Skill 的结构，我们以 `file_editor` 为例。这是一个典型的“文件编辑”技能，它让 Agent 拥有了读写本地文件的专业能力。
 
 一个标准的 Skill 目录结构如下：
 ```text
 skills/file_editor/
-├── SKILL.md      # 技能说明书 (Prompt & Metadata)
-└── tools.py      # 工具逻辑实现 (Python Code)
+├── SKILL.md      # 技能说明书 (Prompt & Metadata)，这个文件按照目前的规范必须有。
+└── tools.py      # 工具逻辑实现 (code)，按照目前的规范可以没有，格式相对自由。
 ```
 
-### 4.2.1 说明书：SKILL.md (YAML 前言 + 指导)
+### 4.2.1 说明书：SKILL.md = YAML 前言 + 指导
 
 🔗 **代码参考**：[SKILL.md](../skills/file_editor/SKILL.md)
 
@@ -542,7 +544,7 @@ description: tools for reading, writing, and manipulating files
 ```
 
 *   **name**: Skill 的唯一标识符。
-*   **description**: 对该技能的简短描述，帮助 Agent 的“大脑”判断何时加载该 Skill。
+*   **description**: 对该技能的简短描述，帮助 Agent 的“大脑”判断何时加载使用该 Skill。
 
 ### 4.2.2 核心逻辑：tools.py (工具实现)
 
@@ -561,7 +563,7 @@ async def file_editor(
     # ... 其他参数
 ) -> str:
     """
-    强大的文件读取与编辑工具
+    文件读取与编辑工具
     - view: 查看内容
     - create: 创建文件
     - str_replace: 精确字符串替换
@@ -572,7 +574,7 @@ async def file_editor(
 
 ### 4.2.3 适配协议：get_tools 入口
 
-为了让 Agent 能够动态加载这些工具，`tools.py` 的末尾必须符合加载协议，每个Agent在加载时略有不同，但目的都是让Agent能读取到这些skills的内容以及文件位置：
+为了让 Agent 能够动态加载这些工具，`tools.py` 的末尾必须符合加载协议，每个Agent在加载时略有不同，但目的都是让Agent能读取到这些skills的内容以及文件位置，每个agent在load skill时的过程略有区别，但最终都会把tools挂载到agent上：
 
 ```python
 # 适配加载协议，返回该 Skill 提供的工具列表
@@ -634,11 +636,11 @@ skill-creator/
 *   **逻辑流**：它在打包前会自动触发 `quick_validate`。只有校验通过的 Skill 才会被压缩成 `.skill` (zip 格式) 文件，确保分发的每一个包都是符合规范的。
 
 #### 5. 核心价值：方法论的工具化
-`skill-creator` 的精髓在于它把 **Context Engineering (上下文工程)** 的方法论固化为了一个可被 Agent 调用的资产。这意味着 Agent 不再是盲目地写代码，而是在一套成熟的方法论指导下进行“自我进化”。
+`skill-creator` 的精髓在于它把 **Context Engineering (上下文工程)** 的方法论固化为了一个可被 Agent 调用的资产。这意味着 Agent 不再是盲目地写代码，而是在一套成熟的方法论指导下可进行“自我能力扩展”。
 
 ---
 
-# 第5章 Agent的骨架：Google ADK (2026生产级框架)
+# 第5章 Agent的骨架：Google ADK (框架越来越多，OAI，Anthropic，Google的Agent SDK，阿里的agentscope等)
 
 **前言**：
 
@@ -652,22 +654,22 @@ Google Agent Development Kit (ADK) 就是这套骨架，它将 Agent 开发从�
 
 在手写 Agent 时，我们经常面临这些痛点：
 
-1. **状态混乱**：全局变量满天飞，很难分清哪个变量属于哪个用户。  
+1. **手写LLM API调用**：不同LLM的API调用方式不同，需要手写适配代码。  
 2. **调试困难**：LLM 到底在哪一步出错了？是 Prompt 没拼对，还是工具参数传错了？  
-3. **扩展性差**：想在所有工具调用前加一个“安全检查”，需要修改每一个函数。
+3. **扩展性差**：想在所有工具调用前加一个“安全检查”，需要修改每一个函数，缺少钩子。
 
 Google ADK (Agent Development Kit) 提供了一套标准化的原语（Primitives）来解决这些问题。它不仅是一个库，更是一套**设计模式**。
 
 ### 5.1.1 深度对比：OpenAI Agents SDK vs Anthropic Agent SDK vs Google ADK
 
-2026 年的 Agent 开发领域已形成“三足鼎立”之势。根据最新发布（2025底），Anthropic 也推出了正式的 Agent SDK（原 Claude Code SDK），这使得三家的定位差异更加微妙。
+2026 年的 Agent 开发领域已形成“三足鼎立”之势。其他厂商也在跟进，比如阿里的agentscope等。
 
-| 维度                  | OpenAI Agents SDK                                                | Anthropic Agent SDK                                                                                                   | Google ADK                                                                          |
-| :-------------------- | :--------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------- |
-| **定位**              | **通用型框架**<br>Swarm 的转正版本，强调简单易用。               | **能力型库 (Library)**<br>直接暴露 Claude Code 的核心引擎，专注于编码与操作。                                         | **企业级框架 & 运行时**<br>不仅是框架，还包含云端托管标准。                         |
-| **特长 (Superpower)** | **多智能体协作**<br>内置 Handoffs 机制，擅长处理多角色对话。     | **文件系统与终端**<br>原生集成了 Bash, Edit, Read 工具。它**“活在文件系统里”**，通过 CLAUDE.md 和 SKILL.md 定义能力。 | **全链路托管**<br>原生支持 Google Agent Engine，解决高并发、鉴权、日志等“脏活”。    |
-| **状态管理**          | **数据库驱动**<br>支持 SQLAlchemy/SQLite，适合存结构化会话数据。 | **文件驱动**<br>配置和记忆主要依赖项目根目录下的 Markdown 文件，非常适合 DevOps/Coding 场景。                         | **服务化驱动**<br>高度抽象的 SessionService，支持 Memory/Redis/Firestore 一键切换。 |
-| **部署难度**          | **自理 (Self-Hosted)**<br>需要自己打包 Docker 并部署 Web 服务。  | **本地/容器 (Local/Container)**<br>因为它强依赖文件系统和 Shell，通常部署在开发机或 CI/CD 容器中。                    | **原生托管 (Managed)**<br>一键部署到 Google Cloud，无需操心底层架构。               |
+| 维度         | OpenAI Agents SDK                                                | Anthropic Agent SDK                                                                                                   | Google ADK                                                                                                                                                                                                                |
+| :----------- | :--------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **定位**     | **通用型框架**<br>Swarm 的转正版本，强调简单易用。               | **能力型库 (Library)**<br>直接暴露 Claude Code 的核心引擎，专注于编码与操作。                                         | **企业级框架 & 运行时**<br>不仅是框架，还包含云端托管标准。                                                                                                                                                               |
+| **特长**     | **多智能体协作**<br>内置 Handoffs 机制，擅长处理多角色对话。     | **文件系统与终端**<br>原生集成了 Bash, Edit, Read 工具。它**“活在文件系统里”**，通过 CLAUDE.md 和 SKILL.md 定义能力。 | **全链路托管**<br>Google ADK 可与 Google Cloud 的 Agent Engine 集成，用于把 Agent 部署到托管运行环境中。这样开发者不用自己手搓整套服务化基础设施，而可以更多依赖 Google Cloud提供的可扩展部署、身份权限、日志监控等能力。 |
+| **状态管理** | **数据库驱动**<br>支持 SQLAlchemy/SQLite，适合存结构化会话数据。 | **文件驱动**<br>配置和记忆主要依赖项目根目录下的 Markdown 文件，非常适合 DevOps/Coding 场景。                         | **服务化驱动**<br>SessionService，支持 Memory/Redis/google云服务切换。                                                                                                                                                    |
+| **部署难度** | **自理 (Self-Hosted)**<br>需要自己打包 Docker 并部署 Web 服务。  | **本地/容器 (Local/Container)**<br>因为它强依赖文件系统和 Shell，通常部署在开发机或 CI/CD 容器中。                    | **原生托管 (Managed)**<br>可部署到 Google Cloud。                                                                                                                                                                         |
 
 **核心洞察：**
 
@@ -679,21 +681,21 @@ Google ADK (Agent Development Kit) 提供了一套标准化的原语（Primitive
     *   *适用场景*：你需要写一个 Agent 自动去 GitHub 拉代码、修 Bug、然后提交 PR。这是它的绝对统治区。
 
 *   **Google ADK (企业派)**：
-    ADK 的优势依然在于**“云端一体化”**。当你的 Agent 需要服务 10 万用户，需要接入企业 SSO，需要审计日志时，ADK + Agent Engine 是最快落地的方案。
+    ADK 的优势依然在于**“云端一体化”**。当你的 Agent 需要服务 10 万用户，需要接入企业 SSO，需要审计日志时，ADK +谷歌云服务是最稳的方案。
 
 **结论**：
 
-*   从零开始写一个 Agent？选 **OpenAI** 或 **Google ADK**。
+*   从零开始写一个 Agent来学习？选 **OpenAI** 或 **Google ADK**。（主要Antropic总是制造门槛）
 *   在 ClaudeCode 的基础上写一个能改代码/运维服务器的 Agent？选 **Anthropic Agent SDK**。
 *   写一个企业级 SaaS 应用？可以选 **Google ADK**。
 
 ## 5.2 深入解剖：ADK 的核心概念
 
-ADK 的世界由几个核心原语构成。在深入数据流之前，我们必须先理解舞台上的两位主角：**Agent** 和 **Tool**。
+ADK 的核心原语：**Agent** 和 **Tool**。
 
 ### 5.2.1 Agent (智能体)：不仅仅是 LLM
 
-在 ADK 中，Agent 是执行任务的基本单元。特别值得注意的是，ADK 将 Agent 分为两类，这极大地扩展了“智能体”的定义：
+在 ADK 中，Agent 是执行任务的基本单元：
 
 1. **LlmAgent (推理型)**：  
    * 这是我们熟悉的 Agent，通过 Prompt 驱动 LLM 进行思考和推理。  
@@ -707,14 +709,14 @@ ADK 的世界由几个核心原语构成。在深入数据流之前，我们必�
 
 ### 5.2.2 Tool (工具)：能力的标准化封装
 
-ADK 统一了所有“能力”的接口。Tool 不再只是一个 Python 函数，它是 Agent 与外部世界交互的唯一触点。
+ADK 统一了所有“能力”的接口。Tool 不再只是一个 Python 函数，它是 Agent 与外部世界交互的触点。
 
 * **FunctionTool**：最基础的工具，封装本地 Python 函数或 API 调用。  
-* **AgentTool (神来之笔)**：**将另一个 Agent 封装成一个 Tool**。  
+* **AgentTool**：**将另一个 Agent 封装成一个 Tool**。  
   * 这意味着：主 Agent 可以像调用计算器一样调用另一个“写诗 Agent”。  
   * 这是实现 **多智能体分层架构 (Hierarchical Multi-Agent)** 的关键机制。
 
-理解了主角（Agent）和道具（Tool）之后，我们来看让它们动起来的机制：**Event**、**Session**、**State** 和 **Callbacks**。
+理解了Agent和Too之后，我们来看上下文的机制：**Event**、**Session**、**State** 和 **Callbacks**。
 
 ### 5.2.3 Event (事件)：标准化的消息流
 
@@ -746,7 +748,7 @@ sequenceDiagram
 **为什么这很重要？**
 
 * **可回溯性 (Time Travel)**：你可以重放整个 Event 序列，完美复现 Bug。
-* **UI 渲染**：前端不需要理解复杂的逻辑，只需要针对不同的 Event 类型（如 ToolCall 显示加载中，AgentResponse 显示文本）进行渲染。
+* **UI 渲染**：前端不需要理解复杂的逻辑，只需要针对不同的 Event 类型（如 FunctionCall 显示加载工具，FunctionResponse 显示工具返回结果）进行渲染。
 
 🔗 **代码演示**：
 - [5_1_event_lifecycle.py](./codes/chapter5/5_1_event_lifecycle.py)
@@ -766,7 +768,6 @@ ADK 的 **Session** 是一个动态的容器，它代表了 Agent 与用户交�
 
 ### 5.2.5 State (状态)：跨轮次的“共享内存”
 
-这是区别脚本与应用的**关键**。
 
 **State** 是附着在 Session 上的一块 KV 存储（字典）。你可以把它想象成 Agent 和所有工具都能看到的**“共享黑板”**。
 
@@ -830,7 +831,7 @@ def confirm_order(session: Session):
 * before_tool: 在工具执行前（例如：权限校验，确认用户是否有权删除文件）。  
 * on_error: 全局异常捕获。
 
-**场景演示：防止 Agent 泄露隐私 (PII Guardrail)**
+**场景演示：防止 Agent 泄露隐私 (Guardrail)**
 
 假设我们不希望 Agent 把用户的手机号发给第三方模型，我们可以写一个 before_model 回调：
 
@@ -852,7 +853,7 @@ def pii_guardrail(context: ModelContext):
 # 注册回调  
 my_agent = LlmAgent(  
     model="gemini-2.0-flash",  
-    callbacks=[pii_guardrail]  # 注入回调  
+    callbacks=[pii_guardrail]  # 注入钩子 
 )
 ```
 
@@ -936,7 +937,7 @@ pipeline = SequentialAgent(
 
 选择生态繁荣与时俱进的Agent SDK，相当于站在巨人的脚板上（并没有肩膀那么高但是至少能与时俱进了）。接下来，我们将进入实战环节，基于skills的理念，尝试用google ADK 做一个的能动态扩展能力的原型Agent。 
 
-## subagent / 压缩 / rewind / 多模态 / callbacks(hooks,钩子 before-llm-callbacks,before-tool-callbacks,以及对应的after-xxx-callbacks) / skills( bash file_editor skill_load) / 外部合作接口dynamic-mcp  exa-mcp / 外部非合作接口 skill-creator 适当讲解/ 语音 / 手机连接ssh远程 / playwrite / 经验库 / 记忆 / drawio  / agent-team
+### subagent / 压缩 / rewind / 多模态 / callbacks(hooks,钩子 before-llm-callbacks,before-tool-callbacks,以及对应的after-xxx-callbacks) / skills( bash file_editor skill_load) / 外部合作接口dynamic-mcp  exa-mcp / 外部非合作接口 skill-creator 适当讲解/ 语音 / 手机连接ssh远程 / playwrite / 经验库 / 记忆 / drawio  / agent-team
 
 总之就是 AI harness 脚手架工程（除了LLM api与外部可插拔的tool之外 其余的部分沉淀下来 比如持久化 agent team机制 ）
 
@@ -1170,7 +1171,7 @@ agent = LlmAgent(
 )
 ```
 
-#### 实战：用户中断机制
+#### 实战：用户中断机制（steering）
 
 🔗 **代码参考**：[main_web_start_steering.py#L1155-L1166](../src/adk_agent/main_web_start_steering.py#L1155-L1166)
 
@@ -1217,7 +1218,7 @@ flowchart TD
 
 #### AutoCompactAgent 实现原理
 
-🔗 **代码参考**：[main_web_start_steering.py#L1636-L1650](../src/adk_agent/main_web_start_steering.py#L1636-L1650)
+🔗 **代码参考**：[main_web_start_steering.py#L1661-L1680](../src/adk_agent/main_web_start_steering.py#L1636-L1650)
 
 ```python
 # 调用 AutoCompactAgent 生成摘要
@@ -1292,7 +1293,7 @@ async def _check_and_compact_context(self, session, limit_token_count: int):
 
 #### 核心原理：Part.from_bytes() 的视觉通道机制
 
-**关键设计**：Ciri 使用 Google GenAI SDK 的 `Part.from_bytes()` 方法，图片数据通过 **Vision Token 通道**而非文本 Context。
+**关键设计**：使用 Google GenAI SDK 的 `Part.from_bytes()` 方法，图片数据通过 **Vision Token 通道**而不消耗文本 Context。
 
 **数据流验证**（来源：ai.google.dev 官方文档）：
 
@@ -1582,7 +1583,7 @@ description: HTTPX 直连版节能 SOP 工作流生成专家。用于一键检�
 ```markdown
 ## 1. 角色定义
 
-你现在处于 **"Energy Saving HTTPX SOP Creator（特种网络研发工程师）"** 模式。
+你现在处于 **"Energy Saving HTTPX SOP Creator（网络研发工程师）"** 模式。
 你的核心职责是：针对网络抖动、VPN 代理极不稳定、浏览器处于休眠降权等严苛场景，
 根据用户的自然语言需求，从本地的 API 资产库中检索接口，编写、测试并生成可复用的 Python 业务代码。
 ```
@@ -1821,7 +1822,7 @@ flowchart TD
 
 #### 5.4.1.5.7 技能加载机制
 
-`skill_load` 是 Ciri 的核心元工具，允许 Agent 在运行时动态加载 Skill：
+`skill_load` 是 Agent的核心工具，允许 Agent 在运行时动态加载 Skill：
 
 🔗 **代码参考**：[main_web_start_steering.py#L443-L534](../src/adk_agent/main_web_start_steering.py#L443-L534)
 
@@ -1893,7 +1894,7 @@ def _load_skill_tools(self, skill_id: str):
 
 #### 两级检索：L0 广度扫描 + L2 精准深读
 
-Ciri 通过 `memory_retrieval_system` 技能实现对抗上下文限制的持久记忆：
+通过 `memory_retrieval_system` 技能实现持久记忆：
 
 🔗 **代码参考**：[memory_retrieval_system/SKILL.md](../skills/memory_retrieval_system/SKILL.md)
 
@@ -1999,11 +2000,11 @@ async def _extract_and_publish_experience(self, events_snapshot: list):
 | **Skills**    | get_tools 懒加载模式          | 按需扩展     |
 | **记忆**      | L0-L2 两级检索                | 持久化经验   |
 
-这些高级特性共同构成了 Ciri 的**AI Harness 脚手架工程**，让 Agent 能够：
-- 🧠 **持续学习**：通过记忆库记住过去
-- ⚡ **自我修复**：通过压缩保持轻量
-- 🔧 **按需扩展**：通过 Skills 动态武装
-- 🛡️ **安全可控**：通过 Callbacks 拦截风险
+这些高级特性共同构成了 Agent 的**AI Harness 脚手架工程**，让 Agent （尽量）能够：
+- **持续记忆**：通过记忆库记住过去
+- **保持专注**：通过压缩保持轻量
+- **按需扩展**：通过 Skills 动态武装
+- **安全可控**：通过 Callbacks 拦截风险
 
 ---
 
