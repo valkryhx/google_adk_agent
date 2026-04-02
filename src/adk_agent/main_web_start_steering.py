@@ -17,6 +17,7 @@ import time
 import secrets
 import sqlite3
 import functools
+from pathlib import Path
 from contextvars import ContextVar
 from typing import Dict, Tuple, Optional, Any, List
 import base64 as b64_module
@@ -55,6 +56,11 @@ from google.adk import Runner
 from src.shared.db.custom_table_db_service import FullyCustomDbService
 from google.adk.models.lite_llm import LiteLlm
 from src.adk_agent.auto_compact_agent import AutoCompactAgent
+from src.adk_agent.kairos.activity_log import KairosActivityLog
+from src.adk_agent.kairos.api import register_kairos_routes
+from src.adk_agent.kairos.dex_bridge import KairosDexBridge
+from src.adk_agent.kairos.models import dump_kairos_state, load_kairos_state
+from src.adk_agent.kairos.runtime import KairosRuntime
 
 # SessionKey = (app_name, user_id, session_id)
 SessionKey = Tuple[str, str, str]
@@ -295,6 +301,7 @@ class SteeringSession:
 
         self._current_session = None # [New] 跟踪当前正在执行任务的 Session 对象
         self._loaded_skills = []  # [Fix] 更改为 list 以严格保持动态技能的物理加载顺序
+        self.kairos_runtime = None
 
         # 创建会话专属的 Agent（内部会创建自己的 compactor）
         self.agent = self._create_agent()
@@ -353,6 +360,73 @@ class SteeringSession:
             self.stream_queue.put_nowait(event)
         except asyncio.QueueFull:
             print(f"[SteeringSession] ⚠️ stream_queue full, dropping event: {event_type}")
+
+    async def _save_kairos_state(self, kairos_state):
+        session = await self.session_service.get_session(
+            app_name=self.app_name,
+            user_id=self.user_id,
+            session_id=self.session_id,
+        )
+        if not session:
+            session = await self.session_service.create_session(
+                app_name=self.app_name,
+                user_id=self.user_id,
+                session_id=self.session_id,
+            )
+        if not session.state:
+            session.state = {}
+        session.state["kairos"] = dump_kairos_state(kairos_state)
+        await self.session_service.save_session(session)
+        self._current_session = session
+
+    async def _emit_kairos_event(self, event):
+        self.report_swarm_event(
+            "kairos_event",
+            {"kind": event.kind, "message": event.message, "ts": event.ts, "level": event.level},
+        )
+
+    async def _append_kairos_log(self, event):
+        project_root = Path(__file__).resolve().parents[2]
+        KairosActivityLog(project_root).append_entry(
+            user_id=self.user_id,
+            app_name=self.app_name,
+            session_id=self.session_id,
+            kind=event.kind,
+            message=event.message,
+            ts=event.ts,
+        )
+
+    async def run_kairos_turn(self, reason: str):
+        synthetic_prompt = (
+            "[KAIROS_TICK]\n"
+            f"reason={reason}\n"
+            "你现在处于 assistant runtime 模式。请检查是否有需要汇报的状态、"
+            "是否有已完成的 Dex 任务、是否应该继续 sleep。输出简洁 brief；"
+            "如果没有实质工作，直接进入 sleep。"
+        )
+        async for _ in self._run_agent_turn(synthetic_prompt, images=None, yield_chunks=False):
+            pass
+        return "ok"
+
+    def get_or_create_kairos_runtime(self):
+        if self.kairos_runtime is not None:
+            return self.kairos_runtime
+
+        raw = {}
+        if self._current_session and getattr(self._current_session, "state", None):
+            raw = self._current_session.state.get("kairos", {})
+
+        self.kairos_runtime = KairosRuntime(
+            state=load_kairos_state(raw),
+            save_state=self._save_kairos_state,
+            emit_event=self._emit_kairos_event,
+            append_log=self._append_kairos_log,
+            run_turn=self.run_kairos_turn,
+            dex_bridge=KairosDexBridge(base_dir=os.getcwd(), user_id=self.user_id),
+            tick_interval_seconds=15.0,
+            is_worker_busy=lambda: WORKER_LOCK.locked(),
+        )
+        return self.kairos_runtime
 
     def _create_agent(self) -> LlmAgent:
         """创建会话专属的 LlmAgent 实例"""
@@ -902,14 +976,12 @@ class SteeringSession:
             _log(f"提取过程异常: {e}")
             _flush_log("error")
 
-    async def run_task(self, task: str, images: List[str] = None):
+    async def _run_agent_turn(self, task: str, images: List[str] = None, yield_chunks: bool = True):
         """
-        执行任务主逻辑（原 run_agent 函数的核心部分）
-        使用 yield 返回流式数据块
-        
-        Args:
-            task: 用户输入的文本
-            images: 可选的 Base64 编码图片列表 (data:image/xxx;base64,...)
+        执行共享的 agent turn 主逻辑。
+
+        - `yield_chunks=True`：供前台 `/api/chat` 使用，流式返回 chunk
+        - `yield_chunks=False`：供 KAIROS runtime 使用，只复用执行骨架，不向外层返回 chunk
         """
         # [DEBUG] 植入配置快照日志
         print(f"\n[SteeringSession] 🚀 启动任务执行...")
@@ -1064,7 +1136,8 @@ class SteeringSession:
             
             if turn_count > MAX_TURNS:
                 print(f"\n[警告] event个数 ({turn_count}) 超过硬阈值 {MAX_TURNS}，正在执行自动压缩...")
-                yield {"type": "text", "content": f"\n[系统] 智能体执行超过MAX_TURNS={MAX_TURNS}，正在自动压缩上下文...\n"}
+                if yield_chunks:
+                    yield {"type": "text", "content": f"\n[系统] 智能体执行超过MAX_TURNS={MAX_TURNS}，正在自动压缩上下文...\n"}
                 
                 # 执行压缩（复用原有逻辑）
                 session = await self._auto_compact_session(session)
@@ -1249,26 +1322,29 @@ class SteeringSession:
                             if new_parts:
                                 processed_part_history.extend(new_parts)
                                 chunks = _process_event_stream(result, parts_override=new_parts)
-                                for chunk in chunks:
-                                    yield chunk
-                            elif not evt_parts: 
+                                if yield_chunks:
+                                    for chunk in chunks:
+                                        yield chunk
+                            elif not evt_parts:
                                 # If event has NO parts (e.g. pure tool call or metadata update), pass it through
                                 # But _process_event_stream checks for parts.
                                 # If it's a non-part event (like just tool_calls in some frameworks?), 
                                 # Google ADK events mainly communicate via parts.
                                 # If `result` has no content parts but is a valid event, _process_event_stream handles it via robust checks.
                                 chunks = _process_event_stream(result)
-                                for chunk in chunks:
-                                    yield chunk
+                                if yield_chunks:
+                                    for chunk in chunks:
+                                        yield chunk
 
                     # 2. 处理 Side-Channel 消息 (Swarm Log, Progress 等)
                     if pending_stream_get in done:
                         event = pending_stream_get.result()
-                        
+
                         # 准备下一次获取
                         pending_stream_get = asyncio.create_task(self.stream_queue.get())
-                        
-                        yield event
+
+                        if yield_chunks:
+                            yield event
 
                 # 清理
                 if not pending_runner_get.done(): pending_runner_get.cancel()
@@ -1286,7 +1362,8 @@ class SteeringSession:
                 
                 # 必须重新抛出或者想办法重试
                 # 这里我们简单提示用户重试，因为完全自动重试整个流式请求比较复杂
-                yield {"type": "text", "content": "\n\n[System] Context limit reached. Auto-compaction triggered. Please retry your request."}
+                if yield_chunks:
+                    yield {"type": "text", "content": "\n\n[System] Context limit reached. Auto-compaction triggered. Please retry your request."}
                 return
 
             except Exception as e:
@@ -1352,23 +1429,27 @@ class SteeringSession:
                         print(f"[System] 已插入中断标记到历史记录")
                 except Exception as e:
                     print(f"[Warning] Failed to append interruption history: {e}")
-                
-                yield {"type": "text", "content": "\n\n[已停止] 任务已取消。"}
+
+                if yield_chunks:
+                    yield {"type": "text", "content": "\n\n[已停止] 任务已取消。"}
                 return
-        
+
         except UserInterruption:
             # 这个块通常不会被到达，因为 run_task 内部有局部处理，但为了双重保险
-            yield {"type": "text", "content": "\n\n[已停止] 任务已取消。"}
+            if yield_chunks:
+                yield {"type": "text", "content": "\n\n[已停止] 任务已取消。"}
             return
             
         except Exception as e:
             # 过滤掉包含中断信息的特定错误字符串
             err_msg = str(e)
             if "User requested to stop operation" in err_msg:
-                yield {"type": "text", "content": "\n\n[已停止] 任务已取消。"}
+                if yield_chunks:
+                    yield {"type": "text", "content": "\n\n[已停止] 任务已取消。"}
             else:
                 logger.error(f"执行出错: {e}")
-                yield f"[ERROR] {err_msg}"
+                if yield_chunks:
+                    yield f"[ERROR] {err_msg}"
                 print(f"\n[ERROR] 执行出错: {e}")
         
         finally:
@@ -1447,6 +1528,11 @@ class SteeringSession:
             
             if was_interrupted:
                 print(f"\n🛑 [System] 任务已停止 (Interrupted by User)")
+
+    async def run_task(self, task: str, images: List[str] = None):
+        """前台聊天入口：流式转发共享 agent turn 的 chunks。"""
+        async for chunk in self._run_agent_turn(task, images=images, yield_chunks=True):
+            yield chunk
 
     async def _archive_turn_to_memory(self, user_task: str, events_snapshot: list, images: list = None):
         """
@@ -2153,6 +2239,7 @@ class SmartGatekeeperMiddleware:
 app = FastAPI()
 app.add_middleware(SmartGatekeeperMiddleware)
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
+register_kairos_routes(app, lambda: session_manager)
 
 class AgentSettings(BaseModel):
     model: Optional[str] = None
