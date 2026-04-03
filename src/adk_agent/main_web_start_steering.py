@@ -416,6 +416,8 @@ class SteeringSession:
         if self._current_session and getattr(self._current_session, "state", None):
             raw = self._current_session.state.get("kairos", {})
 
+        from src.adk_agent.kairos.scheduler import KairosScheduler
+
         self.kairos_runtime = KairosRuntime(
             state=load_kairos_state(raw),
             save_state=self._save_kairos_state,
@@ -425,6 +427,7 @@ class SteeringSession:
             dex_bridge=KairosDexBridge(base_dir=os.getcwd(), user_id=self.user_id),
             tick_interval_seconds=15.0,
             is_worker_busy=lambda: WORKER_LOCK.locked(),
+            scheduler=KairosScheduler(),
         )
         return self.kairos_runtime
 

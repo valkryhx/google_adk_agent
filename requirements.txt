@@ -26,3 +26,7 @@ tavily-python
 
 # Skills: PDF Processing
 pdfplumber
+
+# KAIROS
+croniter
+filelock

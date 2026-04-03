@@ -3,11 +3,30 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from .attach import build_runtime_summary, list_runtime_summaries
+from .models import KairosSchedule
+
 
 class KairosSessionRequest(BaseModel):
     app_name: str
     user_id: str
     reason: str | None = None
+
+
+class KairosScheduleRequest(BaseModel):
+    app_name: str
+    user_id: str
+    schedule_id: str
+    cron: str
+    reason: str
+    enabled: bool = True
+
+
+class KairosDexRegisterRequest(BaseModel):
+    app_name: str
+    user_id: str
+    task_id: str
+    description: str
 
 
 def _get_session_manager(session_manager):
@@ -47,5 +66,59 @@ def register_kairos_routes(app, session_manager):
         session = manager.get_or_create(app_name, user_id, session_id)
         runtime = session.get_or_create_kairos_runtime()
         return {"status": "ok", "session_id": session_id, "kairos": runtime.get_status()}
+
+    # --- Phase 2: Schedule routes ---
+
+    @router.post("/api/sessions/{session_id}/kairos/schedules")
+    async def add_schedule(session_id: str, req: KairosScheduleRequest):
+        manager = _get_session_manager(session_manager)
+        session = manager.get_or_create(req.app_name, req.user_id, session_id)
+        runtime = session.get_or_create_kairos_runtime()
+        await runtime.add_schedule(
+            KairosSchedule(
+                schedule_id=req.schedule_id,
+                cron=req.cron,
+                reason=req.reason,
+                enabled=req.enabled,
+            )
+        )
+        return {"status": "ok", "session_id": session_id, "kairos": runtime.get_status()}
+
+    @router.delete("/api/sessions/{session_id}/kairos/schedules/{schedule_id}")
+    async def delete_schedule(session_id: str, schedule_id: str, app_name: str, user_id: str):
+        manager = _get_session_manager(session_manager)
+        session = manager.get_or_create(app_name, user_id, session_id)
+        runtime = session.get_or_create_kairos_runtime()
+        await runtime.delete_schedule(schedule_id)
+        return {"status": "ok", "session_id": session_id, "kairos": runtime.get_status()}
+
+    # --- Phase 2: Dex handoff route ---
+
+    @router.post("/api/sessions/{session_id}/kairos/dex/register")
+    async def register_dex_task(session_id: str, req: KairosDexRegisterRequest):
+        manager = _get_session_manager(session_manager)
+        session = manager.get_or_create(req.app_name, req.user_id, session_id)
+        runtime = session.get_or_create_kairos_runtime()
+        await runtime.register_dex_task(req.task_id, req.description)
+        return {"status": "ok", "session_id": session_id, "kairos": runtime.get_status()}
+
+    # --- Phase 2: Attach/List routes ---
+
+    @router.get("/api/kairos/sessions")
+    async def list_kairos_sessions(user_id: str):
+        manager = _get_session_manager(session_manager)
+        return {"sessions": list_runtime_summaries(manager, user_id)}
+
+    @router.get("/api/sessions/{session_id}/kairos/attach")
+    async def attach_kairos(session_id: str, app_name: str, user_id: str):
+        manager = _get_session_manager(session_manager)
+        session = manager.get_or_create(app_name, user_id, session_id)
+        runtime = session.get_or_create_kairos_runtime()
+        return {
+            "status": "ok",
+            "session_id": session_id,
+            "kairos": runtime.get_status(),
+            "attach": build_runtime_summary(app_name, user_id, session_id, runtime),
+        }
 
     app.include_router(router)
