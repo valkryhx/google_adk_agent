@@ -165,6 +165,40 @@ class FullyCustomDbService(BaseSessionService):
         await self.save_session(session)
         return session
 
+    async def save_session_state(
+        self,
+        *,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        state: Optional[dict[str, Any]],
+    ) -> Session:
+        """Update only session state/metadata without rewriting events."""
+        async with self.async_session_factory() as db:
+            async with db.begin():
+                stmt = select(self.DbSession).where(
+                    self.DbSession.app_name == app_name,
+                    self.DbSession.user_id == user_id,
+                    self.DbSession.session_id == session_id,
+                )
+                result = await db.execute(stmt)
+                db_session = result.scalar_one_or_none()
+
+                if not db_session:
+                    db_session = self.DbSession(
+                        app_name=app_name,
+                        user_id=user_id,
+                        session_id=session_id,
+                    )
+                    db.add(db_session)
+
+                db_session.updated_at = datetime.utcnow()
+                db_session.session_metadata = json.dumps(state or {}, ensure_ascii=False)
+
+        session = Session(app_name=app_name, user_id=user_id, id=session_id)
+        session.state = dict(state or {})
+        return session
+
     async def save_session(self, session: Session):
         """
         Full sync save (Supports Update and Rewind)

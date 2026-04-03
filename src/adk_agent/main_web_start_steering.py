@@ -361,7 +361,15 @@ class SteeringSession:
         except asyncio.QueueFull:
             print(f"[SteeringSession] ⚠️ stream_queue full, dropping event: {event_type}")
 
-    async def _save_kairos_state(self, kairos_state):
+    async def _persist_session_state(self, state: dict):
+        if isinstance(self.session_service, FullyCustomDbService):
+            return await self.session_service.save_session_state(
+                app_name=self.app_name,
+                user_id=self.user_id,
+                session_id=self.session_id,
+                state=state,
+            )
+
         session = await self.session_service.get_session(
             app_name=self.app_name,
             user_id=self.user_id,
@@ -373,11 +381,20 @@ class SteeringSession:
                 user_id=self.user_id,
                 session_id=self.session_id,
             )
-        if not session.state:
-            session.state = {}
-        session.state["kairos"] = dump_kairos_state(kairos_state)
+        session.state = dict(state or {})
         await self.session_service.save_session(session)
-        self._current_session = session
+        return session
+
+    async def _save_kairos_state(self, kairos_state):
+        session = await self.session_service.get_session(
+            app_name=self.app_name,
+            user_id=self.user_id,
+            session_id=self.session_id,
+        )
+        current_state = dict(session.state or {}) if session and getattr(session, "state", None) else {}
+        current_state["kairos"] = dump_kairos_state(kairos_state)
+        persisted_session = await self._persist_session_state(current_state)
+        self._current_session = persisted_session
 
     async def _emit_kairos_event(self, event):
         self.report_swarm_event(
@@ -397,6 +414,17 @@ class SteeringSession:
         )
 
     async def run_kairos_turn(self, reason: str):
+        """
+        执行 KAIROS autonomous turn，但不污染 session.events。
+
+        关键修复：
+        - KAIROS tick 是后台自治检查，不应该记录到用户的对话历史中
+        - 执行前后保存/恢复 session.events，避免历史膨胀
+        - 结果只写入 recent_events 和 activity log
+        """
+        # ==========================================
+        # 构造隐式 prompt 执行 turn
+        # ==========================================
         synthetic_prompt = (
             "[KAIROS_TICK]\n"
             f"reason={reason}\n"
@@ -404,8 +432,14 @@ class SteeringSession:
             "是否有已完成的 Dex 任务、是否应该继续 sleep。输出简洁 brief；"
             "如果没有实质工作，直接进入 sleep。"
         )
-        async for _ in self._run_agent_turn(synthetic_prompt, images=None, yield_chunks=False):
+
+        # 执行 turn，开启沙盒隔离模式，由底层屏蔽向真实数据库写入中间思考事件
+        async for _ in self._run_agent_turn(
+            synthetic_prompt, images=None, yield_chunks=False, 
+            is_sandbox_turn=True
+        ):
             pass
+
         return "ok"
 
     def get_or_create_kairos_runtime(self):
@@ -979,7 +1013,7 @@ class SteeringSession:
             _log(f"提取过程异常: {e}")
             _flush_log("error")
 
-    async def _run_agent_turn(self, task: str, images: List[str] = None, yield_chunks: bool = True):
+    async def _run_agent_turn(self, task: str, images: List[str] = None, yield_chunks: bool = True, is_sandbox_turn: bool = False):
         """
         执行共享的 agent turn 主逻辑。
 
@@ -1012,7 +1046,32 @@ class SteeringSession:
             from google.adk.agents import RunConfig
             from google.adk.agents.run_config import StreamingMode
             
-            runner = Runner(agent=self.agent, app_name=self.app_name, session_service=self.session_service)
+            active_session_service = self.session_service
+
+            # ==============================================================
+            # [沙盒隔离机制] 
+            # 对于不需要落盘的后台任务 (如 KAIROS)，克隆一份状态投入内存进行全封闭运行
+            # ==============================================================
+            if is_sandbox_turn:
+                from google.adk.sessions import InMemorySessionService
+                active_session_service = InMemorySessionService()
+                real_session = await self.session_service.get_session(
+                    app_name=self.app_name,
+                    user_id=self.user_id,
+                    session_id=self.session_id,
+                )
+                sandbox_state = dict(real_session.state or {}) if real_session and getattr(real_session, 'state', None) else {}
+                await active_session_service.create_session(
+                    app_name=self.app_name,
+                    user_id=self.user_id,
+                    session_id=self.session_id,
+                    state=sandbox_state,
+                )
+                if real_session and hasattr(real_session, 'events') and real_session.events:
+                    active_session_service.sessions[self.app_name][self.user_id][self.session_id].events = list(real_session.events)
+                print(f"[Sandbox] 🛡️ 已开启内存沙盒，避免后台思考事件污染真实数据库！")
+
+            runner = Runner(agent=self.agent, app_name=self.app_name, session_service=active_session_service)
             
             # 确保 session 存在
             session = await self.session_service.get_session(
@@ -1093,7 +1152,15 @@ class SteeringSession:
                 if not hasattr(session, 'state') or session.state is None:
                     session.state = {}
                 session.state['title'] = title
-                await self.session_service.save_session(session)
+                if isinstance(self.session_service, FullyCustomDbService):
+                    await self.session_service.save_session_state(
+                        app_name=self.app_name,
+                        user_id=self.user_id,
+                        session_id=self.session_id,
+                        state=session.state,
+                    )
+                else:
+                    await self.session_service.save_session(session)
                 print(f"[系统] 自动生成会话标题: {title}")
 
             # [Fix] 同样检查 task_type 是否丢失，通过扫描历史 events 恢复
@@ -1125,8 +1192,16 @@ class SteeringSession:
                     if not hasattr(session, 'state') or session.state is None:
                         session.state = {}
                     session.state['task_type'] = recovered_type
-                    await self.session_service.save_session(session)
-                    print(f"[系统] 自动恢复 task_type: {recovered_type}")            
+                    if isinstance(self.session_service, FullyCustomDbService):
+                        await self.session_service.save_session_state(
+                            app_name=self.app_name,
+                            user_id=self.user_id,
+                            session_id=self.session_id,
+                            state=session.state,
+                        )
+                    else:
+                        await self.session_service.save_session(session)
+                    print(f"[系统] 自动恢复 task_type: {recovered_type}")
             # === 自动压缩逻辑 (从配置读取) ===
             turn_count = len(session.events) if session and hasattr(session, 'events') and session.events else 0
             tool_count = len(self.agent.tools) if self.agent.tools else 0
@@ -1459,52 +1534,90 @@ class SteeringSession:
             # [Fix] 最后强制保存一次，但必须先 Reload 以防止覆盖 Runner 写入的 Events
             if self._current_session:
                 try:
-                    # 1. 重新从 DB 加载最新 Session (包含 Runner 写入的 events)
-                    # 因为 Runner 是独立实例运行的，它写入的 event 不会实时同步到 self._current_session
-                    latest_session = await self.session_service.get_session(
-                        self.app_name, self.user_id, self.session_id
-                    )
-                    
-                    if latest_session:
-                        # 2. 将 _current_session 中捕获的 metadata (tags) 合并过去
-                        # 重点保留 tool 产生的 state 变更 (如 task_type)
-                        if self._current_session.state:
-                            if not latest_session.state: latest_session.state = {}
-                            latest_session.state.update(self._current_session.state)
-                        
-                        # 3. 保存合并后的 Session
-                        await self.session_service.save_session(latest_session)
-                        print(f"[Steering] Merged tags and saved session {self.session_id} (Events: {len(latest_session.events)})")
+                    if is_sandbox_turn:
+                        # [沙盒退出]: 仅提取在沙盒运行期间新变化的 Session State 并融合回真实数据库
+                        final_sandbox = await active_session_service.get_session(
+                            app_name=self.app_name,
+                            user_id=self.user_id,
+                            session_id=self.session_id,
+                        )
+                        if final_sandbox and final_sandbox.state:
+                            latest_real = await self.session_service.get_session(
+                                app_name=self.app_name,
+                                user_id=self.user_id,
+                                session_id=self.session_id,
+                            )
+                            merged_state = dict(latest_real.state or {}) if latest_real and getattr(latest_real, 'state', None) else {}
+                            merged_state.update(final_sandbox.state)
+                            persisted_session = await self._persist_session_state(merged_state)
+                            self._current_session = persisted_session
+                            print(f"[Sandbox] 🛡️ 沙盒安全销毁，仅保留系统状态变更。")
+
                     else:
-                        # Fallback: 如果读不到，就只能存旧的了 (极少见)
-                        await self.session_service.save_session(self._current_session)
-                        print(f"[Steering] Fallback saved session {self.session_id}")
+                        # 1. 重新从 DB 加载最新 Session (包含 Runner 写入的 events)
+                        latest_session = await self.session_service.get_session(
+                            self.app_name, self.user_id, self.session_id
+                        )
+                        
+                        if latest_session:
+                            # 2. 将 _current_session 中捕获的 metadata (tags) 合并过去
+                            # 重点保留 tool 产生的 state 变更 (如 task_type)
+                            if self._current_session.state:
+                                if not latest_session.state: latest_session.state = {}
+                                latest_session.state.update(self._current_session.state)
+
+                            if isinstance(self.session_service, FullyCustomDbService):
+                                await self.session_service.save_session_state(
+                                    app_name=self.app_name,
+                                    user_id=self.user_id,
+                                    session_id=self.session_id,
+                                    state=latest_session.state or {},
+                                )
+                                print(f"[Steering] Merged state-only session {self.session_id} (Events: {len(latest_session.events)})")
+                            else:
+                                # 3. 保存合并后的 Session
+                                await self.session_service.save_session(latest_session)
+                                print(f"[Steering] Merged tags and saved session {self.session_id} (Events: {len(latest_session.events)})")
+                        else:
+                            # Fallback: 如果读不到，就只能存旧的了 (极少见)
+                            if isinstance(self.session_service, FullyCustomDbService):
+                                await self.session_service.save_session_state(
+                                    app_name=self.app_name,
+                                    user_id=self.user_id,
+                                    session_id=self.session_id,
+                                    state=self._current_session.state or {},
+                                )
+                            else:
+                                await self.session_service.save_session(self._current_session)
+                            print(f"[Steering] Fallback saved session {self.session_id}")
 
                 except Exception as e:
-                    print(f"[Warning] Final session save failed: {e}")
+                    print(f"[Warning] Session state synchronization failed: {e}")
             
             self._current_session = None
 
-            # ==========================================
-            # [新增] 1. 触发实时流式记忆落盘 (黑匣子机制)
-            # 无视任务是否中断，只要有数据，立刻写进 Markdown 档案
-            # 传入的 events_snapshot 是防篡改的独立快照
-            # ==========================================
-            if task or events_snapshot:
-                # Fire-and-Forget 异步执行，不阻塞主线程退出
-                asyncio.create_task(
-                    self._archive_turn_to_memory(task, events_snapshot, images)
-                )
+            # [沙盒模式修正] 如果是后台自治运行，不触发外部落盘，避免污染磁盘历史
+            if not is_sandbox_turn:
+                # ==========================================
+                # [新增] 1. 触发实时流式记忆落盘 (黑匣子机制)
+                # 无视任务是否中断，只要有数据，立刻写进 Markdown 档案
+                # 传入的 events_snapshot 是防篡改的独立快照
+                # ==========================================
+                if task or events_snapshot:
+                    # Fire-and-Forget 异步执行，不阻塞主线程退出
+                    asyncio.create_task(
+                        self._archive_turn_to_memory(task, events_snapshot, images)
+                    )
 
-            # ==========================================
-            # [已有] 2. 触发后台提取 (使用内存快照，Fire-and-Forget 模式)
-            # 只要本轮产生了有效的交互 (>=3条)，就启动后台分析。
-            # 传入 events_snapshot 而非 session.events，对抗 Compact/Rewind 影响。
-            # ==========================================
-            if not was_interrupted and len(events_snapshot) >= 3:
-                asyncio.create_task(
-                    self._extract_and_publish_experience(events_snapshot)
-                )
+                # ==========================================
+                # [已有] 2. 触发后台提取 (使用内存快照，Fire-and-Forget 模式)
+                # 只要本轮产生了有效的交互 (>=3条)，就启动后台分析。
+                # 传入 events_snapshot 而非 session.events，对抗 Compact/Rewind 影响。
+                # ==========================================
+                if not was_interrupted and len(events_snapshot) >= 3:
+                    asyncio.create_task(
+                        self._extract_and_publish_experience(events_snapshot)
+                    )
             # ==========================================
 
             # 打印 Session History（调试用）
@@ -2874,25 +2987,32 @@ async def get_session_history(
             blocks = []
             images = []  # [多模态] 存储图片的 Base64 data URL
             
-            # [调试日志] 输出 event 的详细信息
-            print(f"\n[历史消息调试] Event {event_idx} - Role: {role}")
-            print(f"[历史消息调试] Event {event_idx} - Content 类型: {type(event.content)}")
-            
+            # [调试日志] 输出 event 的详细信息（通过环境变量控制）
+            import os
+            DEBUG_HISTORY = os.getenv('DEBUG_HISTORY', 'false').lower() == 'true'
+
+            if DEBUG_HISTORY:
+                print(f"\n[历史消息调试] Event {event_idx} - Role: {role}")
+                print(f"[历史消息调试] Event {event_idx} - Content 类型: {type(event.content)}")
+
             if hasattr(event.content, 'parts'):
-                print(f"[历史消息调试] Event {event_idx} - Parts 数量: {len(event.content.parts)}")
+                if DEBUG_HISTORY:
+                    print(f"[历史消息调试] Event {event_idx} - Parts 数量: {len(event.content.parts)}")
                 for part_idx, part in enumerate(event.content.parts):
-                    print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 类型: {type(part)}")
-                    
+                    if DEBUG_HISTORY:
+                        print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 类型: {type(part)}")
+
                     # 检查 text
                     if hasattr(part, 'text') and part.text:
-                        print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 有 text (长度:{len(part.text)})")
+                        if DEBUG_HISTORY:
+                            print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 有 text (长度:{len(part.text)})")
                         # 检查是否是思考过程
                         if getattr(part, 'thought', False):
                             blocks.append({"type": "thought", "content": part.text})
                         else:
                             blocks.append({"type": "text", "content": part.text})
                             text_content += part.text
-                    
+
                     # [多模态] 检查 inline_data（图片）
                     if hasattr(part, 'inline_data') and part.inline_data:
                         blob = part.inline_data
@@ -2902,48 +3022,53 @@ async def get_session_history(
                             b64_str = b64_module.b64encode(img_bytes).decode('utf-8')
                             data_url = f"data:{mime_type};base64,{b64_str}"
                             images.append(data_url)
-                            print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 有图片 ({mime_type}, {len(img_bytes)} bytes)")
-                    
+                            if DEBUG_HISTORY:
+                                print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 有图片 ({mime_type}, {len(img_bytes)} bytes)")
+
                     # 检查 function_call
                     if hasattr(part, 'function_call') and part.function_call:
                         fc = part.function_call
-                        print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 有 function_call: {fc.name}")
+                        if DEBUG_HISTORY:
+                            print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 有 function_call: {fc.name}")
                         blocks.append({
                             "type": "tool_call",
                             "content": f"{fc.name} 输入参数: {fc.args}",
                             "tool_name": fc.name,
                             "tool_args": fc.args
                         })
-                    
+
                     # 检查 function_response
                     if hasattr(part, 'function_response'):
-                        print(f"[历史消息调试] Event {event_idx} Part {part_idx} - hasattr(function_response): True")
-                        print(f"[历史消息调试] Event {event_idx} Part {part_idx} - function_response value: {part.function_response}")
+                        if DEBUG_HISTORY:
+                            print(f"[历史消息调试] Event {event_idx} Part {part_idx} - hasattr(function_response): True")
+                            print(f"[历史消息调试] Event {event_idx} Part {part_idx} - function_response value: {part.function_response}")
                         if part.function_response:
                             fr = part.function_response
-                            print(f"[历史消息调试] Event {event_idx} Part {part_idx} - function_response name: {fr.name}")
-                            
+                            if DEBUG_HISTORY:
+                                print(f"[历史消息调试] Event {event_idx} Part {part_idx} - function_response name: {fr.name}")
+
                             # [Fix] Add 'tool_result_clean' field for frontend parsing, separate from raw 'content'
                             result_clean = None
                             result_display = fr.response
-                            
+
                             if isinstance(fr.response, dict) and 'result' in fr.response:
                                 result_clean = fr.response['result']
                                 result_display = result_clean # Use clean string for display too!
-                            
+
                             blocks.append({
                                 "type": "tool_result",
                                 "content": str(result_display), # Send string so script.js can marked.parse() it
                                 "tool_result_clean": str(result_clean) if result_clean else None
                             })
-                        else:
+                        elif DEBUG_HISTORY:
                             print(f"[历史消息调试] Event {event_idx} Part {part_idx} - function_response 是 None")
-                    else:
+                    elif DEBUG_HISTORY:
                         print(f"[历史消息调试] Event {event_idx} Part {part_idx} - 没有 function_response 属性")
-            
-            print(f"[历史消息调试] Event {event_idx} - 最终 blocks 数量: {len(blocks)}")
-            for block_idx, block in enumerate(blocks):
-                print(f"[历史消息调试] Event {event_idx} Block {block_idx}: type={block['type']}")
+
+            if DEBUG_HISTORY:
+                print(f"[历史消息调试] Event {event_idx} - 最终 blocks 数量: {len(blocks)}")
+                for block_idx, block in enumerate(blocks):
+                    print(f"[历史消息调试] Event {event_idx} Block {block_idx}: type={block['type']}")
             
             # 合并连续的相同类型的 blocks（特别是 thought 和 text）
             merged_blocks = []
@@ -2959,14 +3084,16 @@ async def get_session_history(
                         # tool_call 和 tool_result 不合并，直接添加
                         merged_blocks.append(block)
             
-            print(f"[历史消息调试] Event {event_idx} - 合并后 blocks 数量: {len(merged_blocks)}")
-            
+            if DEBUG_HISTORY:
+                print(f"[历史消息调试] Event {event_idx} - 合并后 blocks 数量: {len(merged_blocks)}")
+
             # [关键修复] 如果消息只包含 tool_result，则强制 role 为 'model'
             # 原因：Google ADK 中 function_response 的 role 是 'user'，但从 UI 角度看
             # tool_result 应该和 tool_call 一样在左侧对齐（都是系统操作）
             only_tool_results = all(block['type'] == 'tool_result' for block in merged_blocks) if merged_blocks else False
             if only_tool_results and role == 'user':
-                print(f"[历史消息调试] Event {event_idx} - 检测到只包含 tool_result，将 role 从 'user' 改为 'model'")
+                if DEBUG_HISTORY:
+                    print(f"[历史消息调试] Event {event_idx} - 检测到只包含 tool_result，将 role 从 'user' 改为 'model'")
                 role = 'model'
             
             if role == 'user' or role == 'model':
@@ -3067,7 +3194,15 @@ async def update_session_metadata(
         
         # 保存更新后的 state
         session.state = current_state
-        await session_service.save_session(session)
+        if isinstance(session_service, FullyCustomDbService):
+            await session_service.save_session_state(
+                app_name=app_name,
+                user_id=user_id,
+                session_id=session_id,
+                state=session.state,
+            )
+        else:
+            await session_service.save_session(session)
         
         print(f"[Swarm Metadata] ✅ Session {session_id} 元数据已更新: {metadata}")
         return {"status": "success", "message": "Metadata updated"}
