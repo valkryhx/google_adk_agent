@@ -917,6 +917,79 @@ async def test_multi_stage_dex_workflow_keeps_parallel_tasks_then_converges_to_r
 
     await runtime.tick_once()
 
+
+
+@pytest.mark.asyncio
+async def test_completed_inputs_enqueue_internal_continuation_trigger():
+    from src.adk_agent.kairos.models import KairosContinuationPolicy, KairosWorkflow, KairosWorkflowStage
+
+    class Snap:
+        def __init__(self, task_id, status, description, result_summary=None):
+            self.task_id = task_id
+            self.status = status
+            self.description = description
+            self.result = ""
+            self.result_summary = result_summary
+            self.error_summary = None
+            self.created_at = None
+            self.completed_at = "2026-04-05T01:00:00+00:00"
+            self.log_path = f".dex/logs/alice/{task_id}.log"
+
+    bridge = FakeDexBridge()
+    bridge.tasks = {
+        "sales": Snap("sales", "completed", "prepare sales", result_summary="sales ready"),
+        "traffic": Snap("traffic", "completed", "prepare traffic", result_summary="traffic ready"),
+        "quality": Snap("quality", "completed", "prepare quality", result_summary="quality ready"),
+    }
+
+    _, emitted, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.HANDOFF,
+            tracked_dex_task_ids=["sales", "traffic", "quality"],
+            active_workflow=KairosWorkflow(
+                workflow_id="demo_report_pipeline",
+                goal="auto progress report stage",
+                status="active",
+                current_stage="phase1",
+                stages=[
+                    KairosWorkflowStage(
+                        stage_id="phase1",
+                        label="prepare inputs",
+                        status="running",
+                        task_ids=["sales", "traffic", "quality"],
+                        artifacts=[
+                            "demo_outputs/sales.json",
+                            "demo_outputs/traffic.json",
+                            "demo_outputs/quality.json",
+                        ],
+                    )
+                ],
+                metadata={"completed_task_ids": []},
+            ),
+            policy=KairosContinuationPolicy(),
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=bridge,
+    )
+
+    runtime._path_exists = lambda _: True
+
+    await runtime.tick_once()
+
     assert runtime.state.tracked_dex_task_ids == []
-    assert runtime.state.mode is KairosMode.IDLE
-    assert any("report" in msg and "3 inputs merged" in msg for _, msg in emitted)
+    assert runtime.state.pending_triggers
+    assert runtime.state.pending_triggers[0].kind is TriggerKind.INTERNAL
+    assert runtime.state.pending_triggers[0].reason == "phase1_converged"
+    assert runtime.state.planned_actions[0].kind == "create_dex_task"
+    assert runtime.state.active_workflow.current_stage == "phase2"
+    assert any("sales ready" in msg for _, msg in emitted)

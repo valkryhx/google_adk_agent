@@ -5,6 +5,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Awaitable, Callable
 
+from .continuation import ContinuationEngine
 from .models import KairosEvent, KairosMode, KairosSchedule, KairosState, KairosTrigger, TriggerKind
 from .scheduler import KairosScheduler
 
@@ -22,6 +23,7 @@ class KairosRuntime:
         tick_interval_seconds: float = 15.0,
         is_worker_busy: Callable[[], bool] | None = None,
         scheduler: KairosScheduler | None = None,
+        continuation_engine: ContinuationEngine | None = None,
     ):
         self.state = state
         self._save_state = save_state
@@ -32,6 +34,8 @@ class KairosRuntime:
         self._tick_interval_seconds = tick_interval_seconds
         self._is_worker_busy = is_worker_busy or (lambda: False)
         self._scheduler = scheduler or KairosScheduler()
+        self._continuation_engine = continuation_engine or ContinuationEngine()
+        self._path_exists = lambda path: False
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._wake_event = asyncio.Event()
@@ -122,6 +126,7 @@ class KairosRuntime:
             self._scheduler.seed_schedules(self.state, now)
             due_triggers = self._scheduler.collect_due_triggers(self.state, now)
             self.state.pending_triggers.extend(due_triggers)
+            ready_trigger_count = len(self.state.pending_triggers)
 
             # Poll Dex tasks
             await self._poll_dex()
@@ -133,7 +138,7 @@ class KairosRuntime:
                 await self._record("status", "worker busy, skip kairos tick")
                 return
 
-            if self.state.pending_triggers and not self.state.busy:
+            if self.state.pending_triggers and not self.state.busy and len(self.state.pending_triggers) == ready_trigger_count:
                 trigger = self.state.pending_triggers.pop(0)
                 self.state.active_trigger = trigger
                 self.state.pending_wake_reason = None
@@ -200,6 +205,9 @@ class KairosRuntime:
             }
             for task in self._dex_bridge.get_tasks(self.state.tracked_dex_task_ids)
         ]
+        payload["active_workflow"] = asdict(self.state.active_workflow) if self.state.active_workflow else None
+        payload["planned_actions"] = [asdict(action) for action in self.state.planned_actions]
+        payload["blocked_reason"] = self.state.blocked_reason
         return payload
 
     # --- Internal ---
@@ -222,8 +230,11 @@ class KairosRuntime:
             return
 
         next_remaining: list[str] = []
-        for task in self._dex_bridge.get_tasks(remaining):
+        completed_tasks: list[object] = []
+        tracked_tasks = self._dex_bridge.get_tasks(remaining)
+        for task in tracked_tasks:
             if task.status in {"completed", "failed"}:
+                completed_tasks.append(task)
                 summary = getattr(task, "result_summary", None) or getattr(task, "error_summary", None)
                 message = f"Dex task {task.task_id} {task.status}: {task.description}"
                 if summary:
@@ -233,6 +244,14 @@ class KairosRuntime:
                 next_remaining.append(task.task_id)
 
         self.state.tracked_dex_task_ids = next_remaining
+        if completed_tasks and self.state.active_workflow is not None:
+            decisions = self._continuation_engine.evaluate_after_dex_poll(
+                self.state,
+                completed_tasks=completed_tasks,
+                tracked_tasks=tracked_tasks,
+            )
+            self.state.pending_triggers.extend(self._continuation_engine.apply_decisions(self.state, decisions))
+
         if next_remaining and self.state.running and not self.state.busy:
             self.state.mode = KairosMode.HANDOFF
         elif not next_remaining and self.state.running and not self.state.busy and self.state.mode == KairosMode.HANDOFF:
