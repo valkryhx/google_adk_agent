@@ -69,11 +69,27 @@ async def test_wake_emits_event_and_clears_pending_reason():
 @pytest.mark.asyncio
 async def test_completed_dex_task_creates_brief_and_untracks():
     class Snap:
-        def __init__(self, task_id, status, description, result=""):
+        def __init__(
+            self,
+            task_id,
+            status,
+            description,
+            result="",
+            result_summary=None,
+            error_summary=None,
+            created_at=None,
+            completed_at=None,
+            log_path=None,
+        ):
             self.task_id = task_id
             self.status = status
             self.description = description
             self.result = result
+            self.result_summary = result_summary
+            self.error_summary = error_summary
+            self.created_at = created_at
+            self.completed_at = completed_at
+            self.log_path = log_path
 
     _, emitted, _, save_state, emit_event, append_log = _make_callbacks()
 
@@ -81,7 +97,15 @@ async def test_completed_dex_task_creates_brief_and_untracks():
         return None
 
     bridge = FakeDexBridge()
-    bridge.tasks["abc12345"] = Snap("abc12345", "completed", "run report", "[SUCCESS]")
+    bridge.tasks["abc12345"] = Snap(
+        "abc12345",
+        "completed",
+        "run report",
+        "[SUCCESS]",
+        result_summary="report generated",
+        completed_at="2026-04-04T00:10:00+00:00",
+        log_path=".dex/logs/alice/abc12345.log",
+    )
 
     runtime = KairosRuntime(
         state=KairosState(
@@ -102,6 +126,51 @@ async def test_completed_dex_task_creates_brief_and_untracks():
 
     assert runtime.state.tracked_dex_task_ids == []
     assert any("abc12345" in msg for _, msg in emitted)
+    assert any("report generated" in msg for _, msg in emitted)
+
+
+@pytest.mark.asyncio
+async def test_failed_dex_task_emits_error_summary_and_returns_to_idle():
+    class Snap:
+        def __init__(self, task_id, status, description, error_summary=None):
+            self.task_id = task_id
+            self.status = status
+            self.description = description
+            self.result = ""
+            self.result_summary = None
+            self.error_summary = error_summary
+            self.created_at = None
+            self.completed_at = "2026-04-04T00:10:00+00:00"
+            self.log_path = ".dex/logs/alice/f1.log"
+
+    _, emitted, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return None
+
+    bridge = FakeDexBridge()
+    bridge.tasks["f1"] = Snap("f1", "failed", "nightly build", error_summary="build failed")
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.HANDOFF,
+            tracked_dex_task_ids=["f1"],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=bridge,
+        tick_interval_seconds=0.01,
+    )
+
+    await runtime.tick_once()
+
+    assert runtime.state.tracked_dex_task_ids == []
+    assert runtime.state.mode is KairosMode.IDLE
+    assert any("build failed" in msg for _, msg in emitted)
 
 
 @pytest.mark.asyncio

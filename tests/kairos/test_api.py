@@ -232,6 +232,38 @@ def test_register_dex_route_works():
     assert resp.json()["kairos"]["mode"] == "handoff"
 
 
+def test_status_route_exposes_tracked_dex_task_details():
+    app = FastAPI()
+    manager = FakeManager()
+    session = manager.get_or_create("demo", "alice", "session_1")
+    session.runtime.state["tracked_dex_task_ids"] = ["abc12345"]
+    session.runtime.state["tracked_dex_tasks"] = [
+        {
+            "task_id": "abc12345",
+            "status": "running",
+            "description": "run report",
+            "result_summary": None,
+            "error_summary": None,
+            "created_at": "2026-04-04T00:00:00+00:00",
+            "completed_at": None,
+            "log_path": ".dex/logs/alice/abc12345.log",
+        }
+    ]
+    register_kairos_routes(app, manager)
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/sessions/session_1/kairos/status",
+        params={"app_name": "demo", "user_id": "alice"},
+    )
+
+    assert resp.status_code == 200
+    tracked = resp.json()["kairos"]["tracked_dex_tasks"]
+    assert len(tracked) == 1
+    assert tracked[0]["task_id"] == "abc12345"
+    assert tracked[0]["log_path"] == ".dex/logs/alice/abc12345.log"
+
+
 # === Phase 2 attach/list route tests ===
 
 

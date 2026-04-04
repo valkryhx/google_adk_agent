@@ -186,6 +186,20 @@ class KairosRuntime:
             payload["active_trigger"]["kind"] = self.state.active_trigger.kind.value
         for item in payload["pending_triggers"]:
             item["kind"] = TriggerKind(item["kind"]).value
+        payload["tracked_dex_tasks"] = [
+            {
+                "task_id": task.task_id,
+                "status": task.status,
+                "description": task.description,
+                "result": getattr(task, "result", ""),
+                "result_summary": getattr(task, "result_summary", None),
+                "error_summary": getattr(task, "error_summary", None),
+                "created_at": getattr(task, "created_at", None),
+                "completed_at": getattr(task, "completed_at", None),
+                "log_path": getattr(task, "log_path", None),
+            }
+            for task in self._dex_bridge.get_tasks(self.state.tracked_dex_task_ids)
+        ]
         return payload
 
     # --- Internal ---
@@ -210,10 +224,11 @@ class KairosRuntime:
         next_remaining: list[str] = []
         for task in self._dex_bridge.get_tasks(remaining):
             if task.status in {"completed", "failed"}:
-                await self._record(
-                    "brief",
-                    f"Dex task {task.task_id} {task.status}: {task.description}",
-                )
+                summary = getattr(task, "result_summary", None) or getattr(task, "error_summary", None)
+                message = f"Dex task {task.task_id} {task.status}: {task.description}"
+                if summary:
+                    message = f"{message} — {summary}"
+                await self._record("brief", message)
             else:
                 next_remaining.append(task.task_id)
 

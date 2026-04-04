@@ -1879,6 +1879,178 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function formatKairosTrackedTasks(tasks) {
+        if (!tasks || tasks.length === 0) return '无';
+        return tasks.map(task => {
+            const summary = task.result_summary || task.error_summary || task.result || '';
+            return [
+                `- ${task.task_id} [${task.status}]`,
+                `  desc: ${task.description || ''}`,
+                `  created: ${task.created_at || '-'}`,
+                `  completed: ${task.completed_at || '-'}`,
+                `  summary: ${summary || '-'}`,
+                `  log: ${task.log_path || '-'}`
+            ].join('\n');
+        }).join('\n\n');
+    }
+
+    function formatKairosEvents(events) {
+        if (!events || events.length === 0) return '无';
+        return events.map(event => `[${event.ts || '-'}] ${event.kind}: ${event.message}`).join('\n');
+    }
+
+    function formatKairosStatus(kairos) {
+        return [
+            `enabled: ${kairos.enabled}`,
+            `running: ${kairos.running}`,
+            `busy: ${kairos.busy}`,
+            `mode: ${kairos.mode}`,
+            `last_tick_at: ${kairos.last_tick_at || '-'}`,
+            `sleep_until: ${kairos.sleep_until || '-'}`,
+            `pending_wake_reason: ${kairos.pending_wake_reason || '-'}`,
+            `tracked_dex_task_ids: ${(kairos.tracked_dex_task_ids || []).join(', ') || '-'}`
+        ].join('\n');
+    }
+
+    async function kairosRequest(path, method = 'GET', body = null) {
+        const sessionId = getCurrentSessionId();
+        if (!sessionId) {
+            throw new Error('请先选择或创建一个对话');
+        }
+        const url = `/api/sessions/${sessionId}${path}`;
+        const options = {
+            method,
+            headers: { 'Content-Type': 'application/json' }
+        };
+        if (body) {
+            options.body = JSON.stringify(body);
+        }
+        const response = await fetch(url, options);
+        if (!response.ok) {
+            throw new Error(`KAIROS request failed: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    async function refreshKairosStatus() {
+        const sessionId = getCurrentSessionId();
+        const noSession = document.getElementById('kairosNoSession');
+        const panel = document.getElementById('kairosPanel');
+        const statusEl = document.getElementById('kairosStatus');
+        const eventsEl = document.getElementById('kairosEvents');
+        const trackedEl = document.getElementById('kairosTrackedDexTasks');
+
+        if (!sessionId) {
+            if (noSession) noSession.style.display = 'block';
+            if (panel) panel.style.display = 'none';
+            return;
+        }
+
+        if (noSession) noSession.style.display = 'none';
+        if (panel) panel.style.display = 'block';
+
+        try {
+            const params = new URLSearchParams({
+                app_name: APP_NAME,
+                user_id: getUserId()
+            });
+            const response = await fetch(`/api/sessions/${sessionId}/kairos/status?${params.toString()}`);
+            if (!response.ok) {
+                throw new Error(`KAIROS status failed: ${response.status}`);
+            }
+            const data = await response.json();
+            const kairos = data.kairos || {};
+            if (statusEl) statusEl.textContent = formatKairosStatus(kairos);
+            if (eventsEl) eventsEl.textContent = formatKairosEvents(kairos.recent_events || []);
+            if (trackedEl) trackedEl.textContent = formatKairosTrackedTasks(kairos.tracked_dex_tasks || []);
+        } catch (e) {
+            console.error('Failed to refresh KAIROS status:', e);
+            if (statusEl) statusEl.textContent = `加载失败: ${e.message}`;
+            if (eventsEl) eventsEl.textContent = '无';
+            if (trackedEl) trackedEl.textContent = '无';
+        }
+    }
+
+    function initKairos() {
+        const kairosBtn = document.getElementById('kairosBtn');
+        const kairosModal = document.getElementById('kairosModal');
+        const closeKairos = document.getElementById('closeKairos');
+        const kairosStartBtn = document.getElementById('kairosStartBtn');
+        const kairosStopBtn = document.getElementById('kairosStopBtn');
+        const kairosWakeBtn = document.getElementById('kairosWakeBtn');
+        const kairosRefreshBtn = document.getElementById('kairosRefreshBtn');
+        const kairosAddSchedBtn = document.getElementById('kairosAddSchedBtn');
+        const kairosDelSchedBtn = document.getElementById('kairosDelSchedBtn');
+        const kairosDexRegBtn = document.getElementById('kairosDexRegBtn');
+
+        if (!kairosBtn || !kairosModal) return;
+
+        kairosBtn.addEventListener('click', async () => {
+            kairosModal.classList.add('visible');
+            await refreshKairosStatus();
+        });
+
+        closeKairos?.addEventListener('click', () => kairosModal.classList.remove('visible'));
+        kairosModal.addEventListener('click', (e) => {
+            if (e.target === kairosModal) {
+                kairosModal.classList.remove('visible');
+            }
+        });
+
+        kairosStartBtn?.addEventListener('click', async () => {
+            await kairosRequest('/kairos/start', 'POST', { app_name: APP_NAME, user_id: getUserId() });
+            await refreshKairosStatus();
+        });
+
+        kairosStopBtn?.addEventListener('click', async () => {
+            await kairosRequest('/kairos/stop', 'POST', { app_name: APP_NAME, user_id: getUserId() });
+            await refreshKairosStatus();
+        });
+
+        kairosWakeBtn?.addEventListener('click', async () => {
+            const reason = document.getElementById('kairosWakeReason')?.value?.trim() || 'manual';
+            await kairosRequest('/kairos/wake', 'POST', { app_name: APP_NAME, user_id: getUserId(), reason });
+            await refreshKairosStatus();
+        });
+
+        kairosRefreshBtn?.addEventListener('click', refreshKairosStatus);
+
+        kairosAddSchedBtn?.addEventListener('click', async () => {
+            await kairosRequest('/kairos/schedules', 'POST', {
+                app_name: APP_NAME,
+                user_id: getUserId(),
+                schedule_id: document.getElementById('kairosSchedId')?.value?.trim(),
+                cron: document.getElementById('kairosSchedCron')?.value?.trim(),
+                reason: document.getElementById('kairosSchedReason')?.value?.trim(),
+                enabled: true
+            });
+            await refreshKairosStatus();
+        });
+
+        kairosDelSchedBtn?.addEventListener('click', async () => {
+            const scheduleId = document.getElementById('kairosSchedId')?.value?.trim();
+            const params = new URLSearchParams({ app_name: APP_NAME, user_id: getUserId() });
+            const sessionId = getCurrentSessionId();
+            const response = await fetch(`/api/sessions/${sessionId}/kairos/schedules/${encodeURIComponent(scheduleId)}?${params.toString()}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) {
+                throw new Error(`Delete schedule failed: ${response.status}`);
+            }
+            await refreshKairosStatus();
+        });
+
+        kairosDexRegBtn?.addEventListener('click', async () => {
+            await kairosRequest('/kairos/dex/register', 'POST', {
+                app_name: APP_NAME,
+                user_id: getUserId(),
+                task_id: document.getElementById('kairosDexTaskId')?.value?.trim(),
+                description: document.getElementById('kairosDexDesc')?.value?.trim()
+            });
+            await refreshKairosStatus();
+        });
+    }
+
     // ========================================
     // Settings Functionality
     // ========================================
@@ -2050,6 +2222,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 初始化设置功能
         initSettings();
+
+        // 初始化 KAIROS 功能
+        initKairos();
     }
 
     // 初始化侧边栏调整大小功能
