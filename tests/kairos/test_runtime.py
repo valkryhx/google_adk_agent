@@ -825,7 +825,98 @@ async def test_register_dex_task_does_not_switch_to_handoff_when_busy():
         dex_bridge=FakeDexBridge(),
     )
 
-    await runtime.register_dex_task("abc12345", "run report")
 
-    assert runtime.state.tracked_dex_task_ids == ["abc12345"]
-    assert runtime.state.mode is KairosMode.RUNNING  # not changed to HANDOFF
+
+@pytest.mark.asyncio
+async def test_multi_stage_dex_workflow_keeps_parallel_tasks_then_converges_to_report():
+    class Snap:
+        def __init__(
+            self,
+            task_id,
+            status,
+            description,
+            result="",
+            result_summary=None,
+            error_summary=None,
+            completed_at=None,
+        ):
+            self.task_id = task_id
+            self.status = status
+            self.description = description
+            self.result = result
+            self.result_summary = result_summary
+            self.error_summary = error_summary
+            self.created_at = None
+            self.completed_at = completed_at
+            self.log_path = f".dex/logs/alice/{task_id}.log"
+
+    bridge = FakeDexBridge()
+    bridge.tasks = {
+        "sales": Snap("sales", "completed", "prepare sales", result_summary="sales ready"),
+        "traffic": Snap("traffic", "running", "prepare traffic"),
+        "quality": Snap("quality", "running", "prepare quality"),
+    }
+
+    _, emitted, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.HANDOFF,
+            tracked_dex_task_ids=["sales", "traffic", "quality"],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=bridge,
+    )
+
+    await runtime.tick_once()
+
+    assert runtime.state.tracked_dex_task_ids == ["traffic", "quality"]
+    assert runtime.state.mode is KairosMode.HANDOFF
+    assert any("sales" in msg and "sales ready" in msg for _, msg in emitted)
+
+    bridge.tasks["traffic"] = Snap(
+        "traffic",
+        "completed",
+        "prepare traffic",
+        result_summary="traffic ready",
+    )
+    bridge.tasks["quality"] = Snap(
+        "quality",
+        "completed",
+        "prepare quality",
+        result_summary="quality ready",
+    )
+
+    await runtime.tick_once()
+
+    assert runtime.state.tracked_dex_task_ids == []
+    assert runtime.state.mode is KairosMode.IDLE
+    assert any("traffic" in msg and "traffic ready" in msg for _, msg in emitted)
+    assert any("quality" in msg and "quality ready" in msg for _, msg in emitted)
+
+    await runtime.register_dex_task("report", "generate final report")
+
+    assert runtime.state.tracked_dex_task_ids == ["report"]
+    assert runtime.state.mode is KairosMode.HANDOFF
+
+    bridge.tasks["report"] = Snap(
+        "report",
+        "completed",
+        "generate final report",
+        result_summary="report ready: 3 inputs merged",
+        completed_at="2026-04-04T00:15:00+00:00",
+    )
+
+    await runtime.tick_once()
+
+    assert runtime.state.tracked_dex_task_ids == []
+    assert runtime.state.mode is KairosMode.IDLE
+    assert any("report" in msg and "3 inputs merged" in msg for _, msg in emitted)

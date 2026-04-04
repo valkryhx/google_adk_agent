@@ -380,6 +380,111 @@ python -m pytest tests/dex -q
 命令：
 
 ```bash
+python -m pytest tests/kairos/test_runtime.py tests/kairos/test_api.py tests/kairos/test_dex_bridge.py -q
+```
+
+结果：
+
+```text
+30+ passed
+```
+
+覆盖点：
+- handoff 注册后进入 `handoff`
+- Dex task 完成/失败后被移出 tracked 列表
+- `tracked_dex_tasks` 字段对前端可见
+- API / runtime / bridge 三层联动正常
+
+### 7.4 新增 staged workflow 运行时验证
+
+命令：
+
+```bash
+PYTHONPATH="D:/git_repos/google_adk_agent" PYTHONIOENCODING=utf-8 pytest tests/kairos/test_runtime.py -q
+```
+
+结果：
+
+```text
+24 passed
+```
+
+新增覆盖点：
+- `test_multi_stage_dex_workflow_keeps_parallel_tasks_then_converges_to_report`
+- 验证 phase-1 三个并行任务的部分完成与最终收敛
+- 验证 report 阶段再次进入 `handoff` 并在完成后回到 `idle`
+- 验证 recent events 中保留 `sales ready / traffic ready / quality ready / report ready: 3 inputs merged`
+
+### 7.5 新增真实 Dex/Kairos 集成测试
+
+命令：
+
+```bash
+PYTHONPATH="D:/git_repos/google_adk_agent" PYTHONIOENCODING=utf-8 pytest tests/dex/test_tools.py tests/kairos/test_runtime.py -q
+```
+
+结果：
+
+```text
+30+ passed
+```
+
+新增覆盖点：
+- `test_kairos_runtime_polls_real_dex_tasks_until_report_stage_finishes`
+- 使用真实 `DexManager` 创建并启动后台 Python 子进程
+- 由 `KairosDexBridge` 读取 `.dex/tasks/<user>/` 的真实任务文件
+- 由 `KairosRuntime.tick_once()` 轮询并收敛 report 阶段状态
+
+### 7.6 新增 live HTTP + 产物落盘回归
+
+前置条件：
+
+```bash
+PYTHONIOENCODING=utf-8 python -m src.adk_agent.main_web_start_steering --port 8000
+```
+
+命令：
+
+```bash
+PYTHONPATH="D:/git_repos/google_adk_agent" PYTHONIOENCODING=utf-8 pytest tests/kairos/test_live_http_kairos_demo_outputs_regression.py -q
+```
+
+结果：
+
+```text
+1 passed
+```
+
+验证内容：
+- 通过 HTTP 创建 session 并启动 KAIROS
+- 真实注册 phase-1 三个 Dex task 与 report task 的 handoff
+- 真实启动后台 Dex 子进程并生成：
+  - `demo_outputs/sales.json`
+  - `demo_outputs/traffic.json`
+  - `demo_outputs/quality.json`
+  - `demo_outputs/report.json`
+- 校验 `report.json` 的 summary 值分别为：
+  - `sales = 128`
+  - `traffic = 3421`
+  - `quality = pass`
+- 校验 KAIROS `recent_events` 中保留四个阶段完成信息
+- 校验 KAIROS 最终从 `handoff` 收敛回 `idle`
+
+### 7.7 当前结论
+
+截至当前代码状态，这条更强的证据链已经成立：
+
+1. Dex 能真实执行本地后台任务
+2. KAIROS 能管理多任务 handoff 并在任务完成后自动收敛
+3. 前端能够展示 tracked tasks 与 recent events
+4. staged workflow 的最终业务产物能够真实落盘到 `demo_outputs/`
+5. 依赖已启动服务的 live HTTP 回归也能稳定通过
+
+因此，当前实现已经不只是“单任务 smoke demo 可用”，而是具备支撑 **并行输入 → 汇总推进 → 产物落盘 → KAIROS 收敛可视化** 这条 live demo 故事线的验证证据。
+
+命令：
+
+```bash
 python -m pytest tests/kairos/test_api.py tests/kairos/test_dex_bridge.py tests/kairos/test_runtime.py tests/kairos/test_kairos_no_pollution.py -q
 ```
 
