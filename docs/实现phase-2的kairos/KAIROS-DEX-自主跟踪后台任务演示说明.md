@@ -331,7 +331,90 @@ Dex task <TASK_ID> completed: playwright dex handoff — dex task from playwrigh
 
 ---
 
-## 6. 本次验证的最终结论
+## 7. 本次提交前实际跑过的回归测试
+
+下面这些测试已在本次前端融合与 Dex/KAIROS 联调完成后实际执行通过：
+
+### 7.1 前端回归测试
+
+命令：
+
+```bash
+python -m pytest tests/kairos/test_frontend_script_kairos_ui.py -q
+```
+
+结果：
+
+```text
+2 passed
+```
+
+覆盖点：
+- `script.js` 是否暴露 Kairos helper：
+  - `formatKairosTrackedTasks()`
+  - `formatKairosEvents()`
+  - `formatKairosStatus()`
+  - `kairosRequest()`
+- `refreshKairosStatus()` 是否更新 `#kairosTrackedDexTasks`
+- start / stop / wake / schedules / dex register 是否改为通过 `kairosRequest()` 统一请求
+
+### 7.2 Dex 测试
+
+命令：
+
+```bash
+python -m pytest tests/dex -q
+```
+
+结果：
+
+```text
+6 passed
+```
+
+说明：
+- Dex 的任务创建、存储、执行与工具接口在当前代码状态下可正常工作
+
+### 7.3 Kairos 核心回归测试
+
+命令：
+
+```bash
+python -m pytest tests/kairos/test_api.py tests/kairos/test_dex_bridge.py tests/kairos/test_runtime.py tests/kairos/test_kairos_no_pollution.py -q
+```
+
+结果：
+
+```text
+41 passed
+```
+
+覆盖点：
+- Kairos API 路由
+- Dex bridge 与 Kairos runtime 的衔接
+- runtime tick / wake / handoff 行为
+- KAIROS 不污染用户对话历史的关键回归
+
+### 7.4 前端语法检查
+
+命令：
+
+```bash
+node --check src/adk_agent/static/script.js
+```
+
+结果：
+
+```text
+通过
+```
+
+说明：
+- 当前前端脚本在提交前已通过语法校验
+
+---
+
+## 8. 本次验证的最终结论
 
 本次真实验证已经证明：
 
@@ -339,7 +422,8 @@ Dex task <TASK_ID> completed: playwright dex handoff — dex task from playwrigh
 - **KAIROS 在任务进行/完成时确实能看到它**
 - **KAIROS 会在任务完成后自动记录结果，并自动清理 tracked 列表**
 - **前端 `Tracked Dex Tasks` 面板已经正确接入并能反映任务状态变化**
+- **提交前相关自动化测试与语法检查已通过**
 
-因此目前这条链路已经具备可演示性：
+因此目前这条链路已经具备可演示性与回归验证基础：
 
 > **KAIROS 可以自主跟踪 Dex 后台任务，而不需要人工持续轮询。**
