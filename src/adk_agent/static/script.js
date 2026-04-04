@@ -1697,6 +1697,11 @@ document.addEventListener('DOMContentLoaded', () => {
             );
             const data = await response.json();
 
+            // 关键修复：历史重载前先清空旧 DOM，避免同一 session 的历史被重复追加
+            while (chatContainer.firstChild) {
+                chatContainer.removeChild(chatContainer.firstChild);
+            }
+
             if (!data.messages || data.messages.length === 0) {
                 // 没有历史消息,显示欢迎页面
                 showWelcomeScreen();
@@ -1733,7 +1738,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (i + 1 < data.messages.length) {
                             const nextMsg = data.messages[i + 1];
                             if (nextMsg.role === 'model' && nextMsg.blocks && hasValidContent(nextMsg.blocks)) {
-                                // Simple heuristic: 
+                                // Simple heuristic:
                                 // Current has tool_call/tool_use?
                                 // Next has tool_result?
                                 const hasToolCall = msg.blocks.some(b => b.type === 'tool_call' || b.type === 'tool_use');
@@ -1879,6 +1884,35 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ========================================
+    // Settings Functionality
+    // ========================================
+    function initSettings() {
+        const settingsBtn = document.getElementById('settingsBtn');
+        const settingsModal = document.getElementById('settingsModal');
+        const closeSettings = document.getElementById('closeSettings');
+        const cancelSettings = document.getElementById('cancelSettings');
+        const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+        const modelPreset = document.getElementById('modelPreset');
+
+        if (!settingsBtn) return;
+
+        settingsBtn.addEventListener('click', openSettings);
+        closeSettings.addEventListener('click', () => settingsModal.classList.remove('visible'));
+        cancelSettings.addEventListener('click', () => settingsModal.classList.remove('visible'));
+
+        saveSettingsBtn.addEventListener('click', saveSettings);
+        modelPreset.addEventListener('change', handlePresetChange);
+
+        // Click outside to close
+        settingsModal.addEventListener('click', (e) => {
+            if (e.target === settingsModal) settingsModal.classList.remove('visible');
+        });
+    }
+
+    // ==========================================
+    // KAIROS Modal Logic
+    // ==========================================
     function formatKairosTrackedTasks(tasks) {
         if (!tasks || tasks.length === 0) return '无';
         return tasks.map(task => {
@@ -1896,7 +1930,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function formatKairosEvents(events) {
         if (!events || events.length === 0) return '无';
-        return events.map(event => `[${event.ts || '-'}] ${event.kind}: ${event.message}`).join('\n');
+        return events.map(event => {
+            const timestamp = event.ts || event.timestamp || '-';
+            const kind = event.kind || event.event || 'event';
+            const message = event.message || event.reason || '';
+            return `[${timestamp}] ${kind}: ${message}`;
+        }).join('\n');
     }
 
     function formatKairosStatus(kairos) {
@@ -1908,7 +1947,10 @@ document.addEventListener('DOMContentLoaded', () => {
             `last_tick_at: ${kairos.last_tick_at || '-'}`,
             `sleep_until: ${kairos.sleep_until || '-'}`,
             `pending_wake_reason: ${kairos.pending_wake_reason || '-'}`,
-            `tracked_dex_task_ids: ${(kairos.tracked_dex_task_ids || []).join(', ') || '-'}`
+            `tracked_dex_task_ids: ${(kairos.tracked_dex_task_ids || []).join(', ') || '-'}`,
+            `active_trigger: ${kairos.active_trigger ? JSON.stringify(kairos.active_trigger, null, 2) : '-'}`,
+            `pending_triggers: ${JSON.stringify(kairos.pending_triggers || [], null, 2)}`,
+            `schedules: ${JSON.stringify(kairos.schedules || [], null, 2)}`
         ].join('\n');
     }
 
@@ -1930,6 +1972,54 @@ document.addEventListener('DOMContentLoaded', () => {
             throw new Error(`KAIROS request failed: ${response.status}`);
         }
         return response.json();
+    }
+
+    function initKairosModal() {
+        const kairosBtn = document.getElementById('kairosBtn');
+        const kairosModal = document.getElementById('kairosModal');
+        const closeKairos = document.getElementById('closeKairos');
+        const kairosStartBtn = document.getElementById('kairosStartBtn');
+        const kairosStopBtn = document.getElementById('kairosStopBtn');
+        const kairosWakeBtn = document.getElementById('kairosWakeBtn');
+        const kairosRefreshBtn = document.getElementById('kairosRefreshBtn');
+        const kairosAddSchedBtn = document.getElementById('kairosAddSchedBtn');
+        const kairosDelSchedBtn = document.getElementById('kairosDelSchedBtn');
+        const kairosDexRegBtn = document.getElementById('kairosDexRegBtn');
+
+        if (!kairosBtn) return;
+
+        kairosBtn.addEventListener('click', openKairosModal);
+        closeKairos.addEventListener('click', () => kairosModal.classList.remove('visible'));
+        kairosModal.addEventListener('click', (e) => {
+            if (e.target === kairosModal) kairosModal.classList.remove('visible');
+        });
+
+        kairosStartBtn.addEventListener('click', startKairos);
+        kairosStopBtn.addEventListener('click', stopKairos);
+        kairosWakeBtn.addEventListener('click', wakeKairos);
+        kairosRefreshBtn.addEventListener('click', refreshKairosStatus);
+        kairosAddSchedBtn.addEventListener('click', addKairosSchedule);
+        kairosDelSchedBtn.addEventListener('click', deleteKairosSchedule);
+        kairosDexRegBtn.addEventListener('click', registerDexHandoff);
+    }
+
+    async function openKairosModal() {
+        const kairosModal = document.getElementById('kairosModal');
+        const kairosNoSession = document.getElementById('kairosNoSession');
+        const kairosPanel = document.getElementById('kairosPanel');
+
+        kairosModal.classList.add('visible');
+
+        const sessionId = getCurrentSessionId();
+        if (!sessionId) {
+            kairosNoSession.style.display = 'block';
+            kairosPanel.style.display = 'none';
+            return;
+        }
+
+        kairosNoSession.style.display = 'none';
+        kairosPanel.style.display = 'block';
+        await refreshKairosStatus();
     }
 
     async function refreshKairosStatus() {
@@ -1964,117 +2054,173 @@ document.addEventListener('DOMContentLoaded', () => {
             if (eventsEl) eventsEl.textContent = formatKairosEvents(kairos.recent_events || []);
             if (trackedEl) trackedEl.textContent = formatKairosTrackedTasks(kairos.tracked_dex_tasks || []);
         } catch (e) {
-            console.error('Failed to refresh KAIROS status:', e);
+            console.error('[KAIROS] 刷新状态失败:', e);
             if (statusEl) statusEl.textContent = `加载失败: ${e.message}`;
             if (eventsEl) eventsEl.textContent = '无';
             if (trackedEl) trackedEl.textContent = '无';
         }
     }
 
-    function initKairos() {
-        const kairosBtn = document.getElementById('kairosBtn');
-        const kairosModal = document.getElementById('kairosModal');
-        const closeKairos = document.getElementById('closeKairos');
-        const kairosStartBtn = document.getElementById('kairosStartBtn');
-        const kairosStopBtn = document.getElementById('kairosStopBtn');
-        const kairosWakeBtn = document.getElementById('kairosWakeBtn');
-        const kairosRefreshBtn = document.getElementById('kairosRefreshBtn');
-        const kairosAddSchedBtn = document.getElementById('kairosAddSchedBtn');
-        const kairosDelSchedBtn = document.getElementById('kairosDelSchedBtn');
-        const kairosDexRegBtn = document.getElementById('kairosDexRegBtn');
+    async function startKairos() {
+        const sessionId = getCurrentSessionId();
+        if (!sessionId) return;
 
-        if (!kairosBtn || !kairosModal) return;
-
-        kairosBtn.addEventListener('click', async () => {
-            kairosModal.classList.add('visible');
-            await refreshKairosStatus();
-        });
-
-        closeKairos?.addEventListener('click', () => kairosModal.classList.remove('visible'));
-        kairosModal.addEventListener('click', (e) => {
-            if (e.target === kairosModal) {
-                kairosModal.classList.remove('visible');
+        try {
+            const data = await kairosRequest('/kairos/start', 'POST', { app_name: APP_NAME, user_id: getUserId() });
+            if (data.status === 'ok') {
+                alert('KAIROS 启动成功');
+                await refreshKairosStatus();
+            } else {
+                alert('启动失败: ' + (data.error || '未知错误'));
             }
-        });
+        } catch (e) {
+            console.error('[KAIROS] 启动失败:', e);
+            alert('启动失败: ' + e.message);
+        }
+    }
 
-        kairosStartBtn?.addEventListener('click', async () => {
-            await kairosRequest('/kairos/start', 'POST', { app_name: APP_NAME, user_id: getUserId() });
-            await refreshKairosStatus();
-        });
+    async function stopKairos() {
+        const sessionId = getCurrentSessionId();
+        if (!sessionId) return;
 
-        kairosStopBtn?.addEventListener('click', async () => {
-            await kairosRequest('/kairos/stop', 'POST', { app_name: APP_NAME, user_id: getUserId() });
-            await refreshKairosStatus();
-        });
+        try {
+            const data = await kairosRequest('/kairos/stop', 'POST', { app_name: APP_NAME, user_id: getUserId() });
+            if (data.status === 'ok') {
+                alert('KAIROS 已停止');
+                await refreshKairosStatus();
+            } else {
+                alert('停止失败: ' + (data.error || '未知错误'));
+            }
+        } catch (e) {
+            console.error('[KAIROS] 停止失败:', e);
+            alert('停止失败: ' + e.message);
+        }
+    }
 
-        kairosWakeBtn?.addEventListener('click', async () => {
-            const reason = document.getElementById('kairosWakeReason')?.value?.trim() || 'manual';
-            await kairosRequest('/kairos/wake', 'POST', { app_name: APP_NAME, user_id: getUserId(), reason });
-            await refreshKairosStatus();
-        });
+    async function wakeKairos() {
+        const sessionId = getCurrentSessionId();
+        if (!sessionId) return;
 
-        kairosRefreshBtn?.addEventListener('click', refreshKairosStatus);
+        const reason = document.getElementById('kairosWakeReason').value || 'manual_wake';
 
-        kairosAddSchedBtn?.addEventListener('click', async () => {
-            await kairosRequest('/kairos/schedules', 'POST', {
+        try {
+            const data = await kairosRequest('/kairos/wake', 'POST', { app_name: APP_NAME, user_id: getUserId(), reason });
+            if (data.status === 'ok') {
+                alert('唤醒请求已发送');
+                await refreshKairosStatus();
+
+                // 修复：唤醒后重新加载历史消息，避免累积的 kairos 事件在下次切换会话时突然出现
+                const storedIsSwarm = sessionStorage.getItem('current_is_swarm');
+                const storedLeaderPort = sessionStorage.getItem('current_leader_port');
+                await loadSessionHistory(
+                    sessionId,
+                    storedIsSwarm === 'true',
+                    storedLeaderPort
+                );
+            } else {
+                alert('唤醒失败: ' + (data.error || '未知错误'));
+            }
+        } catch (e) {
+            console.error('[KAIROS] 唤醒失败:', e);
+            alert('唤醒失败: ' + e.message);
+        }
+    }
+
+    async function addKairosSchedule() {
+        const sessionId = getCurrentSessionId();
+        if (!sessionId) return;
+
+        const schedule_id = document.getElementById('kairosSchedId').value;
+        const cron = document.getElementById('kairosSchedCron').value;
+        const reason = document.getElementById('kairosSchedReason').value;
+
+        if (!schedule_id || !cron || !reason) {
+            alert('请填写完整的 schedule 信息');
+            return;
+        }
+
+        try {
+            const data = await kairosRequest('/kairos/schedules', 'POST', {
                 app_name: APP_NAME,
                 user_id: getUserId(),
-                schedule_id: document.getElementById('kairosSchedId')?.value?.trim(),
-                cron: document.getElementById('kairosSchedCron')?.value?.trim(),
-                reason: document.getElementById('kairosSchedReason')?.value?.trim(),
+                schedule_id,
+                cron,
+                reason,
                 enabled: true
             });
-            await refreshKairosStatus();
-        });
+            if (data.status === 'ok') {
+                alert('Schedule 添加成功');
+                await refreshKairosStatus();
+            } else {
+                alert('添加失败: ' + (data.error || '未知错误'));
+            }
+        } catch (e) {
+            console.error('[KAIROS] 添加 schedule 失败:', e);
+            alert('添加失败: ' + e.message);
+        }
+    }
 
-        kairosDelSchedBtn?.addEventListener('click', async () => {
-            const scheduleId = document.getElementById('kairosSchedId')?.value?.trim();
+    async function deleteKairosSchedule() {
+        const sessionId = getCurrentSessionId();
+        if (!sessionId) return;
+
+        const schedule_id = document.getElementById('kairosSchedId').value;
+        if (!schedule_id) {
+            alert('请填写 schedule_id');
+            return;
+        }
+
+        try {
             const params = new URLSearchParams({ app_name: APP_NAME, user_id: getUserId() });
-            const sessionId = getCurrentSessionId();
-            const response = await fetch(`/api/sessions/${sessionId}/kairos/schedules/${encodeURIComponent(scheduleId)}?${params.toString()}`, {
-                method: 'DELETE'
-            });
+            const response = await fetch(
+                `/api/sessions/${sessionId}/kairos/schedules/${encodeURIComponent(schedule_id)}?${params.toString()}`,
+                { method: 'DELETE' }
+            );
             if (!response.ok) {
                 throw new Error(`Delete schedule failed: ${response.status}`);
             }
-            await refreshKairosStatus();
-        });
-
-        kairosDexRegBtn?.addEventListener('click', async () => {
-            await kairosRequest('/kairos/dex/register', 'POST', {
-                app_name: APP_NAME,
-                user_id: getUserId(),
-                task_id: document.getElementById('kairosDexTaskId')?.value?.trim(),
-                description: document.getElementById('kairosDexDesc')?.value?.trim()
-            });
-            await refreshKairosStatus();
-        });
+            const data = await response.json();
+            if (data.status === 'ok') {
+                alert('Schedule 删除成功');
+                await refreshKairosStatus();
+            } else {
+                alert('删除失败: ' + (data.error || '未知错误'));
+            }
+        } catch (e) {
+            console.error('[KAIROS] 删除 schedule 失败:', e);
+            alert('删除失败: ' + e.message);
+        }
     }
 
-    // ========================================
-    // Settings Functionality
-    // ========================================
-    function initSettings() {
-        const settingsBtn = document.getElementById('settingsBtn');
-        const settingsModal = document.getElementById('settingsModal');
-        const closeSettings = document.getElementById('closeSettings');
-        const cancelSettings = document.getElementById('cancelSettings');
-        const saveSettingsBtn = document.getElementById('saveSettingsBtn');
-        const modelPreset = document.getElementById('modelPreset');
+    async function registerDexHandoff() {
+        const sessionId = getCurrentSessionId();
+        if (!sessionId) return;
 
-        if (!settingsBtn) return;
+        const task_id = document.getElementById('kairosDexTaskId').value;
+        const description = document.getElementById('kairosDexDesc').value;
 
-        settingsBtn.addEventListener('click', openSettings);
-        closeSettings.addEventListener('click', () => settingsModal.classList.remove('visible'));
-        cancelSettings.addEventListener('click', () => settingsModal.classList.remove('visible'));
+        if (!task_id || !description) {
+            alert('请填写 task_id 和 description');
+            return;
+        }
 
-        saveSettingsBtn.addEventListener('click', saveSettings);
-        modelPreset.addEventListener('change', handlePresetChange);
-
-        // Click outside to close
-        settingsModal.addEventListener('click', (e) => {
-            if (e.target === settingsModal) settingsModal.classList.remove('visible');
-        });
+        try {
+            const data = await kairosRequest('/kairos/dex/register', 'POST', {
+                app_name: APP_NAME,
+                user_id: getUserId(),
+                task_id,
+                description
+            });
+            if (data.status === 'ok') {
+                alert('Dex handoff 注册成功');
+                await refreshKairosStatus();
+            } else {
+                alert('注册失败: ' + (data.error || '未知错误'));
+            }
+        } catch (e) {
+            console.error('[KAIROS] 注册 dex handoff 失败:', e);
+            alert('注册失败: ' + e.message);
+        }
     }
 
     let currentPresets = {}; // 全局变量存储从后端获取的预设
@@ -2092,6 +2238,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (config.error) {
                 console.error('Backend error:', config.error);
+                alert(`获取设置失败: ${config.error}`);
                 return;
             }
 
@@ -2224,7 +2371,7 @@ document.addEventListener('DOMContentLoaded', () => {
         initSettings();
 
         // 初始化 KAIROS 功能
-        initKairos();
+        initKairosModal();
     }
 
     // 初始化侧边栏调整大小功能
