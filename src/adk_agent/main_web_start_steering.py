@@ -305,9 +305,43 @@ class SteeringSession:
 
         # 创建会话专属的 Agent（内部会创建自己的 compactor）
         self.agent = self._create_agent()
-        
+
         print(f"[SteeringSession] Created session for {self.key}")
-    
+
+    def _append_debug_log(self, message: str):
+        try:
+            with open(r"d:\git_codes\google_adk_helloworld_git\tmp\debug_steering.log", "a", encoding="utf-8") as f:
+                f.write(message + "\n")
+        except Exception:
+            pass
+
+    def _tool_names_snapshot(self):
+        if not hasattr(self, 'agent') or not self.agent or not hasattr(self.agent, 'tools'):
+            return []
+        return [getattr(t, 'name', getattr(t, '__name__', str(t))) for t in self.agent.tools]
+
+    def _restore_dynamic_skills(self):
+        if not hasattr(self, '_loaded_skills') or not self._loaded_skills:
+            return
+
+        self._append_debug_log(f"[Debug] 🔄 正在恢复动态技能工具 | _loaded_skills: {self._loaded_skills}")
+        print(f"[SteeringSession] 正在自动恢复动态技能工具: {self._loaded_skills}")
+
+        for sid in self._loaded_skills:
+            before_tools = self._tool_names_snapshot()
+            loaded_tools = self._load_skill_tools(sid)
+            after_tools = self._tool_names_snapshot()
+            new_tools = [name for name in after_tools if name not in before_tools]
+            diag = getattr(self, '_last_skill_load_diagnostics', {}).get(sid, {})
+            status = diag.get('status', 'unknown')
+            log_line = (
+                f"[Debug] 🔁 动态技能恢复结果 | session={self.key} skill={sid} status={status} "
+                f"new_tools={new_tools} before_count={len(before_tools)} after_count={len(after_tools)} "
+                f"force_reload={diag.get('force_reload')} error_type={diag.get('error_type')} error={diag.get('error')}"
+            )
+            self._append_debug_log(log_line)
+            print(log_line)
+
     def update_llm_config(self, model: str = None, api_key: str = None, api_base: str = None, active_model: str = None):
         """[Dynamic Config] 动态更新会话的 LLM 配置并重启 Agent"""
         try:
@@ -538,14 +572,7 @@ class SteeringSession:
             print(f"[SteeringSession] ⚠️ 加载 search_exp 失败: {e}")
         
         # [Fix] 恢复之前动态加载的技能
-        if hasattr(self, '_loaded_skills') and self._loaded_skills:
-            try:
-                with open(r"d:\git_codes\google_adk_helloworld_git\tmp\debug_steering.log", "a", encoding="utf-8") as f:
-                    f.write(f"[Debug] 🔄 正在恢复动态技能工具 | _loaded_skills: {self._loaded_skills}\n")
-            except Exception: pass
-            print(f"[SteeringSession] 正在自动恢复动态技能工具: {self._loaded_skills}")
-            for sid in self._loaded_skills:
-                self._load_skill_tools(sid)
+        self._restore_dynamic_skills()
 
         # [Fix] 恢复运行时动态工具集 (McpToolset 副作用工具)
         if 'dynamic_toolsets' in locals() and dynamic_toolsets:
@@ -564,7 +591,31 @@ class SteeringSession:
         if not self.skill_manager.skill_exists(skill_id):
             return f"[ERROR] 技能 '{skill_id}' 不存在。"
 
-        self._load_skill_tools(skill_id)
+        tools = self._load_skill_tools(skill_id)
+        skill_tools_file = Path(self.config.skills_path) / skill_id / "tools.py"
+        skill_has_tools_file = skill_tools_file.exists()
+        already_loaded = hasattr(self, '_loaded_skills') and skill_id in getattr(self, '_loaded_skills', [])
+        load_diag = getattr(self, '_last_skill_load_diagnostics', {}).get(skill_id)
+
+        if skill_has_tools_file and not tools and not already_loaded:
+            diagnostic_block = ""
+            if load_diag and load_diag.get("status") == "error":
+                diagnostic_block = (
+                    "\nDiagnostic:\n"
+                    f"- tool_file: {load_diag.get('tool_file')}\n"
+                    f"- error_type: {load_diag.get('error_type')}\n"
+                    f"- error: {load_diag.get('error')}\n"
+                    f"- force_reload: {load_diag.get('force_reload')}\n"
+                    f"- existing_tools: {load_diag.get('existing_names')}\n"
+                    f"- loaded_tools: {load_diag.get('loaded_tool_names')}"
+                )
+            return (
+                f"[WARN] 技能 '{skill_id}' 已找到，但工具未成功加载。"
+                f"请检查 {skill_tools_file} 是否存在导入错误或 get_tools() 是否返回了空列表。"
+                f"{diagnostic_block}\n"
+                f"Instructions:\n{self.skill_manager.load_full_sop(skill_id)}"
+            )
+
         return f"""[OK] 技能 '{skill_id}' 已加载。Instructions:\n{self.skill_manager.load_full_sop(skill_id)}"""
 
     async def skill_reload(self, skill_id: str) -> str:
@@ -575,7 +626,22 @@ class SteeringSession:
 
         tools = self._load_skill_tools(skill_id, force_reload=True)
         if not tools:
-            return f"[WARN] 技能 '{skill_id}' 热重载完成，但未找到任何工具（请检查 tools.py 是否有语法错误）。"
+            load_diag = getattr(self, '_last_skill_load_diagnostics', {}).get(skill_id)
+            diagnostic_block = ""
+            if load_diag and load_diag.get("status") == "error":
+                diagnostic_block = (
+                    "\nDiagnostic:\n"
+                    f"- tool_file: {load_diag.get('tool_file')}\n"
+                    f"- error_type: {load_diag.get('error_type')}\n"
+                    f"- error: {load_diag.get('error')}\n"
+                    f"- force_reload: {load_diag.get('force_reload')}\n"
+                    f"- existing_tools: {load_diag.get('existing_names')}\n"
+                    f"- loaded_tools: {load_diag.get('loaded_tool_names')}"
+                )
+            return (
+                f"[WARN] 技能 '{skill_id}' 热重载完成，但未找到任何工具（请检查 tools.py 是否有语法错误）。"
+                f"{diagnostic_block}"
+            )
         names = [t.__name__ for t in tools]
         return f"[OK] 技能 '{skill_id}' 热重载成功，已加载工具: {names}\nInstructions:\n{self.skill_manager.load_full_sop(skill_id)}"
     
@@ -586,6 +652,19 @@ class SteeringSession:
 
         # [Security] Verify user_id before binding
         print(f"[{self.key}] Loading tools for {skill_id} with User ID: {self.user_id}")
+        if not hasattr(self, '_last_skill_load_diagnostics'):
+            self._last_skill_load_diagnostics = {}
+        self._last_skill_load_diagnostics[skill_id] = {
+            "status": "started",
+            "skill_id": skill_id,
+            "session_key": self.key,
+            "force_reload": force_reload,
+            "tool_file": None,
+            "error_type": None,
+            "error": None,
+            "existing_names": [],
+            "loaded_tool_names": [],
+        }
 
         # [HotReload] 若强制重载，先移除该 skill 之前注册的工具
         if force_reload and hasattr(self, '_skill_tools_map') and skill_id in self._skill_tools_map:
@@ -601,14 +680,28 @@ class SteeringSession:
         loaded_tools = []
         # 获取当前已加载工具的名称集合
         existing_names = {t.__name__ for t in self.agent.tools if hasattr(t, '__name__')}
+        self._last_skill_load_diagnostics[skill_id]["existing_names"] = sorted(existing_names)
 
         for tool_file in tool_files:
+            self._last_skill_load_diagnostics[skill_id]["tool_file"] = tool_file
             if os.path.exists(tool_file):
                 try:
-                    spec = importlib.util.spec_from_file_location(f"skills.{skill_id}", tool_file)
+                    spec = importlib.util.spec_from_file_location(f"skills.{skill_id}.tools", tool_file)
                     module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
-                    
+                    tool_dir = os.path.dirname(tool_file)
+                    added_to_sys_path = False
+                    if tool_dir not in sys.path:
+                        sys.path.insert(0, tool_dir)
+                        added_to_sys_path = True
+                    try:
+                        spec.loader.exec_module(module)
+                    finally:
+                        if added_to_sys_path:
+                            try:
+                                sys.path.remove(tool_dir)
+                            except ValueError:
+                                pass
+
                     if hasattr(module, 'get_tools'):
                         # 尝试注入 app_info 和 reporter
                         # get_tools(agent, session_service, app_info, status_reporter)
@@ -653,13 +746,34 @@ class SteeringSession:
                             if wrapped_tools:
                                 self.agent.tools.extend(wrapped_tools)
                                 loaded_tools.extend(wrapped_tools)
+                                self._last_skill_load_diagnostics[skill_id]["loaded_tool_names"] = [
+                                    getattr(t, '__name__', str(t)) for t in loaded_tools
+                                ]
                                 # 更新 existing_names 以防止同一次加载中的重复（虽然不太可能）
                                 for t in wrapped_tools:
                                     if hasattr(t, '__name__'):
                                         existing_names.add(t.__name__)
-                                        
+
                 except Exception as e:
-                     print(f"Failed to load tools from {tool_file}: {e}")
+                     self._last_skill_load_diagnostics[skill_id].update({
+                         "status": "error",
+                         "error_type": type(e).__name__,
+                         "error": str(e),
+                         "existing_names": sorted(existing_names),
+                         "loaded_tool_names": [getattr(t, '__name__', str(t)) for t in loaded_tools],
+                     })
+                     log_line = (
+                         f"[{self.key}] Failed to load tools from {tool_file} | "
+                         f"skill_id={skill_id} force_reload={force_reload} "
+                         f"error_type={type(e).__name__} error={e} existing_names={sorted(existing_names)} "
+                         f"loaded_tools={[getattr(t, '__name__', str(t)) for t in loaded_tools]}"
+                     )
+                     print(log_line)
+                     try:
+                         with open(r"d:\git_codes\google_adk_helloworld_git\tmp\debug_steering.log", "a", encoding="utf-8") as f:
+                             f.write(log_line + "\n")
+                     except Exception:
+                         pass
         
         # [Fix] 记录成功加载的技能，排除内置的核心技能
         if loaded_tools and skill_id not in ('bash', 'search_exp'):
@@ -673,6 +787,14 @@ class SteeringSession:
             if not hasattr(self, '_skill_tools_map'):
                 self._skill_tools_map = {}
             self._skill_tools_map[skill_id] = {t.__name__ for t in loaded_tools if hasattr(t, '__name__')}
+
+        self._last_skill_load_diagnostics[skill_id].update({
+            "status": "loaded" if loaded_tools else (
+                "error" if self._last_skill_load_diagnostics[skill_id].get("status") == "error" else "empty"
+            ),
+            "existing_names": sorted(existing_names),
+            "loaded_tool_names": [getattr(t, '__name__', str(t)) for t in loaded_tools],
+        })
 
         return loaded_tools
     

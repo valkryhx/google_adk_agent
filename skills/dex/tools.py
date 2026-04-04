@@ -13,10 +13,34 @@ except ImportError:  # pragma: no cover - script import fallback
     from store import DexStore
 
 
+def _strip_matching_outer_quotes(value: str) -> str:
+    normalized = value.strip()
+    while len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in ('"', "'"):
+        normalized = normalized[1:-1].strip()
+    return normalized
+
+
+def _normalize_command_args(command: str) -> list[str]:
+    is_posix = sys.platform != "win32"
+    args_list = shlex.split(command, posix=is_posix)
+
+    if len(args_list) >= 3 and args_list[0].lower() == "python" and args_list[1] == "-c":
+        code_arg = " ".join(args_list[2:]).strip()
+        code_arg = _strip_matching_outer_quotes(code_arg)
+        args_list = [args_list[0], args_list[1], code_arg]
+
+    return args_list
+
+
 class DexManager:
-    def __init__(self, base_dir=None, user_id=None):
+    def __init__(self, base_dir=None, user_id=None, allow_global=False):
         self.base_dir = base_dir if base_dir else os.getcwd()
         self.user_id = user_id
+        self.allow_global = allow_global
+        if not self.user_id and not self.allow_global:
+            raise ValueError(
+                "DexManager requires user_id unless allow_global=True is passed explicitly."
+            )
         self.store = DexStore(base_dir=self.base_dir, user_id=self.user_id)
         self.dex_dir = str(self.store.tasks_dir())
 
@@ -97,8 +121,7 @@ def get_tools(agent=None, session_service=None, app_info: Dict = None) -> List[A
     def dex_start_task(task_id: str, command: str) -> str:
         dex = DexManager(user_id=user_id)
         try:
-            is_posix = sys.platform != "win32"
-            args_list = shlex.split(command, posix=is_posix)
+            args_list = _normalize_command_args(command)
             dex.start_background_process(task_id, args_list)
             task = dex.store.load_task(task_id)
             return json.dumps(task.to_dict(), indent=2, ensure_ascii=False)

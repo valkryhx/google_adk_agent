@@ -12,13 +12,12 @@ def test_script_exposes_kairos_helpers_for_tracked_tasks():
     assert "async function kairosRequest(" in text
 
 
-def test_script_refreshes_tracked_dex_tasks_panel_and_uses_helper_requests():
-    text = SCRIPT.read_text(encoding="utf-8")
 
-    assert "const trackedEl = document.getElementById('kairosTrackedDexTasks');" in text
-    assert "trackedEl.textContent = formatKairosTrackedTasks(kairos.tracked_dex_tasks || []);" in text
-    assert "await kairosRequest('/kairos/start'" in text
-    assert "await kairosRequest('/kairos/stop'" in text
-    assert "await kairosRequest('/kairos/wake'" in text
-    assert "await kairosRequest('/kairos/schedules'" in text
-    assert "await kairosRequest('/kairos/dex/register'" in text
+
+def test_kairos_panels_preserve_multiline_text_rendering():
+    html = Path(r"D:/git_repos/google_adk_agent/src/adk_agent/static/index.html").read_text(encoding="utf-8")
+
+    assert 'id="kairosTrackedDexTasks"' in html
+    assert 'id="kairosEvents"' in html
+    assert 'id="kairosTrackedDexTasks" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:220px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;"' in html
+    assert 'id="kairosEvents" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:200px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;"' in html

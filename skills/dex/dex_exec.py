@@ -22,7 +22,7 @@ def main():
     user_id = user_id_arg if user_id_arg and user_id_arg != "__NO_USER__" else None
     command_parts = sys.argv[3:]
 
-    dex = DexManager(user_id=user_id)
+    dex = DexManager(user_id=user_id, allow_global=(user_id is None))
     store = dex.store
     store._ensure_dirs()
     log_file = store.log_path(task_id)

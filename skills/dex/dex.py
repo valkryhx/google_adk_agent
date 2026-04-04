@@ -56,7 +56,7 @@ def main():
     args = parser.parse_args()
     
     # 实例化 Manager (CLI 默认无 user_id，使用全局空间)
-    dex = DexManager()
+    dex = DexManager(allow_global=True)
 
     try:
         if args.command == "create":

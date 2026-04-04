@@ -23,6 +23,30 @@ except ImportError:
 # Global references to injected services
 _AGENT_REF = None
 
+
+def _format_missing_tool_diagnostic(tool_name: str) -> str:
+    loaded_tool_names = []
+    if _AGENT_REF and hasattr(_AGENT_REF, 'tools'):
+        loaded_tool_names = [
+            getattr(tool, '__name__', str(tool))
+            for tool in _AGENT_REF.tools
+        ]
+
+    if tool_name.startswith("dex_"):
+        dex_tools = [name for name in loaded_tool_names if name.startswith("dex_")]
+        return (
+            f"[DIAG] Tool '{tool_name}' 未加载到当前 agent.tools 中。\n"
+            f"loaded_tools={loaded_tool_names}\n"
+            f"loaded_dex_tools={dex_tools}\n"
+            "这通常表示当前 session 的 dex skill 没有真正挂载成功。"
+            "请先让 agent 检查/重载 dex skill，"
+            "不要直接 import dex 模块，也不要手动实例化 DexManager()，"
+            "否则任务可能因为缺少 user_id 而写入 global。"
+        )
+
+    return f"[Error] Tool '{tool_name}' not found. Loaded tools: {loaded_tool_names}"
+
+
 async def run_programmatic_task(code: str, **kwargs) -> str:
     """
     通过编写 Python 代码来执行任务。
@@ -61,7 +85,7 @@ async def run_programmatic_task(code: str, **kwargs) -> str:
                     break
         
         if not target_tool:
-            return f"[Error] Tool '{tool_name}' not found."
+            return _format_missing_tool_diagnostic(tool_name)
 
         # 2. Execute the tool
         try:
