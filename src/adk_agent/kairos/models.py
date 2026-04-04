@@ -49,6 +49,44 @@ class KairosSchedule:
 
 
 @dataclass
+class KairosWorkflowStage:
+    stage_id: str
+    label: str
+    status: str
+    task_ids: list[str] = field(default_factory=list)
+    artifacts: list[str] = field(default_factory=list)
+    summary: str | None = None
+
+
+@dataclass
+class KairosWorkflow:
+    workflow_id: str
+    goal: str
+    status: str
+    current_stage: str | None = None
+    stages: list[KairosWorkflowStage] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class KairosPlannedAction:
+    action_id: str
+    kind: str
+    reason: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    status: str = "pending"
+    created_at: str | None = None
+
+
+@dataclass
+class KairosContinuationPolicy:
+    max_auto_steps_per_tick: int = 1
+    allow_llm_assist_for_brief: bool = True
+    require_artifacts_before_follow_up: bool = True
+    dedupe_enabled: bool = True
+
+
+@dataclass
 class KairosState:
     enabled: bool = False
     running: bool = False
@@ -61,6 +99,10 @@ class KairosState:
     pending_triggers: list[KairosTrigger] = field(default_factory=list)
     tracked_dex_task_ids: list[str] = field(default_factory=list)
     schedules: list[KairosSchedule] = field(default_factory=list)
+    active_workflow: KairosWorkflow | None = None
+    planned_actions: list[KairosPlannedAction] = field(default_factory=list)
+    blocked_reason: str | None = None
+    policy: KairosContinuationPolicy = field(default_factory=KairosContinuationPolicy)
     recent_events: list[KairosEvent] = field(default_factory=list)
 
     def push_event(self, event: KairosEvent, limit: int = 20) -> None:
@@ -84,6 +126,10 @@ def load_kairos_state(raw: dict[str, Any] | None) -> KairosState:
         pending_triggers=[_load_trigger(item) for item in raw.get("pending_triggers", []) if item],
         tracked_dex_task_ids=list(raw.get("tracked_dex_task_ids", [])),
         schedules=[KairosSchedule(**item) for item in raw.get("schedules", [])],
+        active_workflow=_load_workflow(raw.get("active_workflow")),
+        planned_actions=[_load_planned_action(item) for item in raw.get("planned_actions", [])],
+        blocked_reason=raw.get("blocked_reason"),
+        policy=_load_policy(raw.get("policy")),
         recent_events=[KairosEvent(**item) for item in raw.get("recent_events", [])],
     )
 
@@ -97,6 +143,52 @@ def _load_trigger(raw: dict[str, Any] | None) -> KairosTrigger | None:
         reason=raw["reason"],
         created_at=raw["created_at"],
         metadata=raw.get("metadata", {}),
+    )
+
+
+def _load_stage(raw: dict[str, Any]) -> KairosWorkflowStage:
+    return KairosWorkflowStage(
+        stage_id=raw["stage_id"],
+        label=raw["label"],
+        status=raw["status"],
+        task_ids=list(raw.get("task_ids", [])),
+        artifacts=list(raw.get("artifacts", [])),
+        summary=raw.get("summary"),
+    )
+
+
+def _load_workflow(raw: dict[str, Any] | None) -> KairosWorkflow | None:
+    if not raw:
+        return None
+    return KairosWorkflow(
+        workflow_id=raw["workflow_id"],
+        goal=raw["goal"],
+        status=raw["status"],
+        current_stage=raw.get("current_stage"),
+        stages=[_load_stage(item) for item in raw.get("stages", [])],
+        metadata=raw.get("metadata", {}),
+    )
+
+
+def _load_planned_action(raw: dict[str, Any]) -> KairosPlannedAction:
+    return KairosPlannedAction(
+        action_id=raw["action_id"],
+        kind=raw["kind"],
+        reason=raw["reason"],
+        payload=raw.get("payload", {}),
+        status=raw.get("status", "pending"),
+        created_at=raw.get("created_at"),
+    )
+
+
+def _load_policy(raw: dict[str, Any] | None) -> KairosContinuationPolicy:
+    if not raw:
+        return KairosContinuationPolicy()
+    return KairosContinuationPolicy(
+        max_auto_steps_per_tick=raw.get("max_auto_steps_per_tick", 1),
+        allow_llm_assist_for_brief=raw.get("allow_llm_assist_for_brief", True),
+        require_artifacts_before_follow_up=raw.get("require_artifacts_before_follow_up", True),
+        dedupe_enabled=raw.get("dedupe_enabled", True),
     )
 
 

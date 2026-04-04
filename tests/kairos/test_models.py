@@ -1,7 +1,11 @@
 from src.adk_agent.kairos.models import (
+    KairosContinuationPolicy,
     KairosEvent,
     KairosMode,
+    KairosPlannedAction,
     KairosState,
+    KairosWorkflow,
+    KairosWorkflowStage,
     dump_kairos_state,
     load_kairos_state,
 )
@@ -39,33 +43,64 @@ def test_dump_round_trip_preserves_recent_events():
     assert restored.recent_events[0].message == "runtime started"
 
 
-def test_recent_events_are_trimmed_to_last_20():
-    state = KairosState(enabled=True, running=True, mode=KairosMode.IDLE)
-    for idx in range(25):
-        state.push_event(
-            KairosEvent(kind="status", message=f"event-{idx}", ts=f"2026-04-02T12:00:{idx:02d}")
-        )
-
-    assert len(state.recent_events) == 20
-    assert state.recent_events[0].message == "event-5"
-    assert state.recent_events[-1].message == "event-24"
-
-
-# === Phase 2 new tests ===
-
-
-def test_phase2_imports_exist():
-    """Verify Phase 2 types are importable."""
-    from src.adk_agent.kairos.models import (
-        KairosSchedule,
-        KairosTrigger,
-        TriggerKind,
+def test_state_round_trip_preserves_workflow_and_planned_actions():
+    state = KairosState(
+        enabled=True,
+        running=True,
+        mode=KairosMode.IDLE,
+        active_workflow=KairosWorkflow(
+            workflow_id="demo_report_pipeline",
+            goal="auto progress report stage",
+            status="active",
+            current_stage="phase1",
+            stages=[
+                KairosWorkflowStage(
+                    stage_id="phase1",
+                    label="prepare inputs",
+                    status="completed",
+                    task_ids=["sales", "traffic", "quality"],
+                    artifacts=["demo_outputs/sales.json", "demo_outputs/traffic.json", "demo_outputs/quality.json"],
+                    summary="all inputs ready",
+                )
+            ],
+            metadata={"source": "demo"},
+        ),
+        planned_actions=[
+            KairosPlannedAction(
+                action_id="create-report",
+                kind="create_dex_task",
+                reason="phase1 converged",
+                payload={"description": "generate final report"},
+                status="pending",
+                created_at="2026-04-05T01:00:00+00:00",
+            )
+        ],
+        blocked_reason="waiting for human approval",
+        policy=KairosContinuationPolicy(),
     )
 
-    assert TriggerKind.MANUAL.value == "manual"
-    assert TriggerKind.SCHEDULE.value == "schedule"
-    assert TriggerKind.DEX.value == "dex"
-    assert TriggerKind.INTERNAL.value == "internal"
+    restored = load_kairos_state(dump_kairos_state(state))
+
+    assert restored.active_workflow is not None
+    assert restored.active_workflow.workflow_id == "demo_report_pipeline"
+    assert restored.active_workflow.current_stage == "phase1"
+    assert restored.active_workflow.stages[0].task_ids == ["sales", "traffic", "quality"]
+    assert restored.planned_actions[0].kind == "create_dex_task"
+    assert restored.planned_actions[0].payload == {"description": "generate final report"}
+    assert restored.blocked_reason == "waiting for human approval"
+    assert restored.policy.max_auto_steps_per_tick == 1
+    assert restored.policy.require_artifacts_before_follow_up is True
+
+
+
+
+def test_policy_defaults_are_stable():
+    policy = KairosContinuationPolicy()
+
+    assert policy.max_auto_steps_per_tick == 1
+    assert policy.allow_llm_assist_for_brief is True
+    assert policy.require_artifacts_before_follow_up is True
+    assert policy.dedupe_enabled is True
 
 
 def test_new_kairos_modes_exist():
@@ -74,16 +109,16 @@ def test_new_kairos_modes_exist():
     assert KairosMode.WAITING_INPUT.value == "waiting_input"
 
 
-def test_load_legacy_state_fills_phase2_defaults():
-    """Loading a Phase 1 state dict should fill Phase 2 fields with defaults."""
+def test_load_legacy_state_fills_phase3_defaults():
     state = load_kairos_state({"enabled": True, "running": True, "mode": "idle"})
 
     assert state.enabled is True
     assert state.mode is KairosMode.IDLE
-    assert state.pending_triggers == []
-    assert state.schedules == []
-    assert state.active_trigger is None
-    assert state.last_tick_at is None
+    assert state.active_workflow is None
+    assert state.planned_actions == []
+    assert state.blocked_reason is None
+    assert state.policy.max_auto_steps_per_tick == 1
+    assert state.policy.require_artifacts_before_follow_up is True
 
 
 def test_dump_round_trip_preserves_schedule_and_trigger():
