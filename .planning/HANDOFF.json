@@ -1,0 +1,124 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-04-05T20:00:43.610Z",
+  "phase": "3",
+  "phase_name": "Policy Hardening & Verification",
+  "phase_dir": ".planning/phases/03-policy-hardening-verification",
+  "plan": 0,
+  "task": 0,
+  "total_tasks": 0,
+  "status": "paused",
+  "completed_tasks": [
+    {
+      "id": 1,
+      "name": "Finish Phase 2 artifact-aware reporting execution and verification",
+      "status": "done",
+      "commit": "eddc3fe"
+    },
+    {
+      "id": 2,
+      "name": "Commit Kairos artifact-aware status and artifact gating fixes",
+      "status": "done",
+      "commit": "8a00367"
+    },
+    {
+      "id": 3,
+      "name": "Repair repo-wide pytest baseline with scoped collection",
+      "status": "done",
+      "commit": "c0368dd"
+    },
+    {
+      "id": 4,
+      "name": "Write Kairos boss demo spec and implementation plan",
+      "status": "done",
+      "commit": "c0368dd"
+    }
+  ],
+  "remaining_tasks": [
+    {
+      "id": 5,
+      "name": "Complete Phase 3 discuss-phase context capture",
+      "status": "in_progress"
+    },
+    {
+      "id": 6,
+      "name": "Plan Phase 3 policy hardening and verification",
+      "status": "not_started"
+    },
+    {
+      "id": 7,
+      "name": "Implement Kairos boss demo todo delivery pipeline in isolated worktree",
+      "status": "not_started"
+    }
+  ],
+  "blockers": [
+    {
+      "description": "Phase 3 discuss-phase is mid-conversation; no 03-CONTEXT.md exists yet.",
+      "type": "human_action",
+      "workaround": "Resume with /gsd:resume-work, finish Phase 3 clarification, then run /gsd:discuss-phase 3 or /gsd:next."
+    }
+  ],
+  "human_actions_pending": [
+    {
+      "action": "Answer the pending Phase 3 clarification question(s)",
+      "context": "Discuss-phase was interrupted after the user wanted to clarify scope before selecting gray areas.",
+      "blocking": true
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "Use a Kairos boss demo built around a todo app delivery pipeline in an isolated output directory instead of modifying the current project itself.",
+      "rationale": "This demonstrates Kairos as a boss/manager over Dex-driven real development tasks without risking the host repo.",
+      "phase": "demo-spec"
+    },
+    {
+      "decision": "Keep demo v1 to code artifacts only, not launching the generated todo app.",
+      "rationale": "Reduces demo risk while preserving a real multi-step delivery workflow with deterministic artifacts.",
+      "phase": "demo-spec"
+    },
+    {
+      "decision": "Fix pytest baseline by scoping collection to tests/ and using importlib mode.",
+      "rationale": "Root cause of full pytest failure was collection bleed from docs example projects, ad-hoc root scripts, and same-name test modules.",
+      "phase": "repo-hygiene"
+    },
+    {
+      "decision": "Wire Kairos runtime and continuation engine to the same artifact existence checker sourced from the host project root.",
+      "rationale": "This fixed the real blocked-path inconsistency and made condition_tree/report gating agree in fresh services.",
+      "phase": "phase2-fix"
+    }
+  ],
+  "uncommitted_files": [
+    "private_key.yaml",
+    "src/adk_agent/kairos/workflows.py",
+    "# OhMyOpenCode 安装指南.md",
+    ".claude/",
+    ".gitignore",
+    ".planning/config.json",
+    "Ciri-架构图.canvas",
+    "Ciri-架构图.png",
+    "check.py",
+    "claude-agent-team-讨论.md",
+    "claudecode-agent-team-discussion.md",
+    "claudecode_agent_team_discuss.json",
+    "coordination/",
+    "demo_outputs/",
+    "kill_exact.ps1",
+    "kill_ports.ps1",
+    "log_time.py",
+    "missing_artifact_case/",
+    "nul",
+    "op_session_export.json",
+    "phase2-human-check-kairos-open.yaml",
+    "phase2-human-check-kairos-session-open.yaml",
+    "phase2-human-check-session-selected.yaml",
+    "phase2-human-check-start.yaml",
+    "src/adk_agent/static/script copy 2.js",
+    "src/adk_agent/static/script copy.js",
+    "test_dup.py",
+    "test_guard.py",
+    "test_http.py",
+    "下一步.md"
+  ],
+  "next_action": "Resume by finishing Phase 3 clarification/discussion, then generate 03-CONTEXT.md before planning Phase 3.",
+  "context_notes": "Today covered: Phase 2 execution and human verification, real Dex success/failure/blocked-path testing, root-cause debugging of artifact gating, pytest baseline repair, branch/worktree cleanup, and writing the Kairos boss demo spec + implementation plan. The clean stopping point is before Phase 3 context capture and before implementing the demo plan."
+}
