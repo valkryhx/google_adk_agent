@@ -30,9 +30,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: 扩展 Kairos 状态模型，加入 workflow / planned actions / blocked reason / policy
-- [ ] 01-02: 新增 continuation engine 与 workflow template，并接入 runtime 主循环
-- [ ] 01-03: 接通宿主层 follow-up 执行入口，完成真实 Dex + live HTTP 自动 report 闭环
+- [x] 01-01: 扩展 Kairos 状态模型，加入 workflow / planned actions / blocked reason / policy
+- [x] 01-02: 新增 continuation engine 与 workflow template，并接入 runtime 主循环
+- [x] 01-03: 接通宿主层 follow-up 执行入口，完成真实 Dex + live HTTP 自动 report 闭环
 
 ### Phase 2: Artifact-Aware Reporting & Visibility
 **Goal**: 让 KAIROS 不只知道 task 完成，还能解释结果、展示 workflow 与下一步，并把 blocked reason 对用户可见化。
