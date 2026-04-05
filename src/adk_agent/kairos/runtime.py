@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from .continuation import ContinuationEngine
 from .models import KairosEvent, KairosMode, KairosSchedule, KairosState, KairosTrigger, TriggerKind
 from .scheduler import KairosScheduler
+from .workflows import demo_report_pipeline
 
 
 class KairosRuntime:
@@ -24,6 +25,7 @@ class KairosRuntime:
         is_worker_busy: Callable[[], bool] | None = None,
         scheduler: KairosScheduler | None = None,
         continuation_engine: ContinuationEngine | None = None,
+        create_follow_up_task: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = None,
     ):
         self.state = state
         self._save_state = save_state
@@ -35,7 +37,9 @@ class KairosRuntime:
         self._is_worker_busy = is_worker_busy or (lambda: False)
         self._scheduler = scheduler or KairosScheduler()
         self._continuation_engine = continuation_engine or ContinuationEngine()
+        self._create_follow_up_task = create_follow_up_task
         self._path_exists = lambda path: False
+        self._continuation_engine._path_exists = self._path_exists
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._wake_event = asyncio.Event()
@@ -110,6 +114,27 @@ class KairosRuntime:
     async def register_dex_task(self, task_id: str, description: str) -> None:
         if task_id not in self.state.tracked_dex_task_ids:
             self.state.tracked_dex_task_ids.append(task_id)
+
+        if description.startswith("prepare "):
+            workflow = self.state.active_workflow
+            if workflow is None or workflow.workflow_id != "demo_report_pipeline":
+                workflow = demo_report_pipeline([])
+                self.state.active_workflow = workflow
+            phase1 = workflow.stages[0]
+            if task_id not in phase1.task_ids:
+                phase1.task_ids.append(task_id)
+            workflow.metadata.setdefault("phase1_descriptions", {})[task_id] = description
+            phase1.status = "running"
+            workflow.status = "active"
+            workflow.current_stage = "phase1"
+        elif description == "generate final report" and self.state.active_workflow is not None:
+            workflow = self.state.active_workflow
+            if len(workflow.stages) > 1:
+                workflow.stages[1].task_ids = [task_id]
+                workflow.stages[1].status = "running"
+            workflow.current_stage = "phase2"
+            workflow.status = "active"
+
         if self.state.running and not self.state.busy:
             self.state.mode = KairosMode.HANDOFF
         await self._persist()
@@ -129,6 +154,7 @@ class KairosRuntime:
             ready_trigger_count = len(self.state.pending_triggers)
 
             # Poll Dex tasks
+            self._continuation_engine._path_exists = self._path_exists
             await self._poll_dex()
 
             if not self.state.running:
@@ -140,27 +166,10 @@ class KairosRuntime:
 
             if self.state.pending_triggers and not self.state.busy and len(self.state.pending_triggers) == ready_trigger_count:
                 trigger = self.state.pending_triggers.pop(0)
-                self.state.active_trigger = trigger
-                self.state.pending_wake_reason = None
-                self.state.busy = True
-                self.state.mode = KairosMode.RUNNING
-                await self._persist()
-                await self._record("brief", f"kairos turn started: {trigger.kind.value}:{trigger.reason}")
-                try:
-                    await self._run_turn(trigger.reason)
-                finally:
-                    self.state.busy = False
-                    self.state.active_trigger = None
-                    if self.state.running:
-                        self.state.mode = KairosMode.SLEEPING
-                        self.state.sleep_until = (
-                            datetime.now(UTC) + timedelta(seconds=self._tick_interval_seconds)
-                        ).isoformat()
-                    else:
-                        self.state.mode = KairosMode.STOPPED
-                        self.state.sleep_until = None
-                    await self._persist()
-                    await self._record("brief", f"kairos turn finished: {trigger.kind.value}:{trigger.reason}")
+                if trigger.kind is TriggerKind.INTERNAL and self._create_follow_up_task is not None:
+                    await self._execute_internal_trigger(trigger)
+                else:
+                    await self._execute_regular_trigger(trigger)
             elif self.state.pending_wake_reason and not self.state.busy:
                 # Phase 1 compat: pending_wake_reason without trigger
                 reason = self.state.pending_wake_reason
@@ -184,6 +193,63 @@ class KairosRuntime:
                     await self._persist()
                     await self._record("brief", f"kairos turn finished: {reason}")
 
+    def _current_stage(self):
+        workflow = self.state.active_workflow
+        if workflow is None or not workflow.stages:
+            return None
+        if workflow.current_stage:
+            for stage in workflow.stages:
+                if stage.stage_id == workflow.current_stage:
+                    return stage
+        return workflow.stages[0]
+
+    def _artifact_status_for_stage(self, stage) -> str:
+        if stage is None or not stage.artifacts:
+            return "unknown"
+        return "available" if all(self._path_exists(path) for path in stage.artifacts) else "missing"
+
+    def _build_task_summary(self, task, stage) -> dict[str, Any]:
+        summary_text = getattr(task, "result_summary", None) or getattr(task, "error_summary", None) or getattr(task, "result", "") or f"{task.description} is {task.status}"
+        return {
+            "task_id": task.task_id,
+            "status": task.status,
+            "summary_text": summary_text,
+            "artifact_status": self._artifact_status_for_stage(stage),
+            "log_hint": getattr(task, "log_path", None),
+            "result_summary": getattr(task, "result_summary", None),
+            "error_summary": getattr(task, "error_summary", None),
+        }
+
+    def _build_condition_tree(self) -> dict[str, Any] | None:
+        stage = self._current_stage()
+        if stage is None or (self.state.blocked_reason is None and self.state.mode is not KairosMode.WAITING_INPUT):
+            return self.state.condition_tree
+        satisfied = []
+        missing = []
+        for artifact in stage.artifacts:
+            bucket = satisfied if self._path_exists(artifact) else missing
+            item = {
+                "kind": "artifact",
+                "target": artifact,
+                "reason": None if self._path_exists(artifact) else self.state.blocked_reason,
+            }
+            bucket.append(item)
+        return {
+            "stage_id": stage.stage_id,
+            "stage_label": stage.label,
+            "satisfied": satisfied,
+            "missing": missing,
+        }
+
+    def _build_decision_explanation(self) -> dict[str, Any]:
+        condition_tree = self._build_condition_tree()
+        missing_requirements = [] if not condition_tree else [item["target"] for item in condition_tree.get("missing", [])]
+        return {
+            "why_continued": self.state.planned_actions[0].reason if self.state.planned_actions else None,
+            "why_stopped": self.state.blocked_reason if (self.state.blocked_reason or self.state.mode is KairosMode.WAITING_INPUT) else None,
+            "missing_requirements": missing_requirements,
+        }
+
     def get_status(self) -> dict:
         payload = asdict(self.state)
         payload["mode"] = self.state.mode.value
@@ -191,7 +257,7 @@ class KairosRuntime:
             payload["active_trigger"]["kind"] = self.state.active_trigger.kind.value
         for item in payload["pending_triggers"]:
             item["kind"] = TriggerKind(item["kind"]).value
-        payload["tracked_dex_tasks"] = [
+        tracked_tasks = [
             {
                 "task_id": task.task_id,
                 "status": task.status,
@@ -205,9 +271,15 @@ class KairosRuntime:
             }
             for task in self._dex_bridge.get_tasks(self.state.tracked_dex_task_ids)
         ]
+        payload["tracked_dex_tasks"] = tracked_tasks
         payload["active_workflow"] = asdict(self.state.active_workflow) if self.state.active_workflow else None
         payload["planned_actions"] = [asdict(action) for action in self.state.planned_actions]
         payload["blocked_reason"] = self.state.blocked_reason
+        stage = self._current_stage()
+        payload["task_summaries"] = [self._build_task_summary(task, stage) for task in self._dex_bridge.get_tasks(self.state.tracked_dex_task_ids)] or list(self.state.task_summaries)
+        self._continuation_engine._path_exists = self._path_exists
+        payload["condition_tree"] = self._build_condition_tree()
+        payload["decision_explanation"] = self._build_decision_explanation()
         return payload
 
     # --- Internal ---
@@ -224,6 +296,56 @@ class KairosRuntime:
         except asyncio.CancelledError:
             raise
 
+    async def _execute_regular_trigger(self, trigger: KairosTrigger) -> None:
+        self.state.active_trigger = trigger
+        self.state.pending_wake_reason = None
+        self.state.busy = True
+        self.state.mode = KairosMode.RUNNING
+        await self._persist()
+        await self._record("brief", f"kairos turn started: {trigger.kind.value}:{trigger.reason}")
+        try:
+            await self._run_turn(trigger.reason)
+        finally:
+            self.state.busy = False
+            self.state.active_trigger = None
+            if self.state.running:
+                self.state.mode = KairosMode.SLEEPING
+                self.state.sleep_until = (
+                    datetime.now(UTC) + timedelta(seconds=self._tick_interval_seconds)
+                ).isoformat()
+            else:
+                self.state.mode = KairosMode.STOPPED
+                self.state.sleep_until = None
+            await self._persist()
+            await self._record("brief", f"kairos turn finished: {trigger.kind.value}:{trigger.reason}")
+
+    async def _execute_internal_trigger(self, trigger: KairosTrigger) -> None:
+        self.state.active_trigger = trigger
+        self.state.pending_wake_reason = None
+        self.state.busy = True
+        self.state.mode = KairosMode.RUNNING
+        await self._persist()
+        await self._record("brief", f"kairos internal action started: {trigger.reason}")
+        try:
+            await self._create_follow_up_task(trigger.reason, trigger.metadata)
+        finally:
+            self.state.busy = False
+            self.state.active_trigger = None
+            if self.state.running:
+                if self.state.tracked_dex_task_ids:
+                    self.state.mode = KairosMode.HANDOFF
+                    self.state.sleep_until = None
+                else:
+                    self.state.mode = KairosMode.SLEEPING
+                    self.state.sleep_until = (
+                        datetime.now(UTC) + timedelta(seconds=self._tick_interval_seconds)
+                    ).isoformat()
+            else:
+                self.state.mode = KairosMode.STOPPED
+                self.state.sleep_until = None
+            await self._persist()
+            await self._record("brief", f"kairos internal action finished: {trigger.reason}")
+
     async def _poll_dex(self) -> None:
         remaining = list(self.state.tracked_dex_task_ids)
         if not remaining:
@@ -239,7 +361,25 @@ class KairosRuntime:
                 message = f"Dex task {task.task_id} {task.status}: {task.description}"
                 if summary:
                     message = f"{message} — {summary}"
+                stage = self._current_stage()
+                self.state.task_summaries = [self._build_task_summary(task, stage)] + [
+                    item for item in self.state.task_summaries if item.get("task_id") != task.task_id
+                ]
+                self.state.task_summaries = self.state.task_summaries[:10]
                 await self._record("brief", message)
+                if (
+                    task.status == "completed"
+                    and self.state.active_workflow is not None
+                    and getattr(task, "description", "") == "generate final report"
+                ):
+                    workflow = self.state.active_workflow
+                    workflow.status = "completed"
+                    workflow.current_stage = "phase2"
+                    if len(workflow.stages) > 1:
+                        workflow.stages[1].status = "completed"
+                        workflow.stages[1].summary = summary
+                    self.state.planned_actions = []
+                    self.state.blocked_reason = None
             else:
                 next_remaining.append(task.task_id)
 

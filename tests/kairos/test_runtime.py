@@ -3,8 +3,16 @@ from datetime import UTC, datetime
 
 import pytest
 
-from src.adk_agent.kairos.models import KairosMode, KairosSchedule, KairosState, KairosTrigger, TriggerKind
+from src.adk_agent.kairos.models import (
+    KairosMode,
+    KairosPlannedAction,
+    KairosSchedule,
+    KairosState,
+    KairosTrigger,
+    TriggerKind,
+)
 from src.adk_agent.kairos.runtime import KairosRuntime
+from src.adk_agent.kairos.workflows import demo_report_pipeline
 
 
 class FakeDexBridge:
@@ -285,6 +293,91 @@ async def test_stop_keeps_final_mode_stopped_after_active_turn():
     assert runtime.state.running is False
     assert runtime.state.mode is KairosMode.STOPPED
     assert runtime._task is None
+
+
+@pytest.mark.asyncio
+async def test_register_dex_task_seeds_demo_workflow_for_phase1_inputs():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+    )
+
+    await runtime.register_dex_task("sales-task", "prepare sales")
+
+    assert runtime.state.active_workflow is not None
+    assert runtime.state.active_workflow.workflow_id == "demo_report_pipeline"
+    assert runtime.state.active_workflow.stages[0].task_ids == ["sales-task"]
+    assert runtime.state.mode is KairosMode.HANDOFF
+
+
+@pytest.mark.asyncio
+async def test_internal_trigger_uses_host_callback_to_create_follow_up_task():
+    bridge = FakeDexBridge()
+    calls = []
+    _, emitted, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    async def create_follow_up_task(reason, payload):
+        calls.append((reason, payload))
+        bridge.tasks["report-task"] = type(
+            "Snap",
+            (),
+            {
+                "task_id": "report-task",
+                "status": "running",
+                "description": payload["description"],
+                "result": "",
+                "result_summary": None,
+                "error_summary": None,
+                "created_at": None,
+                "completed_at": None,
+                "log_path": ".dex/logs/alice/report-task.log",
+            },
+        )()
+        runtime.state.tracked_dex_task_ids = ["report-task"]
+        return {"id": "report-task"}
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.IDLE,
+            active_workflow=demo_report_pipeline(["sales", "traffic", "quality"]),
+            pending_triggers=[
+                KairosTrigger(
+                    trigger_id="internal-demo-phase2",
+                    kind=TriggerKind.INTERNAL,
+                    reason="phase1_converged",
+                    created_at="2026-04-05T00:00:00+00:00",
+                    metadata={"workflow_id": "demo_report_pipeline", "description": "generate final report"},
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=bridge,
+        create_follow_up_task=create_follow_up_task,
+    )
+
+    await runtime.tick_once()
+
+    assert calls == [("phase1_converged", {"workflow_id": "demo_report_pipeline", "description": "generate final report"})]
+    assert runtime.state.tracked_dex_task_ids == ["report-task"]
+    assert runtime.state.mode is KairosMode.HANDOFF
+    assert any("internal action started" in msg for _, msg in emitted)
 
 
 # === Phase 2 new tests: scheduler integration ===
@@ -599,6 +692,132 @@ async def test_wake_uses_enqueue_trigger_with_manual_kind():
     assert len(runtime.state.pending_triggers) == 1
     assert runtime.state.pending_triggers[0].kind is TriggerKind.MANUAL
     assert runtime.state.pending_triggers[0].reason == "test_reason"
+
+
+@pytest.mark.asyncio
+async def test_get_status_exposes_artifact_aware_task_summaries():
+    class Snap:
+        def __init__(self, task_id, status, description, result_summary=None, error_summary=None, log_path=None):
+            self.task_id = task_id
+            self.status = status
+            self.description = description
+            self.result = ""
+            self.result_summary = result_summary
+            self.error_summary = error_summary
+            self.created_at = "2026-04-06T00:00:00+00:00"
+            self.completed_at = "2026-04-06T00:01:00+00:00"
+            self.log_path = log_path
+
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    bridge = FakeDexBridge()
+    bridge.tasks["report-task"] = Snap(
+        "report-task",
+        "completed",
+        "generate final report",
+        result_summary="report ready: 3 inputs merged",
+        log_path=".dex/logs/u1/report-task.log",
+    )
+
+    workflow = demo_report_pipeline(["report-task"])
+    workflow.current_stage = "phase2"
+    workflow.stages[1].task_ids = ["report-task"]
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.HANDOFF,
+            tracked_dex_task_ids=["report-task"],
+            active_workflow=workflow,
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=bridge,
+    )
+    runtime._path_exists = lambda path: path == "demo_outputs/report.json"
+
+    status = runtime.get_status()
+
+    assert status["task_summaries"][0]["task_id"] == "report-task"
+    assert status["task_summaries"][0]["summary_text"] == "report ready: 3 inputs merged"
+    assert status["task_summaries"][0]["artifact_status"] == "available"
+    assert status["task_summaries"][0]["log_hint"] == ".dex/logs/u1/report-task.log"
+
+
+@pytest.mark.asyncio
+async def test_blocked_status_exposes_condition_tree():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    workflow = demo_report_pipeline(["sales", "traffic", "quality"])
+    workflow.current_stage = "phase1"
+    workflow.status = "waiting_input"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.WAITING_INPUT,
+            active_workflow=workflow,
+            blocked_reason="missing required artifacts for phase1 follow-up",
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+    )
+    runtime._path_exists = lambda _: False
+
+    status = runtime.get_status()
+
+    assert status["condition_tree"]["stage_id"] == "phase1"
+    assert status["condition_tree"]["missing"][0]["kind"] == "artifact"
+    assert status["condition_tree"]["missing"][0]["target"] == "demo_outputs/sales.json"
+    assert status["condition_tree"]["missing"][0]["reason"] == "missing required artifacts for phase1 follow-up"
+
+
+@pytest.mark.asyncio
+async def test_status_exposes_decision_explanation_fields():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.HANDOFF,
+            planned_actions=[
+                KairosPlannedAction(
+                    action_id="demo-report",
+                    kind="create_dex_task",
+                    reason="phase1_converged",
+                    payload={"description": "generate final report"},
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDex(),
+    )
+
+    status = runtime.get_status()
+
+    assert status["decision_explanation"]["why_continued"] == "phase1_converged"
+    assert status["decision_explanation"]["why_stopped"] is None
+    assert status["decision_explanation"]["missing_requirements"] == []
 
 
 @pytest.mark.asyncio
@@ -917,10 +1136,23 @@ async def test_multi_stage_dex_workflow_keeps_parallel_tasks_then_converges_to_r
 
     await runtime.tick_once()
 
+    assert runtime.state.tracked_dex_task_ids == []
+    assert runtime.state.mode is KairosMode.IDLE
+    assert runtime.state.active_workflow is None or runtime.state.active_workflow.status == "completed"
 
+    bridge.tasks["report"] = Snap(
+        "report",
+        "completed",
+        "generate final report",
+        result_summary="report ready: 3 inputs merged",
+        completed_at="2026-04-04T00:15:00+00:00",
+    )
 
-@pytest.mark.asyncio
-async def test_completed_inputs_enqueue_internal_continuation_trigger():
+    await runtime.tick_once()
+
+    assert runtime.state.tracked_dex_task_ids == []
+    assert runtime.state.mode is KairosMode.IDLE
+    assert runtime.state.active_workflow is None or runtime.state.active_workflow.status == "completed"
     from src.adk_agent.kairos.models import KairosContinuationPolicy, KairosWorkflow, KairosWorkflowStage
 
     class Snap:
@@ -993,3 +1225,78 @@ async def test_completed_inputs_enqueue_internal_continuation_trigger():
     assert runtime.state.planned_actions[0].kind == "create_dex_task"
     assert runtime.state.active_workflow.current_stage == "phase2"
     assert any("sales ready" in msg for _, msg in emitted)
+
+
+@pytest.mark.asyncio
+async def test_completed_inputs_block_when_runtime_path_check_reports_missing_artifact():
+    from src.adk_agent.kairos.models import KairosContinuationPolicy, KairosWorkflow, KairosWorkflowStage
+
+    class Snap:
+        def __init__(self, task_id, status, description, result_summary=None):
+            self.task_id = task_id
+            self.status = status
+            self.description = description
+            self.result = ""
+            self.result_summary = result_summary
+            self.error_summary = None
+            self.created_at = None
+            self.completed_at = "2026-04-05T01:00:00+00:00"
+            self.log_path = f".dex/logs/alice/{task_id}.log"
+
+    bridge = FakeDexBridge()
+    bridge.tasks = {
+        "sales": Snap("sales", "completed", "prepare sales", result_summary="sales ready"),
+        "traffic": Snap("traffic", "completed", "prepare traffic", result_summary="traffic ready"),
+        "quality": Snap("quality", "completed", "prepare quality", result_summary="quality ready"),
+    }
+
+    _, emitted, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.HANDOFF,
+            tracked_dex_task_ids=["sales", "traffic", "quality"],
+            active_workflow=KairosWorkflow(
+                workflow_id="demo_report_pipeline",
+                goal="auto progress report stage",
+                status="active",
+                current_stage="phase1",
+                stages=[
+                    KairosWorkflowStage(
+                        stage_id="phase1",
+                        label="prepare inputs",
+                        status="running",
+                        task_ids=["sales", "traffic", "quality"],
+                        artifacts=[
+                            "demo_outputs/sales.json",
+                            "demo_outputs/traffic.json",
+                            "demo_outputs/quality.json",
+                        ],
+                    )
+                ],
+                metadata={"completed_task_ids": []},
+            ),
+            policy=KairosContinuationPolicy(),
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=bridge,
+    )
+
+    runtime._path_exists = lambda path: path != "demo_outputs/quality.json"
+
+    await runtime.tick_once()
+
+    assert runtime.state.tracked_dex_task_ids == []
+    assert runtime.state.pending_triggers == []
+    assert runtime.state.planned_actions == []
+    assert runtime.state.blocked_reason == "missing required artifacts for phase1 follow-up"
+    assert runtime.state.active_workflow.status == "waiting_input"
+    assert any("quality ready" in msg for _, msg in emitted)

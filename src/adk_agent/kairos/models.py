@@ -103,6 +103,15 @@ class KairosState:
     planned_actions: list[KairosPlannedAction] = field(default_factory=list)
     blocked_reason: str | None = None
     policy: KairosContinuationPolicy = field(default_factory=KairosContinuationPolicy)
+    task_summaries: list[dict[str, Any]] = field(default_factory=list)
+    decision_explanation: dict[str, Any] = field(
+        default_factory=lambda: {
+            "why_continued": None,
+            "why_stopped": None,
+            "missing_requirements": [],
+        }
+    )
+    condition_tree: dict[str, Any] | None = None
     recent_events: list[KairosEvent] = field(default_factory=list)
 
     def push_event(self, event: KairosEvent, limit: int = 20) -> None:
@@ -130,6 +139,14 @@ def load_kairos_state(raw: dict[str, Any] | None) -> KairosState:
         planned_actions=[_load_planned_action(item) for item in raw.get("planned_actions", [])],
         blocked_reason=raw.get("blocked_reason"),
         policy=_load_policy(raw.get("policy")),
+        task_summaries=list(raw.get("task_summaries", [])),
+        decision_explanation=dict(
+            raw.get(
+                "decision_explanation",
+                {"why_continued": None, "why_stopped": None, "missing_requirements": []},
+            )
+        ),
+        condition_tree=raw.get("condition_tree"),
         recent_events=[KairosEvent(**item) for item in raw.get("recent_events", [])],
     )
 

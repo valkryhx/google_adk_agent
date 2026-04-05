@@ -11,7 +11,7 @@ from typing import Any
 BASE_URL = os.environ.get("KAIROS_BASE_URL", "http://127.0.0.1:8000")
 APP_NAME = os.environ.get("KAIROS_APP_NAME", "dynamic_expert")
 USER_ID = os.environ.get("KAIROS_USER_ID", "user_001")
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(os.environ.get("KAIROS_REPO_ROOT", str(Path.cwd()))).resolve()
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -131,6 +131,19 @@ def _wait_for_untracked(session_id: str, task_ids: list[str], timeout_seconds: f
     raise AssertionError(f"tasks still tracked: {task_ids}, status={last}")
 
 
+def _wait_for_auto_report_task(session_id: str, timeout_seconds: float = 40.0) -> tuple[dict[str, Any], dict[str, Any]]:
+    deadline = time.time() + timeout_seconds
+    last = None
+    while time.time() < deadline:
+        last = _fetch_kairos_status(session_id)
+        tracked = last["kairos"].get("tracked_dex_tasks", [])
+        for task in tracked:
+            if task.get("description") == "generate final report":
+                return last, task
+        time.sleep(0.5)
+    raise AssertionError(f"auto-created report task not found: {last}")
+
+
 def main() -> None:
     if DEMO_DIR.exists():
         shutil.rmtree(DEMO_DIR)
@@ -161,15 +174,16 @@ def main() -> None:
     phase1_status = _wait_for_untracked(session_id, [task["id"] for task in phase1.values()])
     print(f"[live-demo] phase1 converged: {phase1_status['kairos']['mode']}")
 
-    report = _create_dex_task(session_id, "generate final report")
-    _register_dex_task(session_id, report["id"], "generate final report")
-    _start_task(report["id"], TASK_COMMANDS["report"], session_id)
-    print(f"[live-demo] started report task={report['id']}")
+    auto_status, report_task = _wait_for_auto_report_task(session_id)
+    print(f"[live-demo] auto-created report task={report_task['task_id']}")
+    assert auto_status["kairos"]["task_summaries"]
+    assert "decision_explanation" in auto_status["kairos"]
+    assert "condition_tree" in auto_status["kairos"]
 
-    report_completed = _wait_for_dex_task_status(report["id"], "completed")
+    report_completed = _wait_for_dex_task_status(report_task["task_id"], "completed")
     print(f"[live-demo] report completed: {report_completed.get('result_summary')}")
 
-    final_status = _wait_for_untracked(session_id, [report["id"]])
+    final_status = _wait_for_untracked(session_id, [report_task["task_id"]])
     print(f"[live-demo] final mode={final_status['kairos']['mode']}")
 
     assert (DEMO_DIR / "sales.json").exists()
@@ -187,7 +201,13 @@ def main() -> None:
     assert any("sales ready" in message for message in messages)
     assert any("traffic ready" in message for message in messages)
     assert any("quality ready" in message for message in messages)
+    assert any("auto-created dex task" in message and "generate final report" in message for message in messages)
     assert any("report ready: 3 inputs merged" in message for message in messages)
+    assert final_status["kairos"]["tracked_dex_task_ids"] == []
+    assert final_status["kairos"]["mode"] == "idle"
+    assert final_status["kairos"]["task_summaries"]
+    assert "decision_explanation" in final_status["kairos"]
+    assert "condition_tree" in final_status["kairos"]
     print("[live-demo] PASS: artifacts and Kairos events verified")
 
 

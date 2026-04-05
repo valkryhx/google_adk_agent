@@ -65,7 +65,18 @@ def register_kairos_routes(app, session_manager):
         manager = _get_session_manager(session_manager)
         session = manager.get_or_create(app_name, user_id, session_id)
         runtime = session.get_or_create_kairos_runtime()
-        return {"status": "ok", "session_id": session_id, "kairos": runtime.get_status()}
+        status = runtime.get_status()
+        return {
+            "status": "ok",
+            "session_id": session_id,
+            "kairos": status,
+            "active_workflow": status.get("active_workflow"),
+            "planned_actions": status.get("planned_actions", []),
+            "blocked_reason": status.get("blocked_reason"),
+            "task_summaries": status.get("task_summaries", []),
+            "decision_explanation": status.get("decision_explanation"),
+            "condition_tree": status.get("condition_tree"),
+        }
 
     # --- Phase 2: Schedule routes ---
 

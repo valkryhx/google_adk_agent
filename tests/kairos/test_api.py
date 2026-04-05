@@ -2,7 +2,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.adk_agent.kairos.api import register_kairos_routes
-from src.adk_agent.kairos.models import KairosSchedule
 
 
 class FakeRuntime:
@@ -17,6 +16,45 @@ class FakeRuntime:
             "active_trigger": None,
             "last_tick_at": None,
             "tracked_dex_task_ids": [],
+            "active_workflow": {
+                "workflow_id": "demo_report_pipeline",
+                "goal": "auto progress report stage",
+                "status": "active",
+                "current_stage": "phase1",
+                "stages": [],
+                "metadata": {},
+            },
+            "planned_actions": [
+                {
+                    "action_id": "create-report",
+                    "kind": "create_dex_task",
+                    "reason": "phase1_converged",
+                    "payload": {"description": "generate final report"},
+                    "status": "pending",
+                }
+            ],
+            "task_summaries": [
+                {
+                    "task_id": "abc12345",
+                    "status": "running",
+                    "summary_text": "run report is still running",
+                    "artifact_status": "pending",
+                    "log_hint": ".dex/logs/alice/abc12345.log",
+                    "result_summary": None,
+                    "error_summary": None,
+                }
+            ],
+            "decision_explanation": {
+                "why_continued": "phase1_converged",
+                "why_stopped": None,
+                "missing_requirements": [],
+            },
+            "condition_tree": {
+                "stage_id": "phase1",
+                "stage_label": "prepare inputs",
+                "satisfied": [],
+                "missing": [],
+            },
         }
 
     async def start(self):
@@ -258,10 +296,39 @@ def test_status_route_exposes_tracked_dex_task_details():
     )
 
     assert resp.status_code == 200
-    tracked = resp.json()["kairos"]["tracked_dex_tasks"]
+    payload = resp.json()
+    tracked = payload["kairos"]["tracked_dex_tasks"]
     assert len(tracked) == 1
     assert tracked[0]["task_id"] == "abc12345"
     assert tracked[0]["log_path"] == ".dex/logs/alice/abc12345.log"
+    assert payload["active_workflow"]["workflow_id"] == "demo_report_pipeline"
+    assert payload["planned_actions"][0]["kind"] == "create_dex_task"
+    assert payload["blocked_reason"] is None
+
+
+def test_status_route_preserves_existing_fields_and_adds_reporting_fields():
+    app = FastAPI()
+    manager = FakeManager()
+    register_kairos_routes(app, manager)
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/sessions/session_1/kairos/status",
+        params={"app_name": "demo", "user_id": "alice"},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "kairos" in payload
+    assert "active_workflow" in payload
+    assert "planned_actions" in payload
+    assert "blocked_reason" in payload
+    assert payload["kairos"]["task_summaries"][0]["task_id"] == "abc12345"
+    assert payload["kairos"]["decision_explanation"]["why_continued"] == "phase1_converged"
+    assert payload["kairos"]["condition_tree"]["stage_id"] == "phase1"
+    assert payload["task_summaries"][0]["task_id"] == "abc12345"
+    assert payload["decision_explanation"]["missing_requirements"] == []
+    assert payload["condition_tree"]["missing"] == []
 
 
 # === Phase 2 attach/list route tests ===

@@ -1928,6 +1928,32 @@ document.addEventListener('DOMContentLoaded', () => {
         }).join('\n\n');
     }
 
+    function formatKairosWorkflow(workflow) {
+        if (!workflow) return '无';
+        const stages = (workflow.stages || []).map(stage => (
+            `- ${stage.stage_id} [${stage.status}] ${stage.label} | tasks: ${(stage.task_ids || []).join(', ') || '-'} | artifacts: ${(stage.artifacts || []).join(', ') || '-'}`
+        )).join('\n');
+        return [
+            `workflow_id: ${workflow.workflow_id || '-'}`,
+            `goal: ${workflow.goal || '-'}`,
+            `status: ${workflow.status || '-'}`,
+            `current_stage: ${workflow.current_stage || '-'}`,
+            `metadata: ${JSON.stringify(workflow.metadata || {}, null, 2)}`,
+            `stages:\n${stages || '无'}`
+        ].join('\n');
+    }
+
+    function formatKairosPlannedActions(actions) {
+        if (!actions || actions.length === 0) return '无';
+        return actions.map(action => [
+            `- ${action.action_id || '-'}`,
+            `  kind: ${action.kind || '-'}`,
+            `  reason: ${action.reason || '-'}`,
+            `  status: ${action.status || '-'}`,
+            `  payload: ${JSON.stringify(action.payload || {}, null, 2)}`
+        ].join('\n')).join('\n\n');
+    }
+
     function formatKairosEvents(events) {
         if (!events || events.length === 0) return '无';
         return events.map(event => {
@@ -1936,6 +1962,32 @@ document.addEventListener('DOMContentLoaded', () => {
             const message = event.message || event.reason || '';
             return `[${timestamp}] ${kind}: ${message}`;
         }).join('\n');
+    }
+
+    function formatKairosResultSummaries(summaries) {
+        if (!summaries || summaries.length === 0) return '无';
+        return summaries.map(item => [
+            `- ${item.task_id || '-' } [${item.status || '-'}]`,
+            `  summary: ${item.summary_text || '-'}`,
+            `  artifacts: ${item.artifact_status || '-'}`,
+            `  result: ${item.result_summary || '-'}`,
+            `  error: ${item.error_summary || '-'}`,
+            `  log: ${item.log_hint || '-'}`
+        ].join('\n')).join('\n\n');
+    }
+
+    function formatKairosConditionTree(tree) {
+        if (!tree) return '无';
+        const satisfied = (tree.satisfied || []).map(item => `  - ${item.kind || '-'}: ${item.target || '-'}${item.reason ? ` (${item.reason})` : ''}`).join('\n') || '  - 无';
+        const missing = (tree.missing || []).map(item => `  - ${item.kind || '-'}: ${item.target || '-'}${item.reason ? ` (${item.reason})` : ''}`).join('\n') || '  - 无';
+        return [
+            `stage: ${tree.stage_id || '-'}`,
+            `label: ${tree.stage_label || '-'}`,
+            'satisfied:',
+            satisfied,
+            'missing:',
+            missing
+        ].join('\n');
     }
 
     function formatKairosStatus(kairos) {
@@ -1947,10 +1999,13 @@ document.addEventListener('DOMContentLoaded', () => {
             `last_tick_at: ${kairos.last_tick_at || '-'}`,
             `sleep_until: ${kairos.sleep_until || '-'}`,
             `pending_wake_reason: ${kairos.pending_wake_reason || '-'}`,
+            `blocked_reason: ${kairos.blocked_reason || '-'}`,
             `tracked_dex_task_ids: ${(kairos.tracked_dex_task_ids || []).join(', ') || '-'}`,
             `active_trigger: ${kairos.active_trigger ? JSON.stringify(kairos.active_trigger, null, 2) : '-'}`,
             `pending_triggers: ${JSON.stringify(kairos.pending_triggers || [], null, 2)}`,
-            `schedules: ${JSON.stringify(kairos.schedules || [], null, 2)}`
+            `schedules: ${JSON.stringify(kairos.schedules || [], null, 2)}`,
+            `active_workflow: ${kairos.active_workflow ? kairos.active_workflow.workflow_id : '-'}`,
+            `planned_actions: ${(kairos.planned_actions || []).length}`
         ].join('\n');
     }
 
@@ -2029,6 +2084,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusEl = document.getElementById('kairosStatus');
         const eventsEl = document.getElementById('kairosEvents');
         const trackedEl = document.getElementById('kairosTrackedDexTasks');
+        const workflowEl = document.getElementById('kairosWorkflow');
+        const plannedActionsEl = document.getElementById('kairosPlannedActions');
+        const blockedReasonEl = document.getElementById('kairosBlockedReason');
+        const resultSummaryEl = document.getElementById('kairosResultSummary');
 
         if (!sessionId) {
             if (noSession) noSession.style.display = 'block';
@@ -2053,11 +2112,19 @@ document.addEventListener('DOMContentLoaded', () => {
             if (statusEl) statusEl.textContent = formatKairosStatus(kairos);
             if (eventsEl) eventsEl.textContent = formatKairosEvents(kairos.recent_events || []);
             if (trackedEl) trackedEl.textContent = formatKairosTrackedTasks(kairos.tracked_dex_tasks || []);
+            if (workflowEl) workflowEl.textContent = formatKairosWorkflow(kairos.active_workflow || data.active_workflow || null);
+            if (plannedActionsEl) plannedActionsEl.textContent = formatKairosPlannedActions(kairos.planned_actions || data.planned_actions || []);
+            if (blockedReasonEl) blockedReasonEl.textContent = formatKairosConditionTree(kairos.condition_tree || data.condition_tree) || kairos.blocked_reason || data.blocked_reason || '无';
+            if (resultSummaryEl) resultSummaryEl.textContent = formatKairosResultSummaries(kairos.task_summaries || data.task_summaries || []);
         } catch (e) {
             console.error('[KAIROS] 刷新状态失败:', e);
             if (statusEl) statusEl.textContent = `加载失败: ${e.message}`;
             if (eventsEl) eventsEl.textContent = '无';
             if (trackedEl) trackedEl.textContent = '无';
+            if (workflowEl) workflowEl.textContent = '无';
+            if (plannedActionsEl) plannedActionsEl.textContent = '无';
+            if (blockedReasonEl) blockedReasonEl.textContent = '无';
+            if (resultSummaryEl) resultSummaryEl.textContent = '无';
         }
     }
 

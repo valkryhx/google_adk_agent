@@ -4,6 +4,9 @@ import time
 import pytest
 
 from skills.dex.tools import DexManager, get_tools
+from src.adk_agent.kairos.dex_bridge import KairosDexBridge
+from src.adk_agent.kairos.models import KairosMode, KairosState
+from src.adk_agent.kairos.runtime import KairosRuntime
 
 
 def test_dex_manager_requires_user_id_unless_global_is_explicitly_allowed(tmp_path, monkeypatch):
@@ -76,6 +79,64 @@ def test_dex_quoted_python_c_command_writes_stdout_and_summary(tmp_path, monkeyp
 
 
 
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_exposes_structured_summary_from_real_dex_task(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tools = get_tools(app_info={"user_id": "u1"})
+    dex_create_task, dex_start_task, _, dex_get_task_details = tools
+
+    created = json.loads(dex_create_task("generate final report", "phase2"))
+    json.loads(dex_start_task(created["id"], 'python -c "print(\'report ready: 3 inputs merged\')"'))
+
+    saved = []
+    emitted = []
+    logged = []
+
+    async def save_state(state):
+        saved.append(state)
+
+    async def emit_event(event):
+        emitted.append((event.kind, event.message))
+
+    async def append_log(event):
+        logged.append(event.message)
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.HANDOFF,
+            tracked_dex_task_ids=[created["id"]],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=KairosDexBridge(base_dir=tmp_path, user_id="u1"),
+    )
+
+    deadline = time.time() + 10
+    details = None
+    while time.time() < deadline:
+        await runtime.tick_once()
+        details = json.loads(dex_get_task_details(created["id"]))
+        if details["status"] == "completed" and runtime.state.tracked_dex_task_ids == []:
+            break
+        time.sleep(0.2)
+
+    status = runtime.get_status()
+
+    assert details is not None
+    assert details["status"] == "completed"
+    assert status["task_summaries"][0]["task_id"] == created["id"]
+    assert status["task_summaries"][0]["summary_text"] == "report ready: 3 inputs merged"
+    assert status["task_summaries"][0]["artifact_status"] in {"unknown", "missing", "available"}
+    assert status["task_summaries"][0]["log_hint"]
 
 
 @pytest.mark.asyncio
@@ -156,3 +217,59 @@ def test_dex_create_and_start_get_details_return_structured_json(tmp_path, monke
     details = json.loads(dex_get_task_details(created["id"]))
     assert details["id"] == created["id"]
     assert details["artifacts"][0]["kind"] == "log"
+
+
+@pytest.mark.asyncio
+async def test_runtime_host_follow_up_uses_user_namespace_and_surfaces_summary(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tools = get_tools(app_info={"user_id": "u1"})
+    dex_create_task, dex_start_task, _, dex_get_task_details = tools
+
+    created = json.loads(dex_create_task("generate final report", "phase2"))
+    json.loads(dex_start_task(created["id"], 'python -c "print(\'report ready: 3 inputs merged\')"'))
+
+    saved = []
+    emitted = []
+    logged = []
+
+    async def save_state(state):
+        saved.append(state)
+
+    async def emit_event(event):
+        emitted.append((event.kind, event.message))
+
+    async def append_log(event):
+        logged.append(event.message)
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.HANDOFF,
+            tracked_dex_task_ids=[created["id"]],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=KairosDexBridge(base_dir=tmp_path, user_id="u1"),
+    )
+
+    deadline = time.time() + 10
+    details = None
+    while time.time() < deadline:
+        await runtime.tick_once()
+        details = json.loads(dex_get_task_details(created["id"]))
+        if details["status"] == "completed" and runtime.state.tracked_dex_task_ids == []:
+            break
+        time.sleep(0.2)
+
+    assert details is not None
+    assert details["status"] == "completed"
+    assert details["result_summary"] == "report ready: 3 inputs merged"
+    assert "/u1/" in details["artifacts"][0]["path"].replace("\\", "/")
+    assert runtime.state.tracked_dex_task_ids == []
+    assert any("report ready: 3 inputs merged" in msg for _, msg in emitted)

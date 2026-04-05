@@ -60,7 +60,9 @@ from src.adk_agent.kairos.activity_log import KairosActivityLog
 from src.adk_agent.kairos.api import register_kairos_routes
 from src.adk_agent.kairos.dex_bridge import KairosDexBridge
 from src.adk_agent.kairos.models import dump_kairos_state, load_kairos_state
+from src.adk_agent.kairos.workflows import demo_report_pipeline
 from src.adk_agent.kairos.runtime import KairosRuntime
+from skills.dex.tools import _normalize_command_args
 
 # SessionKey = (app_name, user_id, session_id)
 SessionKey = Tuple[str, str, str]
@@ -447,6 +449,39 @@ class SteeringSession:
             ts=event.ts,
         )
 
+    async def create_kairos_follow_up_task(self, description: str, trigger_reason: str, payload: dict | None = None):
+        runtime = self.get_or_create_kairos_runtime()
+        dex = KairosDexBridge(base_dir=_PROJECT_ROOT, user_id=self.user_id).manager
+        task = dex.create_task(description, f"kairos follow-up: {trigger_reason}")
+        if description == "generate final report":
+            command = (
+                'python -c "import json,os; data={}; files=[\'sales\',\'traffic\',\'quality\']; '
+                "[data.setdefault(name, json.load(open(f'demo_outputs/{name}.json', encoding='utf-8'))) for name in files]; "
+                "report={'report':'ready','inputs':files,'summary':{'sales':data['sales']['value'],'traffic':data['traffic']['value'],'quality':data['quality']['value']}}; "
+                "json.dump(report, open('demo_outputs/report.json','w',encoding='utf-8'), ensure_ascii=False, indent=2); "
+                "print('report ready: 3 inputs merged')\""
+            )
+            dex.start_background_process(task["id"], _normalize_command_args(command))
+        await runtime.register_dex_task(task["id"], description)
+        runtime.state.planned_actions = [
+            action
+            for action in runtime.state.planned_actions
+            if not (
+                action.kind == "create_dex_task"
+                and action.payload.get("workflow_id") == (payload or {}).get("workflow_id")
+                and action.payload.get("description") == description
+            )
+        ]
+        if runtime.state.active_workflow and len(runtime.state.active_workflow.stages) > 1:
+            runtime.state.active_workflow.stages[1].task_ids = [task["id"]]
+            runtime.state.active_workflow.stages[1].status = "running"
+        await self._save_kairos_state(runtime.state)
+        await runtime._record(
+            "brief",
+            f"kairos auto-created dex task {task['id']}: {description} ({trigger_reason})",
+        )
+        return task
+
     async def run_kairos_turn(self, reason: str):
         """
         执行 KAIROS autonomous turn，但不污染 session.events。
@@ -492,11 +527,18 @@ class SteeringSession:
             emit_event=self._emit_kairos_event,
             append_log=self._append_kairos_log,
             run_turn=self.run_kairos_turn,
-            dex_bridge=KairosDexBridge(base_dir=os.getcwd(), user_id=self.user_id),
+            dex_bridge=KairosDexBridge(base_dir=_PROJECT_ROOT, user_id=self.user_id),
             tick_interval_seconds=15.0,
             is_worker_busy=lambda: WORKER_LOCK.locked(),
             scheduler=KairosScheduler(),
+            create_follow_up_task=lambda reason, payload: self.create_kairos_follow_up_task(
+                payload.get("description", "generate final report"),
+                reason,
+                payload,
+            ),
         )
+        self.kairos_runtime._path_exists = lambda path: Path(_PROJECT_ROOT, path).exists()
+        self.kairos_runtime._continuation_engine._path_exists = self.kairos_runtime._path_exists
         return self.kairos_runtime
 
     def _create_agent(self) -> LlmAgent:

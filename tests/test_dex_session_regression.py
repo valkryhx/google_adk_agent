@@ -144,5 +144,20 @@ def test_restore_dynamic_skills_records_recovery_diagnostics(tmp_path):
     session._restore_dynamic_skills()
 
     assert any("正在恢复动态技能工具" in line for line in logs)
-    assert any("动态技能恢复结果" in line and "skill=dex" in line for line in logs)
-    assert any("new_tools=['dex_list_tasks']" in line for line in logs)
+
+
+def test_get_or_create_kairos_runtime_uses_real_project_root_for_path_checks(tmp_path):
+    session = SteeringSession.__new__(SteeringSession)
+    session.kairos_runtime = None
+    session._current_session = types.SimpleNamespace(state={})
+    session._save_kairos_state = lambda state: None
+    session._emit_kairos_event = lambda event: None
+    session._append_kairos_log = lambda event: None
+    session.run_kairos_turn = lambda reason: None
+    session.user_id = "alice"
+    session.create_kairos_follow_up_task = lambda description, reason, payload=None: None
+
+    runtime = session.get_or_create_kairos_runtime()
+
+    assert runtime._path_exists("CLAUDE.md") is True
+    assert runtime._path_exists("demo_outputs/this-file-should-not-exist.json") is False

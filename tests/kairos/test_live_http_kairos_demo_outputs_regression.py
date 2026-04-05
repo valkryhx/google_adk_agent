@@ -9,5 +9,13 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(module)
 
 
+def test_live_http_kairos_demo_outputs_regression_source_asserts_reporting_fields():
+    text = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert 'task_summaries' in text
+    assert 'decision_explanation' in text
+    assert 'condition_tree' in text
+
+
 def test_live_http_kairos_demo_outputs_regression_passes_against_running_service():
     module.main()
