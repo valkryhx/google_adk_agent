@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from skills.dex.tools import DexManager
 from src.adk_agent.main_web_start_steering import SteeringSession
 
 
@@ -161,3 +162,73 @@ def test_get_or_create_kairos_runtime_uses_real_project_root_for_path_checks(tmp
 
     assert runtime._path_exists("CLAUDE.md") is True
     assert runtime._path_exists("demo_outputs/this-file-should-not-exist.json") is False
+
+
+@pytest.mark.asyncio
+async def test_create_kairos_follow_up_task_supports_todo_delivery_report(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    todo_dir = tmp_path / "demo_delivery" / "todo_app"
+    todo_dir.mkdir(parents=True, exist_ok=True)
+    (todo_dir / "requirements.md").write_text("# req\n", encoding="utf-8")
+    (todo_dir / "design.md").write_text("# design\n", encoding="utf-8")
+    (todo_dir / "smoke_check.json").write_text('{"ready": true}', encoding="utf-8")
+
+    session = SteeringSession.__new__(SteeringSession)
+    session.user_id = "alice"
+    saved_states = []
+    recorded = []
+
+    async def save_state(state):
+        saved_states.append(state)
+
+    async def record(kind, message):
+        recorded.append((kind, message))
+
+    runtime = types.SimpleNamespace(
+        state=types.SimpleNamespace(
+            planned_actions=[],
+            active_workflow=types.SimpleNamespace(
+                stages=[
+                    types.SimpleNamespace(stage_id="requirements", task_ids=[], status="completed"),
+                    types.SimpleNamespace(stage_id="design", task_ids=[], status="completed"),
+                    types.SimpleNamespace(stage_id="codegen", task_ids=[], status="completed"),
+                    types.SimpleNamespace(stage_id="verification", task_ids=[], status="completed"),
+                    types.SimpleNamespace(stage_id="delivery_report", task_ids=["todo_delivery_report"], status="pending"),
+                ]
+            ),
+        ),
+        register_dex_task=None,
+        _record=record,
+    )
+
+    async def register_dex_task(task_id, description):
+        runtime.state.active_workflow.stages[4].task_ids = [task_id]
+        runtime.state.active_workflow.stages[4].status = "running"
+
+    runtime.register_dex_task = register_dex_task
+    session.get_or_create_kairos_runtime = lambda: runtime
+    session._save_kairos_state = save_state
+
+    def fake_start_background_process(self, task_id, command_parts):
+        report_path = tmp_path / "demo_delivery" / "todo_app" / "delivery_report.md"
+        report_path.write_text(
+            "# Todo Delivery Report\n\nReady: True\n",
+            encoding="utf-8",
+        )
+        self.store.mark_running(task_id, command=list(command_parts), pid=12345)
+
+    monkeypatch.setattr(DexManager, "start_background_process", fake_start_background_process)
+
+    task = await session.create_kairos_follow_up_task(
+        "generate todo delivery report",
+        "todo_delivery_ready",
+        {"workflow_id": "todo_delivery_pipeline", "description": "generate todo delivery report"},
+    )
+
+    report_path = tmp_path / "demo_delivery" / "todo_app" / "delivery_report.md"
+    assert task["description"] == "generate todo delivery report"
+    assert report_path.exists()
+    assert "Ready: True" in report_path.read_text(encoding="utf-8")
+    assert runtime.state.active_workflow.stages[4].status == "running"
+    assert saved_states
+    assert any("generate todo delivery report" in message for _, message in recorded)

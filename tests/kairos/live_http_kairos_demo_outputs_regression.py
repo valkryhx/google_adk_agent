@@ -18,12 +18,20 @@ if str(REPO_ROOT) not in sys.path:
 from skills.dex.tools import DexManager, _normalize_command_args
 
 DEMO_DIR = REPO_ROOT / "demo_outputs"
+TODO_DEMO_DIR = REPO_ROOT / "demo_delivery" / "todo_app"
 
 TASK_COMMANDS = {
     "sales": "python -c \"import json,time,os; os.makedirs('demo_outputs', exist_ok=True); time.sleep(2); json.dump({'source':'sales','value':128,'status':'ok'}, open('demo_outputs/sales.json','w',encoding='utf-8'), ensure_ascii=False); print('sales ready')\"",
     "traffic": "python -c \"import json,time,os; os.makedirs('demo_outputs', exist_ok=True); time.sleep(3); json.dump({'source':'traffic','value':3421,'status':'ok'}, open('demo_outputs/traffic.json','w',encoding='utf-8'), ensure_ascii=False); print('traffic ready')\"",
     "quality": "python -c \"import json,time,os; os.makedirs('demo_outputs', exist_ok=True); time.sleep(2); json.dump({'source':'quality','value':'pass','status':'ok'}, open('demo_outputs/quality.json','w',encoding='utf-8'), ensure_ascii=False); print('quality ready')\"",
     "report": "python -c \"import json,os; data={}; files=['sales','traffic','quality']; [data.setdefault(name, json.load(open(f'demo_outputs/{name}.json', encoding='utf-8'))) for name in files]; report={'report':'ready','inputs':files,'summary':{'sales':data['sales']['value'],'traffic':data['traffic']['value'],'quality':data['quality']['value']}}; json.dump(report, open('demo_outputs/report.json','w',encoding='utf-8'), ensure_ascii=False, indent=2); print('report ready: 3 inputs merged')\"",
+}
+
+TODO_TASK_COMMANDS = {
+    "todo_requirements": "python -c \"from pathlib import Path; p=Path('demo_delivery/todo_app'); p.mkdir(parents=True, exist_ok=True); (p/'requirements.md').write_text('# Todo Requirements\\n', encoding='utf-8'); print('requirements ready')\"",
+    "todo_design": "python -c \"from pathlib import Path; import json; p=Path('demo_delivery/todo_app'); (p/'design.md').write_text('# Todo Design\\n', encoding='utf-8'); (p/'file_plan.json').write_text(json.dumps({'files':['index.html','style.css','app.js']}, ensure_ascii=False, indent=2), encoding='utf-8'); print('design ready')\"",
+    "todo_codegen": "python -c \"from pathlib import Path; p=Path('demo_delivery/todo_app'); (p/'index.html').write_text('<!doctype html><title>Todo</title>', encoding='utf-8'); (p/'style.css').write_text('body{font-family:sans-serif;}', encoding='utf-8'); (p/'app.js').write_text('console.log(\\\'todo app ready\\\')', encoding='utf-8'); print('codegen ready')\"",
+    "todo_tests": "python -c \"from pathlib import Path; import json; p=Path('demo_delivery/todo_app'); (p/'test_plan.md').write_text('# Test Plan\\n', encoding='utf-8'); (p/'smoke_check.json').write_text(json.dumps({'ready': True, 'checks':['files present']}, ensure_ascii=False, indent=2), encoding='utf-8'); print('tests ready')\"",
 }
 
 
@@ -142,6 +150,76 @@ def _wait_for_auto_report_task(session_id: str, timeout_seconds: float = 40.0) -
                 return last, task
         time.sleep(0.5)
     raise AssertionError(f"auto-created report task not found: {last}")
+
+
+def _wait_for_auto_todo_report_task(session_id: str, timeout_seconds: float = 40.0) -> tuple[dict[str, Any], dict[str, Any]]:
+    deadline = time.time() + timeout_seconds
+    last = None
+    while time.time() < deadline:
+        last = _fetch_kairos_status(session_id)
+        tracked = last["kairos"].get("tracked_dex_tasks", [])
+        for task in tracked:
+            if task.get("description") == "generate todo delivery report":
+                return last, task
+        time.sleep(0.5)
+    raise AssertionError(f"auto-created todo report task not found: {last}")
+
+
+def run_todo_delivery_pipeline(repo_root: Path | None = None) -> dict[str, Any]:
+    root = repo_root or REPO_ROOT
+    if TODO_DEMO_DIR.exists():
+        shutil.rmtree(TODO_DEMO_DIR)
+
+    created = _request("POST", "/api/sessions", {"app_name": APP_NAME, "user_id": USER_ID})
+    session_id = created["session_id"]
+
+    _request(
+        "POST",
+        f"/api/sessions/{session_id}/kairos/start",
+        {"app_name": APP_NAME, "user_id": USER_ID, "reason": "todo_live_demo_start"},
+    )
+
+    phase1 = {}
+    for name in ("todo_requirements", "todo_design", "todo_codegen", "todo_tests"):
+        phase1[name] = _create_dex_task(session_id, name)
+        task = phase1[name]
+        _register_dex_task(session_id, task["id"], name)
+        _start_task(task["id"], TODO_TASK_COMMANDS[name], session_id)
+
+    for task in phase1.values():
+        _wait_for_dex_task_status(task["id"], "completed")
+
+    _wait_for_untracked(session_id, [task["id"] for task in phase1.values()])
+    auto_status, report_task = _wait_for_auto_todo_report_task(session_id)
+    assert auto_status["kairos"]["active_workflow"]["workflow_id"] == "todo_delivery_pipeline"
+    assert auto_status["kairos"]["task_summaries"]
+    assert "decision_explanation" in auto_status["kairos"]
+    assert "condition_tree" in auto_status["kairos"]
+
+    report_completed = _wait_for_dex_task_status(report_task["task_id"], "completed")
+    final_status = _wait_for_untracked(session_id, [report_task["task_id"]])
+
+    assert TODO_DEMO_DIR.exists()
+    assert (TODO_DEMO_DIR / "requirements.md").exists()
+    assert (TODO_DEMO_DIR / "design.md").exists()
+    assert (TODO_DEMO_DIR / "file_plan.json").exists()
+    assert (TODO_DEMO_DIR / "index.html").exists()
+    assert (TODO_DEMO_DIR / "style.css").exists()
+    assert (TODO_DEMO_DIR / "app.js").exists()
+    assert (TODO_DEMO_DIR / "test_plan.md").exists()
+    assert (TODO_DEMO_DIR / "smoke_check.json").exists()
+    assert (TODO_DEMO_DIR / "delivery_report.md").exists()
+    assert report_completed.get("result_summary")
+
+    messages = [event.get("message", "") for event in final_status["kairos"].get("recent_events", [])]
+    assert any("requirements ready" in message for message in messages)
+    assert any("design ready" in message for message in messages)
+    assert any("codegen ready" in message for message in messages)
+    assert any("tests ready" in message for message in messages)
+    assert any("generate todo delivery report" in message for message in messages)
+    assert final_status["kairos"]["tracked_dex_task_ids"] == []
+    assert final_status["kairos"]["mode"] == "idle"
+    return {"session_id": session_id, "final_status": final_status, "report_task": report_task}
 
 
 def main() -> None:

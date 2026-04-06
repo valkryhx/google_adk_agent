@@ -19,8 +19,15 @@ class ContinuationEngine:
 
     def evaluate_after_dex_poll(self, state: KairosState, completed_tasks: list[Any], tracked_tasks: list[Any]) -> list[ContinuationDecision]:
         workflow = state.active_workflow
-        if workflow is None or workflow.workflow_id != "demo_report_pipeline":
+        if workflow is None:
             return []
+        if workflow.workflow_id == "demo_report_pipeline":
+            return self._evaluate_demo_report_pipeline(state, workflow, completed_tasks)
+        if workflow.workflow_id == "todo_delivery_pipeline":
+            return self._evaluate_todo_delivery_pipeline(state, workflow, completed_tasks)
+        return []
+
+    def _evaluate_demo_report_pipeline(self, state: KairosState, workflow, completed_tasks: list[Any]) -> list[ContinuationDecision]:
         if workflow.current_stage != "phase1":
             return []
 
@@ -55,20 +62,86 @@ class ContinuationEngine:
         decision = ContinuationDecision(
             kind="create_dex_task",
             reason="phase1_converged",
-            payload={
-                "workflow_id": workflow.workflow_id,
-                "description": "generate final report",
-            },
+            payload=fingerprint,
         )
         return [decision]
+
+    def _evaluate_todo_delivery_pipeline(self, state: KairosState, workflow, completed_tasks: list[Any]) -> list[ContinuationDecision]:
+        if workflow.current_stage == "delivery_report" or workflow.status == "completed":
+            return []
+        completed_ids = set(workflow.metadata.get("completed_task_ids", []))
+        for task in completed_tasks:
+            if getattr(task, "status", None) == "completed":
+                completed_ids.add(task.task_id)
+        workflow.metadata["completed_task_ids"] = sorted(completed_ids)
+
+        alias_map = workflow.metadata.get("task_aliases", {})
+        required_ids = {
+            alias_map.get("requirements", "todo_requirements"),
+            alias_map.get("design", "todo_design"),
+            alias_map.get("codegen", "todo_codegen"),
+            alias_map.get("verification", "todo_tests"),
+        }
+        if not required_ids.issubset(completed_ids):
+            return []
+
+        required_artifacts: list[str] = []
+        for stage in workflow.stages:
+            if stage.stage_id == "delivery_report":
+                break
+            required_artifacts.extend(stage.artifacts)
+        missing_artifacts = [path for path in required_artifacts if not self._path_exists(path)]
+        if state.policy.require_artifacts_before_follow_up and missing_artifacts:
+            state.blocked_reason = "missing required artifacts for todo delivery report"
+            workflow.status = "waiting_input"
+            workflow.current_stage = "verification"
+            state.condition_tree = {
+                "stage_id": "verification",
+                "stage_label": "verification",
+                "satisfied": [
+                    {"kind": "artifact", "target": path, "reason": None}
+                    for path in required_artifacts
+                    if path not in missing_artifacts
+                ],
+                "missing": [
+                    {
+                        "kind": "artifact",
+                        "target": path,
+                        "reason": "missing required artifacts for todo delivery report",
+                    }
+                    for path in missing_artifacts
+                ],
+            }
+            return []
+
+        fingerprint = {
+            "workflow_id": workflow.workflow_id,
+            "description": "generate todo delivery report",
+        }
+        for action in state.planned_actions:
+            if action.kind == "create_dex_task" and action.payload == fingerprint:
+                return []
+
+        workflow.current_stage = "delivery_report"
+        workflow.status = "active"
+        state.blocked_reason = None
+        state.condition_tree = None
+        return [
+            ContinuationDecision(
+                kind="create_dex_task",
+                reason="todo_delivery_ready",
+                payload=fingerprint,
+            )
+        ]
 
     def apply_decisions(self, state: KairosState, decisions: list[ContinuationDecision]) -> list[KairosTrigger]:
         triggers: list[KairosTrigger] = []
         for decision in decisions:
             if decision.kind == "create_dex_task":
+                action_id = f"{decision.payload['workflow_id']}-{decision.payload['description'].replace(' ', '-')}"
                 state.planned_actions.append(
                     KairosPlannedAction(
-                        action_id=f"{decision.payload['workflow_id']}-create-report",
+                        action_id=action_id,
                         kind=decision.kind,
                         reason=decision.reason,
                         payload=decision.payload,
@@ -77,7 +150,7 @@ class ContinuationEngine:
                 )
                 triggers.append(
                     KairosTrigger(
-                        trigger_id=f"internal-{decision.payload['workflow_id']}-phase2",
+                        trigger_id=f"internal-{decision.payload['workflow_id']}-follow-up",
                         kind=TriggerKind.INTERNAL,
                         reason=decision.reason,
                         created_at="1970-01-01T00:00:00+00:00",

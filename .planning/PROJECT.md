@@ -17,12 +17,13 @@ google_adk_agent（Ciri）是一个基于 Google ADK 从零构建的现代 AI Ag
 - ✓ Dex 可执行真实后台任务并返回结构化状态/摘要 — pre-milestone brownfield baseline
 - ✓ KAIROS phase-2 已支持 start/stop/wake/schedule/handoff/tracked tasks/status API — pre-milestone brownfield baseline
 - ✓ KAIROS live demo 已能完成 phase-1 并行任务 + 手工 report 阶段验证 — pre-milestone brownfield baseline
+- ✓ KAIROS 已能在 todo boss demo 中自动创建并接管 `generate todo delivery report` follow-up task — validated 2026-04-06 via real host + Dex + live HTTP verification
+- ✓ KAIROS 已能在独立目录 `demo_delivery/todo_app/` 中完成 requirements/design/codegen/tests/report 多阶段真实产物交付 — validated 2026-04-06 via live HTTP verification
 
 ### Active
 
 - [ ] KAIROS 能在任务完成后主动发现下一步并自动续推 workflow
 - [ ] KAIROS 具备 workflow / planned actions / blocked reason 等自治状态建模
-- [ ] KAIROS 能在 staged workflow 中自动创建并接管 report follow-up task
 - [ ] KAIROS 能输出 artifact-aware proactive summary，而不只是状态事件
 - [ ] KAIROS 具备去重、限步、blocked/waiting_input 等自治策略护栏
 

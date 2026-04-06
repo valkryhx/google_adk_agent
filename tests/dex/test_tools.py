@@ -1,5 +1,6 @@
 import json
 import time
+from pathlib import Path
 
 import pytest
 
@@ -7,6 +8,14 @@ from skills.dex.tools import DexManager, get_tools
 from src.adk_agent.kairos.dex_bridge import KairosDexBridge
 from src.adk_agent.kairos.models import KairosMode, KairosState
 from src.adk_agent.kairos.runtime import KairosRuntime
+
+
+TODO_DEMO_COMMANDS = {
+    "todo_requirements": 'python -c "from pathlib import Path; p=Path(\'demo_delivery/todo_app\'); p.mkdir(parents=True, exist_ok=True); (p/\'requirements.md\').write_text(\'# Todo Requirements\\n\', encoding=\'utf-8\'); print(\'requirements ready\')"',
+    "todo_design": 'python -c "from pathlib import Path; import json; p=Path(\'demo_delivery/todo_app\'); (p/\'design.md\').write_text(\'# Todo Design\\n\', encoding=\'utf-8\'); (p/\'file_plan.json\').write_text(json.dumps({\'files\':[\'index.html\',\'style.css\',\'app.js\']}, ensure_ascii=False, indent=2), encoding=\'utf-8\'); print(\'design ready\')"',
+    "todo_codegen": 'python -c "from pathlib import Path; p=Path(\'demo_delivery/todo_app\'); (p/\'index.html\').write_text(\'<!doctype html><title>Todo</title>\', encoding=\'utf-8\'); (p/\'style.css\').write_text(\'body{font-family:sans-serif;}\', encoding=\'utf-8\'); (p/\'app.js\').write_text(\'console.log(\\\'todo app ready\\\')\', encoding=\'utf-8\'); print(\'codegen ready\')"',
+    "todo_tests": 'python -c "from pathlib import Path; import json; p=Path(\'demo_delivery/todo_app\'); (p/\'test_plan.md\').write_text(\'# Test Plan\\n\', encoding=\'utf-8\'); (p/\'smoke_check.json\').write_text(json.dumps({\'ready\': True, \'checks\':[\'files present\']}, ensure_ascii=False, indent=2), encoding=\'utf-8\'); print(\'tests ready\')"',
+}
 
 
 def test_dex_manager_requires_user_id_unless_global_is_explicitly_allowed(tmp_path, monkeypatch):
@@ -273,3 +282,77 @@ async def test_runtime_host_follow_up_uses_user_namespace_and_surfaces_summary(t
     assert "/u1/" in details["artifacts"][0]["path"].replace("\\", "/")
     assert runtime.state.tracked_dex_task_ids == []
     assert any("report ready: 3 inputs merged" in msg for _, msg in emitted)
+
+
+@pytest.mark.asyncio
+async def test_real_dex_todo_delivery_pipeline_produces_delivery_report(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tools = get_tools(app_info={"user_id": "u1"})
+    dex_create_task, dex_start_task, _, dex_get_task_details = tools
+
+    saved = []
+    emitted = []
+    logged = []
+    created_follow_up = []
+
+    async def save_state(state):
+        saved.append(state)
+
+    async def emit_event(event):
+        emitted.append((event.kind, event.message))
+
+    async def append_log(event):
+        logged.append(event.message)
+
+    async def run_turn(_):
+        return "ok"
+
+    def create_and_start(description: str, command: str) -> str:
+        created = json.loads(dex_create_task(description, "todo-demo"))
+        started = json.loads(dex_start_task(created["id"], command))
+        assert started["status"] == "running"
+        return created["id"]
+
+    async def create_follow_up_task(reason, payload):
+        created_follow_up.append((reason, payload))
+        task_id = create_and_start(
+            payload["description"],
+            "python -c \"from pathlib import Path; import json; root=Path('demo_delivery/todo_app'); smoke=json.loads((root/'smoke_check.json').read_text(encoding='utf-8')); (root/'delivery_report.md').write_text('# Todo Delivery Report\\n\\nReady: ' + str(smoke.get('ready', False)) + '\\n', encoding='utf-8'); print('todo delivery report ready')\"",
+        )
+        return {"id": task_id}
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=KairosDexBridge(base_dir=tmp_path, user_id="u1"),
+        create_follow_up_task=create_follow_up_task,
+        path_exists=lambda relative: (tmp_path / relative).exists(),
+    )
+
+    task_ids = []
+    for description in ["todo_requirements", "todo_design", "todo_codegen", "todo_tests"]:
+        task_id = create_and_start(description, TODO_DEMO_COMMANDS[description])
+        task_ids.append(task_id)
+        await runtime.register_dex_task(task_id, description)
+
+    deadline = time.time() + 20
+    final_follow_up_id = None
+    while time.time() < deadline:
+        await runtime.tick_once()
+        tracked = list(runtime.state.tracked_dex_task_ids)
+        if created_follow_up and tracked:
+            final_follow_up_id = tracked[-1]
+        if created_follow_up and runtime.state.mode is KairosMode.IDLE and runtime.state.tracked_dex_task_ids == []:
+            break
+        time.sleep(0.2)
+
+    assert created_follow_up
+    assert final_follow_up_id is not None
+    details = json.loads(dex_get_task_details(final_follow_up_id))
+    assert details["status"] == "completed"
+    assert runtime.state.mode is KairosMode.IDLE
+    assert runtime.state.active_workflow.status == "completed"
+    assert (Path("demo_delivery/todo_app/delivery_report.md")).exists()

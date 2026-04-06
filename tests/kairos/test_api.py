@@ -331,6 +331,51 @@ def test_status_route_preserves_existing_fields_and_adds_reporting_fields():
     assert payload["condition_tree"]["missing"] == []
 
 
+def test_status_route_exposes_todo_delivery_workflow_when_active():
+    app = FastAPI()
+    manager = FakeManager()
+    session = manager.get_or_create("demo", "alice", "session_1")
+    session.runtime.state["active_workflow"] = {
+        "workflow_id": "todo_delivery_pipeline",
+        "goal": "deliver todo app artifacts",
+        "status": "active",
+        "current_stage": "delivery_report",
+        "stages": [
+            {
+                "stage_id": "delivery_report",
+                "label": "delivery report",
+                "status": "running",
+                "task_ids": ["todo-report-task"],
+                "artifacts": ["demo_delivery/todo_app/delivery_report.md"],
+                "summary": None,
+            }
+        ],
+        "metadata": {},
+    }
+    session.runtime.state["planned_actions"] = [
+        {
+            "action_id": "todo-report",
+            "kind": "create_dex_task",
+            "reason": "todo_delivery_ready",
+            "payload": {"description": "generate todo delivery report"},
+            "status": "pending",
+        }
+    ]
+    register_kairos_routes(app, manager)
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/sessions/session_1/kairos/status",
+        params={"app_name": "demo", "user_id": "alice"},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["kairos"]["active_workflow"]["workflow_id"] == "todo_delivery_pipeline"
+    assert payload["kairos"]["planned_actions"][0]["payload"]["description"] == "generate todo delivery report"
+    assert payload["active_workflow"]["stages"][0]["artifacts"][0] == "demo_delivery/todo_app/delivery_report.md"
+
+
 # === Phase 2 attach/list route tests ===
 
 

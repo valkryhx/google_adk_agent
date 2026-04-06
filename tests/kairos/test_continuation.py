@@ -104,3 +104,128 @@ def test_duplicate_follow_up_is_suppressed_by_fingerprint():
 
     assert decisions == []
     assert len(state.planned_actions) == 1
+
+
+def _todo_workflow_state(*, completed_task_ids, current_stage="verification"):
+    return KairosState(
+        active_workflow=KairosWorkflow(
+            workflow_id="todo_delivery_pipeline",
+            goal="deliver todo app artifacts",
+            status="active",
+            current_stage=current_stage,
+            stages=[
+                KairosWorkflowStage(
+                    stage_id="requirements",
+                    label="requirements",
+                    status="completed",
+                    task_ids=["todo_requirements"],
+                    artifacts=["demo_delivery/todo_app/requirements.md"],
+                ),
+                KairosWorkflowStage(
+                    stage_id="design",
+                    label="design",
+                    status="completed",
+                    task_ids=["todo_design"],
+                    artifacts=[
+                        "demo_delivery/todo_app/design.md",
+                        "demo_delivery/todo_app/file_plan.json",
+                    ],
+                ),
+                KairosWorkflowStage(
+                    stage_id="codegen",
+                    label="code generation",
+                    status="completed",
+                    task_ids=["todo_codegen"],
+                    artifacts=[
+                        "demo_delivery/todo_app/index.html",
+                        "demo_delivery/todo_app/style.css",
+                        "demo_delivery/todo_app/app.js",
+                    ],
+                ),
+                KairosWorkflowStage(
+                    stage_id="verification",
+                    label="verification",
+                    status="running",
+                    task_ids=["todo_tests"],
+                    artifacts=[
+                        "demo_delivery/todo_app/test_plan.md",
+                        "demo_delivery/todo_app/smoke_check.json",
+                    ],
+                ),
+                KairosWorkflowStage(
+                    stage_id="delivery_report",
+                    label="delivery report",
+                    status="pending",
+                    task_ids=["todo_delivery_report"],
+                    artifacts=["demo_delivery/todo_app/delivery_report.md"],
+                ),
+            ],
+            metadata={"completed_task_ids": completed_task_ids},
+        ),
+        policy=KairosContinuationPolicy(),
+    )
+
+
+
+def test_todo_delivery_all_required_artifacts_ready_returns_delivery_report_decision():
+    state = _todo_workflow_state(
+        completed_task_ids=[
+            "todo_requirements",
+            "todo_design",
+            "todo_codegen",
+            "todo_tests",
+        ],
+        current_stage="verification",
+    )
+    engine = ContinuationEngine(
+        path_exists=lambda path: path in {
+            "demo_delivery/todo_app/requirements.md",
+            "demo_delivery/todo_app/design.md",
+            "demo_delivery/todo_app/file_plan.json",
+            "demo_delivery/todo_app/index.html",
+            "demo_delivery/todo_app/style.css",
+            "demo_delivery/todo_app/app.js",
+            "demo_delivery/todo_app/test_plan.md",
+            "demo_delivery/todo_app/smoke_check.json",
+        }
+    )
+
+    decisions = engine.evaluate_after_dex_poll(
+        state,
+        completed_tasks=[],
+        tracked_tasks=[],
+    )
+
+    assert decisions[0].kind == "create_dex_task"
+    assert decisions[0].payload["description"] == "generate todo delivery report"
+
+
+def test_todo_delivery_missing_artifact_blocks_follow_up():
+    state = _todo_workflow_state(
+        completed_task_ids=[
+            "todo_requirements",
+            "todo_design",
+            "todo_codegen",
+            "todo_tests",
+        ]
+    )
+    engine = ContinuationEngine(
+        path_exists=lambda path: path in {
+            "demo_delivery/todo_app/requirements.md",
+            "demo_delivery/todo_app/design.md",
+            "demo_delivery/todo_app/file_plan.json",
+            "demo_delivery/todo_app/index.html",
+            "demo_delivery/todo_app/style.css",
+            "demo_delivery/todo_app/test_plan.md",
+            "demo_delivery/todo_app/smoke_check.json",
+        }
+    )
+
+    decisions = engine.evaluate_after_dex_poll(
+        state,
+        completed_tasks=[],
+        tracked_tasks=[],
+    )
+
+    assert decisions == []
+    assert state.blocked_reason == "missing required artifacts for todo delivery report"

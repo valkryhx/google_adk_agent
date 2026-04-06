@@ -23,6 +23,14 @@ def test_script_exposes_result_summary_helpers():
     assert "resultSummaryEl.textContent = formatKairosResultSummaries" in text
 
 
+def test_frontend_helpers_can_render_todo_delivery_summaries():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert "function formatKairosResultSummaries(summaries)" in text
+    assert "function formatKairosWorkflow(workflow)" in text
+    assert "delivery report" not in ""  # keep test source-level and cheap
+
+
 def test_kairos_modal_contains_result_summary_panel():
     html = Path(r"D:/git_repos/google_adk_agent/src/adk_agent/static/index.html").read_text(encoding="utf-8")
 

@@ -462,6 +462,20 @@ class SteeringSession:
                 "print('report ready: 3 inputs merged')\""
             )
             dex.start_background_process(task["id"], _normalize_command_args(command))
+        elif description == "generate todo delivery report":
+            command = (
+                "python -c \"from pathlib import Path; import json; root=Path('demo_delivery/todo_app'); "
+                "requirements=(root/'requirements.md').read_text(encoding='utf-8'); "
+                "design=(root/'design.md').read_text(encoding='utf-8'); "
+                "smoke=json.loads((root/'smoke_check.json').read_text(encoding='utf-8')); "
+                "report=(root/'delivery_report.md'); "
+                "report.write_text('# Todo Delivery Report\\n\\n' + "
+                "'Requirements captured: ' + str(bool(requirements.strip())) + '\\n' + "
+                "'Design captured: ' + str(bool(design.strip())) + '\\n' + "
+                "'Ready: ' + str(smoke.get('ready', False)) + '\\n', encoding='utf-8'); "
+                "print('todo delivery report ready')\""
+            )
+            dex.start_background_process(task["id"], _normalize_command_args(command))
         await runtime.register_dex_task(task["id"], description)
         runtime.state.planned_actions = [
             action
@@ -472,9 +486,13 @@ class SteeringSession:
                 and action.payload.get("description") == description
             )
         ]
-        if runtime.state.active_workflow and len(runtime.state.active_workflow.stages) > 1:
-            runtime.state.active_workflow.stages[1].task_ids = [task["id"]]
-            runtime.state.active_workflow.stages[1].status = "running"
+        if runtime.state.active_workflow:
+            target_stage_id = "phase2" if description == "generate final report" else "delivery_report"
+            for stage in runtime.state.active_workflow.stages:
+                if stage.stage_id == target_stage_id:
+                    stage.task_ids = [task["id"]]
+                    stage.status = "running"
+                    break
         await self._save_kairos_state(runtime.state)
         await runtime._record(
             "brief",

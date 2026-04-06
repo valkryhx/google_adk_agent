@@ -320,6 +320,72 @@ async def test_register_dex_task_seeds_demo_workflow_for_phase1_inputs():
 
 
 @pytest.mark.asyncio
+async def test_todo_delivery_blocks_when_app_js_missing():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda path: path in {
+            "demo_delivery/todo_app/requirements.md",
+            "demo_delivery/todo_app/design.md",
+            "demo_delivery/todo_app/file_plan.json",
+            "demo_delivery/todo_app/index.html",
+            "demo_delivery/todo_app/style.css",
+            "demo_delivery/todo_app/test_plan.md",
+            "demo_delivery/todo_app/smoke_check.json",
+        },
+    )
+
+    await runtime.register_dex_task("todo-requirements-task", "todo_requirements")
+    await runtime.register_dex_task("todo-design-task", "todo_design")
+    await runtime.register_dex_task("todo-codegen-task", "todo_codegen")
+    await runtime.register_dex_task("todo-tests-task", "todo_tests")
+
+    bridge = runtime._dex_bridge
+    bridge.tasks["todo-tests-task"] = type(
+        "Snap",
+        (),
+        {
+            "task_id": "todo-tests-task",
+            "status": "completed",
+            "description": "todo_tests",
+            "result": "[SUCCESS]",
+            "result_summary": "tests ready",
+            "error_summary": None,
+            "created_at": None,
+            "completed_at": "2026-04-06T00:10:00+00:00",
+            "log_path": ".dex/logs/alice/todo-tests-task.log",
+        },
+    )()
+
+    runtime.state.tracked_dex_task_ids = ["todo-tests-task"]
+    runtime.state.active_workflow.current_stage = "verification"
+    runtime.state.active_workflow.metadata["completed_task_ids"] = [
+        "todo_requirements",
+        "todo_design",
+        "todo_codegen",
+        "todo_tests",
+    ]
+    for stage in runtime.state.active_workflow.stages:
+        if stage.stage_id in {"requirements", "design", "codegen"}:
+            stage.status = "completed"
+
+    await runtime.tick_once()
+
+    assert runtime.state.blocked_reason == "missing required artifacts for todo delivery report"
+    assert runtime.state.pending_triggers == []
+    assert runtime.state.condition_tree["missing"][0]["target"] == "demo_delivery/todo_app/app.js"
+
+
+@pytest.mark.asyncio
 async def test_internal_trigger_uses_host_callback_to_create_follow_up_task():
     bridge = FakeDexBridge()
     calls = []
