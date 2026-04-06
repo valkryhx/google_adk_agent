@@ -767,7 +767,44 @@ git commit -m "feat(kairos): upgrade todo boss demo to real app delivery"
 
 ---
 
-## Spec Coverage Check
+---
+
+## Progress Update (2026-04-07)
+
+### Completed so far
+- Task 1 已完成：`tests/kairos/test_continuation.py` 已补 verification-ready / verification-failed 断言，`src/adk_agent/kairos/continuation.py` 已支持 richer todo verification gating。
+- Task 2 已完成到可验证状态：`tests/kairos/test_runtime.py` 已补 runtime blocked / delivery summary 覆盖，`src/adk_agent/kairos/runtime.py` 已修复 verification_result 优先级（先用内存 metadata，缺失时才回退到磁盘 smoke file）。
+- Task 3 主线已完成：`tests/kairos/live_http_kairos_demo_outputs_regression.py` 已升级 todo task commands，生成真实单页 todo app、richer smoke_check 与 test_plan；`tests/dex/test_tools.py` 已升级为断言 richer app artifacts。
+- main 上已验证通过的关键回归：
+  - `tests/kairos/test_continuation.py` → 7 passed
+  - `tests/kairos/test_runtime.py` → 33 passed
+  - `tests/dex/test_tools.py` → 9 passed
+  - `tests/kairos/test_live_http_kairos_demo_outputs_regression.py` → 4 passed
+  - 合并回归：53 passed
+- 相关实现已提交：`97e5788 feat(kairos): upgrade todo boss demo to real app flow`
+
+### Important execution notes
+- 后续所有本地测试都应在主仓库根目录执行，并显式设置：
+  - `cd "D:/git_repos/google_adk_agent"`
+  - `PYTHONIOENCODING=utf-8`
+  - `PYTHONPATH="D:/git_repos/google_adk_agent"`
+- live / Dex / HTTP 回归若依赖本地服务，应显式指定：
+  - `KAIROS_BASE_URL="http://127.0.0.1:8001"`
+- 已确认一个关键坑：如果 cwd 不在目标仓库根，pytest 可能导入错源码树，导致测试结果与实际改动不一致。
+
+### Remaining work
+- Task 4/5/6/7/8/9 在文档中仍保留原始完整步骤，但主线已有部分实现提前完成；继续时应以当前代码状态为准，不必重复已经完成的 RED/GREEN 步骤。
+- 尚未完成的重点应聚焦：
+  1. `src/adk_agent/main_web_start_steering.py` 的 richer todo delivery report 内容升级（Task 6）
+  2. `tests/test_dex_session_regression.py` 的 host follow-up richer report 断言（Task 6）
+  3. `tests/kairos/test_api.py` 与 `tests/kairos/test_live_http_kairos_demo_outputs_regression.py` 中 richer verification/API/source-level coverage（Task 7）
+  4. 跑完整最终回归并做人工产物检查（Task 9）
+
+### Suggested restart point
+如果明天继续，建议从 **Task 6** 开始，而不是回到 Task 1：
+- 先升级 host follow-up 生成 richer `delivery_report.md`
+- 再补 API/source-level coverage
+- 最后跑 Task 9 的完整收尾回归
 
 Covered spec requirements:
 - 真实单页 todo app（add/toggle/delete/filter/edit/count/empty/persistence） → Tasks 3, 8, 9
