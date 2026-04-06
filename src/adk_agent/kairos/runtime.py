@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from .continuation import ContinuationEngine
@@ -251,6 +253,7 @@ class KairosRuntime:
             "stage_label": stage.label,
             "satisfied": satisfied,
             "missing": missing,
+            "failed_checks": [],
         }
 
     def _build_decision_explanation(self) -> dict[str, Any]:
@@ -404,6 +407,39 @@ class KairosRuntime:
                                     completed_ids.add(task.task_id)
                                     completed_ids.add(getattr(task, "description", ""))
                                     workflow.metadata["completed_task_ids"] = sorted(completed_ids)
+                                    if stage.stage_id == "verification":
+                                        verification_result = workflow.metadata.get("verification_result")
+                                        if verification_result is None:
+                                            smoke_path = Path("demo_delivery/todo_app/smoke_check.json")
+                                            if smoke_path.exists():
+                                                verification_result = json.loads(
+                                                    smoke_path.read_text(encoding="utf-8")
+                                                )
+                                                workflow.metadata["verification_result"] = verification_result
+                                            else:
+                                                verification_result = {}
+                                        if verification_result.get("ready") is False:
+                                            workflow.status = "waiting_input"
+                                            self.state.blocked_reason = "verification checks failed for todo delivery report"
+                                            self.state.condition_tree = {
+                                                "stage_id": "verification",
+                                                "stage_label": "verification",
+                                                "satisfied": [
+                                                    {"kind": "artifact", "target": path, "reason": None}
+                                                    for path in stage.artifacts
+                                                    if self._path_exists(path)
+                                                ],
+                                                "missing": [
+                                                    {
+                                                        "kind": "artifact",
+                                                        "target": path,
+                                                        "reason": self.state.blocked_reason,
+                                                    }
+                                                    for path in stage.artifacts
+                                                    if not self._path_exists(path)
+                                                ],
+                                                "failed_checks": list(verification_result.get("failures", [])),
+                                            }
                                     if stage.stage_id == "delivery_report":
                                         workflow.status = "completed"
                                         self.state.planned_actions = []

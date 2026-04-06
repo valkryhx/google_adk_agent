@@ -374,6 +374,11 @@ async def test_todo_delivery_blocks_when_app_js_missing():
         "todo_codegen",
         "todo_tests",
     ]
+    runtime.state.active_workflow.metadata["verification_result"] = {
+        "ready": True,
+        "checks": {"dom_ready": True},
+        "failures": [],
+    }
     for stage in runtime.state.active_workflow.stages:
         if stage.stage_id in {"requirements", "design", "codegen"}:
             stage.status = "completed"
@@ -383,6 +388,110 @@ async def test_todo_delivery_blocks_when_app_js_missing():
     assert runtime.state.blocked_reason == "missing required artifacts for todo delivery report"
     assert runtime.state.pending_triggers == []
     assert runtime.state.condition_tree["missing"][0]["target"] == "demo_delivery/todo_app/app.js"
+
+
+@pytest.mark.asyncio
+async def test_todo_delivery_runtime_blocks_on_failed_smoke_checks():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda path: True,
+    )
+
+    await runtime.register_dex_task("todo-requirements-task", "todo_requirements")
+    await runtime.register_dex_task("todo-design-task", "todo_design")
+    await runtime.register_dex_task("todo-codegen-task", "todo_codegen")
+    await runtime.register_dex_task("todo-tests-task", "todo_tests")
+    runtime.state.active_workflow.metadata["verification_result"] = {
+        "ready": False,
+        "checks": {"edit_item": False},
+        "failures": [{"check": "edit_item", "reason": "editing flow failed"}],
+    }
+
+    bridge = runtime._dex_bridge
+    bridge.tasks["todo-tests-task"] = type(
+        "Snap",
+        (),
+        {
+            "task_id": "todo-tests-task",
+            "status": "completed",
+            "description": "todo_tests",
+            "result": "[SUCCESS]",
+            "result_summary": "verification failed: edit_item",
+            "error_summary": None,
+            "created_at": None,
+            "completed_at": "2026-04-06T00:10:00+00:00",
+            "log_path": ".dex/logs/alice/todo-tests-task.log",
+        },
+    )()
+
+    runtime.state.tracked_dex_task_ids = ["todo-tests-task"]
+    runtime.state.active_workflow.current_stage = "verification"
+    runtime.state.active_workflow.metadata["completed_task_ids"] = [
+        "todo_requirements",
+        "todo_design",
+        "todo_codegen",
+        "todo_tests",
+        "todo-tests-task",
+    ]
+
+    await runtime.tick_once()
+
+    assert runtime.state.blocked_reason == "verification checks failed for todo delivery report"
+    assert runtime.state.pending_triggers == []
+    assert runtime.state.condition_tree["failed_checks"][0]["check"] == "edit_item"
+
+
+@pytest.mark.asyncio
+async def test_todo_delivery_report_completion_marks_workflow_completed_with_summary():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.HANDOFF),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda path: True,
+    )
+
+    await runtime.register_dex_task("todo-report-task", "generate todo delivery report")
+    bridge = runtime._dex_bridge
+    bridge.tasks["todo-report-task"] = type(
+        "Snap",
+        (),
+        {
+            "task_id": "todo-report-task",
+            "status": "completed",
+            "description": "generate todo delivery report",
+            "result": "[SUCCESS]",
+            "result_summary": "delivery report ready: all checks passed",
+            "error_summary": None,
+            "created_at": None,
+            "completed_at": "2026-04-06T00:20:00+00:00",
+            "log_path": ".dex/logs/alice/todo-report-task.log",
+        },
+    )()
+
+    runtime.state.tracked_dex_task_ids = ["todo-report-task"]
+    await runtime.tick_once()
+
+    assert runtime.state.active_workflow.status == "completed"
+    assert runtime.state.active_workflow.stages[-1].summary == "delivery report ready: all checks passed"
+    assert runtime.state.mode is KairosMode.IDLE
 
 
 @pytest.mark.asyncio

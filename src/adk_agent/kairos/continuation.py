@@ -73,6 +73,9 @@ class ContinuationEngine:
         for task in completed_tasks:
             if getattr(task, "status", None) == "completed":
                 completed_ids.add(task.task_id)
+                description = getattr(task, "description", None)
+                if description:
+                    completed_ids.add(description)
         workflow.metadata["completed_task_ids"] = sorted(completed_ids)
 
         alias_map = workflow.metadata.get("task_aliases", {})
@@ -111,7 +114,27 @@ class ContinuationEngine:
                     }
                     for path in missing_artifacts
                 ],
+                "failed_checks": [],
             }
+            return []
+
+        verification_result = workflow.metadata.get("verification_result") or {}
+        if verification_result.get("ready") is False:
+            state.blocked_reason = "verification checks failed for todo delivery report"
+            workflow.status = "waiting_input"
+            workflow.current_stage = "verification"
+            state.condition_tree = {
+                "stage_id": "verification",
+                "stage_label": "verification",
+                "satisfied": [
+                    {"kind": "artifact", "target": path, "reason": None}
+                    for path in required_artifacts
+                ],
+                "missing": [],
+                "failed_checks": list(verification_result.get("failures", [])),
+            }
+            return []
+        if verification_result.get("ready") is not True:
             return []
 
         fingerprint = {

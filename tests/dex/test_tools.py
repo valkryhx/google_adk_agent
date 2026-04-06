@@ -8,6 +8,7 @@ from skills.dex.tools import DexManager, get_tools
 from src.adk_agent.kairos.dex_bridge import KairosDexBridge
 from src.adk_agent.kairos.models import KairosMode, KairosState
 from src.adk_agent.kairos.runtime import KairosRuntime
+from tests.kairos.live_http_kairos_demo_outputs_regression import run_todo_delivery_pipeline
 
 
 TODO_DEMO_COMMANDS = {
@@ -285,74 +286,17 @@ async def test_runtime_host_follow_up_uses_user_namespace_and_surfaces_summary(t
 
 
 @pytest.mark.asyncio
-async def test_real_dex_todo_delivery_pipeline_produces_delivery_report(tmp_path, monkeypatch):
+async def test_real_dex_todo_delivery_pipeline_produces_real_todo_app_artifacts(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    tools = get_tools(app_info={"user_id": "u1"})
-    dex_create_task, dex_start_task, _, dex_get_task_details = tools
+    result = run_todo_delivery_pipeline(tmp_path)
 
-    saved = []
-    emitted = []
-    logged = []
-    created_follow_up = []
+    app_root = Path("D:/git_repos/google_adk_agent/demo_delivery/todo_app")
+    app_js = (app_root / "app.js").read_text(encoding="utf-8")
+    smoke = json.loads((app_root / "smoke_check.json").read_text(encoding="utf-8"))
 
-    async def save_state(state):
-        saved.append(state)
-
-    async def emit_event(event):
-        emitted.append((event.kind, event.message))
-
-    async def append_log(event):
-        logged.append(event.message)
-
-    async def run_turn(_):
-        return "ok"
-
-    def create_and_start(description: str, command: str) -> str:
-        created = json.loads(dex_create_task(description, "todo-demo"))
-        started = json.loads(dex_start_task(created["id"], command))
-        assert started["status"] == "running"
-        return created["id"]
-
-    async def create_follow_up_task(reason, payload):
-        created_follow_up.append((reason, payload))
-        task_id = create_and_start(
-            payload["description"],
-            "python -c \"from pathlib import Path; import json; root=Path('demo_delivery/todo_app'); smoke=json.loads((root/'smoke_check.json').read_text(encoding='utf-8')); (root/'delivery_report.md').write_text('# Todo Delivery Report\\n\\nReady: ' + str(smoke.get('ready', False)) + '\\n', encoding='utf-8'); print('todo delivery report ready')\"",
-        )
-        return {"id": task_id}
-
-    runtime = KairosRuntime(
-        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
-        save_state=save_state,
-        emit_event=emit_event,
-        append_log=append_log,
-        run_turn=run_turn,
-        dex_bridge=KairosDexBridge(base_dir=tmp_path, user_id="u1"),
-        create_follow_up_task=create_follow_up_task,
-        path_exists=lambda relative: (tmp_path / relative).exists(),
-    )
-
-    task_ids = []
-    for description in ["todo_requirements", "todo_design", "todo_codegen", "todo_tests"]:
-        task_id = create_and_start(description, TODO_DEMO_COMMANDS[description])
-        task_ids.append(task_id)
-        await runtime.register_dex_task(task_id, description)
-
-    deadline = time.time() + 20
-    final_follow_up_id = None
-    while time.time() < deadline:
-        await runtime.tick_once()
-        tracked = list(runtime.state.tracked_dex_task_ids)
-        if created_follow_up and tracked:
-            final_follow_up_id = tracked[-1]
-        if created_follow_up and runtime.state.mode is KairosMode.IDLE and runtime.state.tracked_dex_task_ids == []:
-            break
-        time.sleep(0.2)
-
-    assert created_follow_up
-    assert final_follow_up_id is not None
-    details = json.loads(dex_get_task_details(final_follow_up_id))
-    assert details["status"] == "completed"
-    assert runtime.state.mode is KairosMode.IDLE
-    assert runtime.state.active_workflow.status == "completed"
-    assert (Path("demo_delivery/todo_app/delivery_report.md")).exists()
+    assert result["final_status"]["kairos"]["mode"] == "idle"
+    assert "localStorage" in app_js
+    assert "renderTodos" in app_js
+    assert smoke["ready"] is True
+    assert smoke["checks"]["persistence_after_reload"] is True
+    assert smoke["checks"]["edit_item"] is True

@@ -177,6 +177,22 @@ def test_todo_delivery_all_required_artifacts_ready_returns_delivery_report_deci
         ],
         current_stage="verification",
     )
+    state.active_workflow.metadata["verification_result"] = {
+        "ready": True,
+        "checks": {
+            "dom_ready": True,
+            "add_item": True,
+            "toggle_item": True,
+            "delete_item": True,
+            "filter_active": True,
+            "filter_completed": True,
+            "edit_item": True,
+            "counter_correct": True,
+            "empty_state_correct": True,
+            "persistence_after_reload": True,
+        },
+        "failures": [],
+    }
     engine = ContinuationEngine(
         path_exists=lambda path: path in {
             "demo_delivery/todo_app/requirements.md",
@@ -229,3 +245,94 @@ def test_todo_delivery_missing_artifact_blocks_follow_up():
 
     assert decisions == []
     assert state.blocked_reason == "missing required artifacts for todo delivery report"
+
+
+def test_todo_delivery_requires_ready_smoke_check_before_report():
+    state = _todo_workflow_state(
+        completed_task_ids=[
+            "todo_requirements",
+            "todo_design",
+            "todo_codegen",
+            "todo_tests",
+        ],
+        current_stage="verification",
+    )
+    state.active_workflow.metadata["verification_result"] = {
+        "ready": True,
+        "checks": {
+            "add_item": True,
+            "toggle_item": True,
+            "delete_item": True,
+            "filter_active": True,
+            "filter_completed": True,
+            "edit_item": True,
+            "counter_correct": True,
+            "empty_state_correct": True,
+            "persistence_after_reload": True,
+        },
+        "failures": [],
+    }
+    engine = ContinuationEngine(
+        path_exists=lambda path: path in {
+            "demo_delivery/todo_app/requirements.md",
+            "demo_delivery/todo_app/design.md",
+            "demo_delivery/todo_app/file_plan.json",
+            "demo_delivery/todo_app/index.html",
+            "demo_delivery/todo_app/style.css",
+            "demo_delivery/todo_app/app.js",
+            "demo_delivery/todo_app/test_plan.md",
+            "demo_delivery/todo_app/smoke_check.json",
+        }
+    )
+
+    decisions = engine.evaluate_after_dex_poll(state, completed_tasks=[], tracked_tasks=[])
+
+    assert decisions[0].kind == "create_dex_task"
+    assert decisions[0].payload["description"] == "generate todo delivery report"
+
+
+def test_todo_delivery_blocks_when_verification_checks_fail():
+    state = _todo_workflow_state(
+        completed_task_ids=[
+            "todo_requirements",
+            "todo_design",
+            "todo_codegen",
+            "todo_tests",
+        ],
+        current_stage="verification",
+    )
+    state.active_workflow.metadata["verification_result"] = {
+        "ready": False,
+        "checks": {
+            "add_item": True,
+            "toggle_item": True,
+            "delete_item": True,
+            "filter_active": True,
+            "filter_completed": True,
+            "edit_item": False,
+            "counter_correct": True,
+            "empty_state_correct": True,
+            "persistence_after_reload": True,
+        },
+        "failures": [
+            {"check": "edit_item", "reason": "editing flow failed"},
+        ],
+    }
+    engine = ContinuationEngine(
+        path_exists=lambda path: path in {
+            "demo_delivery/todo_app/requirements.md",
+            "demo_delivery/todo_app/design.md",
+            "demo_delivery/todo_app/file_plan.json",
+            "demo_delivery/todo_app/index.html",
+            "demo_delivery/todo_app/style.css",
+            "demo_delivery/todo_app/app.js",
+            "demo_delivery/todo_app/test_plan.md",
+            "demo_delivery/todo_app/smoke_check.json",
+        }
+    )
+
+    decisions = engine.evaluate_after_dex_poll(state, completed_tasks=[], tracked_tasks=[])
+
+    assert decisions == []
+    assert state.blocked_reason == "verification checks failed for todo delivery report"
+    assert state.condition_tree["failed_checks"][0]["check"] == "edit_item"
