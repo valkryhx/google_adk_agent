@@ -1,124 +1,97 @@
 {
   "version": "1.0",
-  "timestamp": "2026-04-05T20:00:43.610Z",
+  "timestamp": "2026-04-07T10:05:00Z",
   "phase": "3",
   "phase_name": "Policy Hardening & Verification",
   "phase_dir": ".planning/phases/03-policy-hardening-verification",
-  "plan": 0,
-  "task": 0,
-  "total_tasks": 0,
-  "status": "paused",
+  "plan": 1,
+  "task": 7,
+  "total_tasks": 7,
+  "status": "completed",
   "completed_tasks": [
     {
       "id": 1,
-      "name": "Finish Phase 2 artifact-aware reporting execution and verification",
+      "name": "Capture assistant-mode phase-3 direction in planning docs",
       "status": "done",
-      "commit": "eddc3fe"
+      "commit": "79d1135"
     },
     {
       "id": 2,
-      "name": "Commit Kairos artifact-aware status and artifact gating fixes",
+      "name": "Sync validated Kairos requirements with current evidence",
       "status": "done",
-      "commit": "8a00367"
+      "commit": "74500fc"
     },
     {
       "id": 3,
-      "name": "Repair repo-wide pytest baseline with scoped collection",
+      "name": "Create phase-3 assistant-mode runtime implementation plan",
       "status": "done",
-      "commit": "c0368dd"
+      "commit": "e92a950"
     },
     {
       "id": 4,
-      "name": "Write Kairos boss demo spec and implementation plan",
+      "name": "Write phase-3 resume guide and checkpoint",
       "status": "done",
-      "commit": "c0368dd"
-    }
-  ],
-  "remaining_tasks": [
+      "commit": "7de870a"
+    },
     {
       "id": 5,
-      "name": "Complete Phase 3 discuss-phase context capture",
-      "status": "in_progress"
+      "name": "Repair worktree baseline path assumptions",
+      "status": "done",
+      "commit": "61493fe"
     },
     {
       "id": 6,
-      "name": "Plan Phase 3 policy hardening and verification",
-      "status": "not_started"
+      "name": "Execute assistant-mode runtime implementation",
+      "status": "done",
+      "commit": "5e9f7b5"
     },
     {
       "id": 7,
-      "name": "Implement Kairos boss demo todo delivery pipeline in isolated worktree",
-      "status": "not_started"
+      "name": "Close verification and final runtime cleanup",
+      "status": "done",
+      "commit": "d553fd3"
     }
   ],
+  "remaining_tasks": [],
   "blockers": [
     {
-      "description": "Phase 3 discuss-phase is mid-conversation; no 03-CONTEXT.md exists yet.",
-      "type": "human_action",
-      "workaround": "Resume with /gsd:resume-work, finish Phase 3 clarification, then run /gsd:discuss-phase 3 or /gsd:next."
+      "description": "Main worktree still contains unrelated modified/untracked local files, including tracked private_key.yaml edits, so PR preparation must avoid accidental staging.",
+      "type": "operational",
+      "workaround": "Prepare push/PR work from a clean branch/worktree and stage only explicit intended files."
     }
   ],
   "human_actions_pending": [
     {
-      "action": "Answer the pending Phase 3 clarification question(s)",
-      "context": "Discuss-phase was interrupted after the user wanted to clarify scope before selecting gray areas.",
-      "blocking": true
+      "description": "Prepare a PR branch from the current main HEAD for the verified Phase 3 commits (`5e9f7b5`, `d553fd3`) instead of pushing local main directly.",
+      "type": "decision"
     }
   ],
   "decisions": [
     {
-      "decision": "Use a Kairos boss demo built around a todo app delivery pipeline in an isolated output directory instead of modifying the current project itself.",
-      "rationale": "This demonstrates Kairos as a boss/manager over Dex-driven real development tasks without risking the host repo.",
-      "phase": "demo-spec"
+      "decision": "Phase 3 is framed as assistant-mode long-running autonomy rather than narrow continuation hardening.",
+      "rationale": "Claude Code Kairos analysis showed the core value is long-running assistant mode with proactive unfinished-work scanning, brief, sleep/wake, and guarded autonomy.",
+      "phase": "3"
     },
     {
-      "decision": "Keep demo v1 to code artifacts only, not launching the generated todo app.",
-      "rationale": "Reduces demo risk while preserving a real multi-step delivery workflow with deterministic artifacts.",
-      "phase": "demo-spec"
+      "decision": "Implement proactive autonomy as rule-guided agentic behavior, not free-form LLM planning.",
+      "rationale": "The user wants real agent intelligence, but still within strong guardrails so the system remains testable, observable, and stable.",
+      "phase": "3"
     },
     {
-      "decision": "Fix pytest baseline by scoping collection to tests/ and using importlib mode.",
-      "rationale": "Root cause of full pytest failure was collection bleed from docs example projects, ad-hoc root scripts, and same-name test modules.",
-      "phase": "repo-hygiene"
-    },
-    {
-      "decision": "Wire Kairos runtime and continuation engine to the same artifact existence checker sourced from the host project root.",
-      "rationale": "This fixed the real blocked-path inconsistency and made condition_tree/report gating agree in fresh services.",
-      "phase": "phase2-fix"
+      "decision": "Phase 3 implementation was validated in the worktree, then cherry-picked to main as equivalent patches.",
+      "rationale": "Main now contains the verified runtime changes (`5e9f7b5`, `d553fd3`), so future work should continue from main rather than resuming Task 1 in the worktree.",
+      "phase": "3"
     }
   ],
   "uncommitted_files": [
+    ".planning/HANDOFF.json",
+    ".planning/phases/03-policy-hardening-verification/.continue-here.md",
     "private_key.yaml",
-    "src/adk_agent/kairos/workflows.py",
-    "# OhMyOpenCode 安装指南.md",
     ".claude/",
-    ".gitignore",
-    ".planning/config.json",
-    "Ciri-架构图.canvas",
-    "Ciri-架构图.png",
-    "check.py",
-    "claude-agent-team-讨论.md",
-    "claudecode-agent-team-discussion.md",
-    "claudecode_agent_team_discuss.json",
-    "coordination/",
-    "demo_outputs/",
-    "kill_exact.ps1",
-    "kill_ports.ps1",
-    "log_time.py",
-    "missing_artifact_case/",
-    "nul",
-    "op_session_export.json",
-    "phase2-human-check-kairos-open.yaml",
-    "phase2-human-check-kairos-session-open.yaml",
-    "phase2-human-check-session-selected.yaml",
-    "phase2-human-check-start.yaml",
-    "src/adk_agent/static/script copy 2.js",
-    "src/adk_agent/static/script copy.js",
-    "test_dup.py",
-    "test_guard.py",
-    "test_http.py",
-    "下一步.md"
+    "private_key copy.yaml",
+    "src/adk_agent/main_web_start_steering-20260319.py",
+    "提交PR.md"
   ],
-  "next_action": "Resume by finishing Phase 3 clarification/discussion, then generate 03-CONTEXT.md before planning Phase 3.",
-  "context_notes": "Today covered: Phase 2 execution and human verification, real Dex success/failure/blocked-path testing, root-cause debugging of artifact gating, pytest baseline repair, branch/worktree cleanup, and writing the Kairos boss demo spec + implementation plan. The clean stopping point is before Phase 3 context capture and before implementing the demo plan."
+  "next_action": "From main, prepare a clean PR branch for `5e9f7b5` and `d553fd3`; do not push local main directly, and keep unrelated local files out of staging.",
+  "context_notes": "Phase 3 assistant-mode runtime work is complete. The changes were verified in the worktree, then carried onto main and re-verified there with fresh evidence (`95 passed`). The old 'resume Task 1 in worktree' guidance is now superseded; the current focus is safe push/PR preparation."
 }

@@ -40,16 +40,6 @@ class ContinuationEngine:
         if workflow is None or not state.policy.proactive_scan_enabled:
             return
 
-        last_scan_ts = state.last_proactive_scan.get("ts")
-        if last_scan_ts:
-            elapsed = self._now() - datetime.fromisoformat(last_scan_ts)
-            if elapsed.total_seconds() < state.policy.cooldown_seconds:
-                state.last_guardrail_block = {
-                    "reason": "cooldown_active",
-                    "workflow_id": workflow.workflow_id,
-                }
-                return
-
         current_stage = workflow.current_stage
         for stage in workflow.stages:
             if stage.stage_id != current_stage:
@@ -65,6 +55,21 @@ class ContinuationEngine:
                 "reason": f"stage {stage.stage_id} still unfinished",
             }
             state.unfinished_work_items.append(work_item)
+            break
+
+        last_scan_ts = state.last_proactive_scan.get("ts")
+        if last_scan_ts:
+            elapsed = self._now() - datetime.fromisoformat(last_scan_ts)
+            if elapsed.total_seconds() < state.policy.cooldown_seconds:
+                state.last_guardrail_block = {
+                    "reason": "cooldown_active",
+                    "workflow_id": workflow.workflow_id,
+                    "work_id": state.unfinished_work_items[0]["work_id"] if state.unfinished_work_items else None,
+                }
+                return
+
+        if state.unfinished_work_items:
+            work_item = state.unfinished_work_items[0]
             state.proactive_candidates.append(
                 {
                     "candidate_id": work_item["work_id"],
@@ -74,7 +79,6 @@ class ContinuationEngine:
                     "blocked": False,
                 }
             )
-            break
 
         state.last_proactive_scan = {
             "ts": self._now().isoformat(),

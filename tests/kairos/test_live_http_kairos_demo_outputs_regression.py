@@ -25,6 +25,16 @@ def test_live_http_demo_source_asserts_todo_delivery_report_visibility():
     assert 'generate todo delivery report' in text
 
 
+def test_todo_task_commands_create_demo_directory_before_writing_files():
+    text = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert "TODO_REQUIREMENTS_COMMAND" in text
+    assert "TODO_DESIGN_COMMAND" in text
+    assert "TODO_CODEGEN_COMMAND" in text
+    assert "TODO_TESTS_COMMAND" in text
+    assert text.count("p.mkdir(parents=True, exist_ok=True)") >= 4
+
+
 def test_live_http_source_asserts_proactive_fields_visibility():
     text = MODULE_PATH.read_text(encoding="utf-8")
 

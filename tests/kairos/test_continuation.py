@@ -144,6 +144,7 @@ def test_refresh_unfinished_work_respects_cooldown_guardrail():
 
     engine.refresh_unfinished_work(state)
 
+    assert state.unfinished_work_items[0]["stage_id"] == "codegen"
     assert state.proactive_candidates == []
     assert state.last_guardrail_block["reason"] == "cooldown_active"
 
