@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "timestamp": "2026-04-07T10:05:00Z",
+  "timestamp": "2026-04-07T10:56:00Z",
   "phase": "3",
   "phase_name": "Policy Hardening & Verification",
   "phase_dir": ".planning/phases/03-policy-hardening-verification",
@@ -49,20 +49,20 @@
       "id": 7,
       "name": "Close verification and final runtime cleanup",
       "status": "done",
-      "commit": "d553fd3"
+      "commit": "849b1d3"
     }
   ],
   "remaining_tasks": [],
   "blockers": [
     {
-      "description": "Main worktree still contains unrelated modified/untracked local files, including tracked private_key.yaml edits, so PR preparation must avoid accidental staging.",
+      "description": "Main worktree still has a local tracked modification in private_key.yaml, which contains secrets and must stay out of commits.",
       "type": "operational",
-      "workaround": "Prepare push/PR work from a clean branch/worktree and stage only explicit intended files."
+      "workaround": "Treat private_key.yaml as local-only config drift; do not stage it when preparing future commits or PRs."
     }
   ],
   "human_actions_pending": [
     {
-      "description": "Prepare a PR branch from the current main HEAD for the verified Phase 3 commits (`5e9f7b5`, `d553fd3`) instead of pushing local main directly.",
+      "description": "Decide whether to leave private_key.yaml as local-only drift or normalize it outside git-tracked workflows.",
       "type": "decision"
     }
   ],
@@ -78,20 +78,14 @@
       "phase": "3"
     },
     {
-      "decision": "Phase 3 implementation was validated in the worktree, then cherry-picked to main as equivalent patches.",
-      "rationale": "Main now contains the verified runtime changes (`5e9f7b5`, `d553fd3`), so future work should continue from main rather than resuming Task 1 in the worktree.",
+      "decision": "Phase 3 implementation was validated in the worktree, then absorbed into main and pushed to origin/main.",
+      "rationale": "Main/origin now contain the verified runtime changes through `5e9f7b5`, `d553fd3`, `fdc9ddb`, and `849b1d3`, so future work should continue from main rather than resuming old worktree checkpoints.",
       "phase": "3"
     }
   ],
   "uncommitted_files": [
-    ".planning/HANDOFF.json",
-    ".planning/phases/03-policy-hardening-verification/.continue-here.md",
-    "private_key.yaml",
-    ".claude/",
-    "private_key copy.yaml",
-    "src/adk_agent/main_web_start_steering-20260319.py",
-    "提交PR.md"
+    "private_key.yaml"
   ],
-  "next_action": "From main, prepare a clean PR branch for `5e9f7b5` and `d553fd3`; do not push local main directly, and keep unrelated local files out of staging.",
-  "context_notes": "Phase 3 assistant-mode runtime work is complete. The changes were verified in the worktree, then carried onto main and re-verified there with fresh evidence (`95 passed`). The old 'resume Task 1 in worktree' guidance is now superseded; the current focus is safe push/PR preparation."
+  "next_action": "Resume from main for any future work. Phase 3 coding is complete; if continuing this project, focus on next milestone planning or operational cleanup, not more Phase 3 implementation.",
+  "context_notes": "Phase 3 assistant-mode runtime work is complete, verified, pushed, and synced to origin/main. Temporary agent worktrees and branches were cleaned up, and the phase worktree was resynced to main. The only remaining local drift is private_key.yaml."
 }

@@ -17,8 +17,8 @@ progress:
 ## Current Position
 
 Phase: 3
-Plan: Not started
-Status: Phase 3 context captured; 03-CONTEXT.md ready; richer todo boss demo evidence already landed on main; live HTTP regression fully re-verified locally
+Plan: Completed
+Status: Phase 3 assistant-mode runtime implementation, follow-up cooldown semantics, and live demo hardening are complete; verified changes are on `main` and synced to `origin/main`
 Last activity: 2026-04-07
 
 ## Project Reference
@@ -26,7 +26,7 @@ Last activity: 2026-04-07
 See: .planning/PROJECT.md (updated 2026-04-06)
 
 **Core value:** 把普通的一次一答式 agent 运行时，演进成一个可扩展、可观测、可长期运行、能自主推进工作的现代 Agent Operating System。
-**Current focus:** Phase 03 — policy-hardening-verification；`03-CONTEXT.md` 已生成，当前进入 ready for planning 状态；后续重点是把 assistant-mode contract、unfinished-work scanning、guardrails 与验证闭环拆成正式计划
+**Current focus:** Phase 03 — policy-hardening-verification 已完成实现与验证；当前重点不再是 Phase 3 coding，而是保持主分支整洁、避免敏感配置误入提交，并为后续 milestone/PR 叙述保留准确状态
 
 ## Accumulated Context
 
@@ -36,13 +36,13 @@ See: .planning/PROJECT.md (updated 2026-04-06)
 - todo boss demo 已经落地最小闭环：`todo_requirements -> todo_design -> todo_codegen -> todo_tests -> generate todo delivery report`。
 - 上述闭环已通过真实宿主 follow-up、真实 Dex 产物生成、真实 HTTP 服务与 live regression 验证。
 - 当前 main 上已进一步升级为 richer real todo app flow：真实 HTML/CSS/JS 单页 app、verification gating、runtime blocked-state 处理与 live HTTP 回归均已通过。
-- 当前对真实进度的正确口径是：Phase 1/2 已完成，Phase 3 已完成 context capture 并进入 ready-for-planning 状态；其关键技术证据已前置完成并合入 main。
-- 已验证关键回归证据主要来自 `tests/kairos/test_continuation.py`、`tests/kairos/test_runtime.py`、`tests/dex/test_tools.py`、`tests/kairos/test_live_http_kairos_demo_outputs_regression.py`；当前仓库在 `PYTHONPATH=.` 下已验证非 live 核心回归，并且在启动本地 8000 端口服务后，`tests/kairos/test_live_http_kairos_demo_outputs_regression.py -q` 已实测 `4 passed`。
+- 当前对真实进度的正确口径是：Phase 1/2 已完成，Phase 3 已完成 assistant-mode runtime、cooldown semantics 与 live demo hardening，相关提交已在 `main` 并同步到 `origin/main`。
+- 已验证关键回归证据主要来自 `tests/kairos/test_continuation.py`、`tests/kairos/test_runtime.py`、`tests/dex/test_tools.py`、`tests/kairos/test_live_http_kairos_demo_outputs_regression.py`；当前仓库在 `PYTHONPATH=.` 且 `KAIROS_BASE_URL=http://127.0.0.1:8012` 下已实测完整 Phase 3 回归 `96 passed`。
 
 ## Session Continuity
 
 Last session: 2026-04-07
-Stopped at: `03-CONTEXT.md` 已生成并折叠 2026-04-07 新方向结论；下一步进入 Phase 3 planning，围绕 assistant-mode contract、unfinished-work scanning、guardrails 与 verification closure 拆计划
+Stopped at: Phase 3 coding and verification are complete; branch/worktree cleanup mostly done; only local `private_key.yaml` remains modified and should stay out of commits
 Resume file: .planning/phases/03-policy-hardening-verification/.continue-here.md
 
 ---
