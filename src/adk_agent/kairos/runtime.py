@@ -304,11 +304,11 @@ class KairosRuntime:
         self._continuation_engine._path_exists = self._path_exists
         payload["condition_tree"] = self._build_condition_tree()
         payload["decision_explanation"] = self._build_decision_explanation()
-        payload["unfinished_work_items"] = list(self.state.unfinished_work_items)
-        payload["proactive_candidates"] = list(self.state.proactive_candidates)
-        payload["last_proactive_scan"] = dict(self.state.last_proactive_scan)
-        payload["last_guardrail_block"] = dict(self.state.last_guardrail_block)
-        payload["last_planning_result"] = dict(self.state.last_planning_result)
+        payload["unfinished_work_items"] = list(payload.get("unfinished_work_items", []))
+        payload["proactive_candidates"] = list(payload.get("proactive_candidates", []))
+        payload["last_proactive_scan"] = dict(payload.get("last_proactive_scan", {}))
+        payload["last_guardrail_block"] = dict(payload.get("last_guardrail_block", {}))
+        payload["last_planning_result"] = dict(payload.get("last_planning_result", {}))
         return payload
 
     async def _run_loop(self) -> None:
