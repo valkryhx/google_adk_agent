@@ -169,12 +169,21 @@ class KairosRuntime:
             ready_trigger_count = len(self.state.pending_triggers)
             self._continuation_engine._path_exists = self._path_exists
             await self._poll_dex()
+            self._continuation_engine.refresh_unfinished_work(self.state)
 
             if not self.state.running:
                 return
 
             if self._is_worker_busy():
                 await self._record("status", "worker busy, skip kairos tick")
+                return
+
+            if self.state.policy.max_auto_steps_per_tick <= 0:
+                self.state.last_guardrail_block = {
+                    "reason": "auto_step_budget_exhausted",
+                    "tick": self.state.last_tick_at,
+                }
+                await self._persist()
                 return
 
             if self.state.pending_triggers and not self.state.busy and len(self.state.pending_triggers) == ready_trigger_count:
@@ -295,6 +304,11 @@ class KairosRuntime:
         self._continuation_engine._path_exists = self._path_exists
         payload["condition_tree"] = self._build_condition_tree()
         payload["decision_explanation"] = self._build_decision_explanation()
+        payload["unfinished_work_items"] = list(self.state.unfinished_work_items)
+        payload["proactive_candidates"] = list(self.state.proactive_candidates)
+        payload["last_proactive_scan"] = dict(self.state.last_proactive_scan)
+        payload["last_guardrail_block"] = dict(self.state.last_guardrail_block)
+        payload["last_planning_result"] = dict(self.state.last_planning_result)
         return payload
 
     async def _run_loop(self) -> None:

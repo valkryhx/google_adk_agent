@@ -106,6 +106,49 @@ def test_duplicate_follow_up_is_suppressed_by_fingerprint():
     assert len(state.planned_actions) == 1
 
 
+def test_refresh_unfinished_work_items_from_active_todo_workflow():
+    state = _todo_workflow_state(
+        completed_task_ids=["todo_requirements", "todo_design"],
+        current_stage="codegen",
+    )
+    state.active_workflow.stages[2].status = "running"
+    engine = ContinuationEngine(
+        path_exists=lambda path: path in {
+            "demo_delivery/todo_app/requirements.md",
+            "demo_delivery/todo_app/design.md",
+            "demo_delivery/todo_app/file_plan.json",
+        }
+    )
+
+    engine.refresh_unfinished_work(state)
+
+    assert state.unfinished_work_items[0]["stage_id"] == "codegen"
+    assert state.unfinished_work_items[0]["workflow_id"] == "todo_delivery_pipeline"
+    assert state.proactive_candidates[0]["action"] == "continue_workflow"
+    assert state.last_proactive_scan["result"] == "candidate_found"
+
+
+def test_refresh_unfinished_work_respects_cooldown_guardrail():
+    state = _todo_workflow_state(
+        completed_task_ids=["todo_requirements", "todo_design"],
+        current_stage="codegen",
+    )
+    state.active_workflow.stages[2].status = "running"
+    state.last_proactive_scan = {
+        "ts": "2026-04-07T10:00:00+00:00",
+        "result": "candidate_found",
+        "winner": "todo-codegen",
+    }
+    state.policy.cooldown_seconds = 999999
+    engine = ContinuationEngine(path_exists=lambda _: True)
+
+    engine.refresh_unfinished_work(state)
+
+    assert state.proactive_candidates == []
+    assert state.last_guardrail_block["reason"] == "cooldown_active"
+
+
+
 def _todo_workflow_state(*, completed_task_ids, current_stage="verification"):
     return KairosState(
         active_workflow=KairosWorkflow(

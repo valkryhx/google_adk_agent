@@ -40,6 +40,17 @@ def test_kairos_modal_contains_result_summary_panel():
     assert '<label>Result Summary</label>' in html
 
 
+def test_kairos_modal_includes_proactive_sections():
+    html = INDEX.read_text(encoding="utf-8")
+
+    assert 'id="kairosUnfinishedWork"' in html
+    assert '<label>Unfinished Work</label>' in html
+    assert 'id="kairosProactiveCandidates"' in html
+    assert '<label>Proactive Candidates</label>' in html
+    assert 'id="kairosGuardrailState"' in html
+    assert '<label>Guardrail State</label>' in html
+
+
 def test_kairos_panels_preserve_multiline_text_rendering():
     html = INDEX.read_text(encoding="utf-8")
 

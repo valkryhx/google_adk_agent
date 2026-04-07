@@ -28,6 +28,60 @@ class FakeDex:
         return []
 
 
+def _todo_runtime_state(*, current_stage="verification"):
+    from src.adk_agent.kairos.models import KairosWorkflow, KairosWorkflowStage
+
+    state = KairosState(enabled=True, running=True, mode=KairosMode.IDLE)
+    state.active_workflow = KairosWorkflow(
+        workflow_id="todo_delivery_pipeline",
+        goal="deliver todo app artifacts",
+        status="active",
+        current_stage=current_stage,
+        stages=[
+            KairosWorkflowStage(
+                stage_id="requirements",
+                label="requirements",
+                status="completed",
+                task_ids=["todo_requirements"],
+                artifacts=["demo_delivery/todo_app/requirements.md"],
+            ),
+            KairosWorkflowStage(
+                stage_id="design",
+                label="design",
+                status="completed",
+                task_ids=["todo_design"],
+                artifacts=[
+                    "demo_delivery/todo_app/design.md",
+                    "demo_delivery/todo_app/file_plan.json",
+                ],
+            ),
+            KairosWorkflowStage(
+                stage_id="codegen",
+                label="code generation",
+                status="running" if current_stage == "codegen" else "completed",
+                task_ids=["todo_codegen"],
+                artifacts=[
+                    "demo_delivery/todo_app/index.html",
+                    "demo_delivery/todo_app/style.css",
+                    "demo_delivery/todo_app/app.js",
+                ],
+            ),
+            KairosWorkflowStage(
+                stage_id="verification",
+                label="verification",
+                status="running" if current_stage == "verification" else "pending",
+                task_ids=["todo_tests"],
+                artifacts=[
+                    "demo_delivery/todo_app/test_plan.md",
+                    "demo_delivery/todo_app/smoke_check.json",
+                ],
+            ),
+        ],
+        metadata={"completed_task_ids": ["todo_requirements", "todo_design"]},
+    )
+    return state
+
+
 def _make_callbacks():
     """Helper to create standard test callbacks."""
     saved = []
@@ -46,7 +100,73 @@ def _make_callbacks():
     return saved, emitted, logged, save_state, emit_event, append_log
 
 
+def test_run_kairos_turn_prompt_includes_assistant_mode_context():
+    from src.adk_agent.main_web_start_steering import SteeringSession
+
+    prompt = SteeringSession._build_kairos_tick_prompt(
+        reason="scheduled_scan",
+        workflow_summary="todo_delivery_pipeline: codegen",
+        unfinished_work_summary="codegen stage unfinished",
+        policy_summary="cooldown=60 max_auto_steps_per_tick=1",
+    )
+
+    assert "[KAIROS_TICK]" in prompt
+    assert "assistant runtime mode" in prompt
+    assert "unfinished work" in prompt
+    assert "sleep immediately" in prompt
+    assert "scheduled_scan" in prompt
+
+
 # === Phase 1 existing tests ===
+
+
+@pytest.mark.asyncio
+async def test_tick_once_refreshes_unfinished_work_and_exposes_candidates():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=_todo_runtime_state(current_stage="codegen"),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+
+    await runtime.tick_once()
+
+    assert runtime.state.unfinished_work_items[0]["stage_id"] == "codegen"
+    assert runtime.state.proactive_candidates[0]["action"] == "continue_workflow"
+
+
+@pytest.mark.asyncio
+async def test_status_exposes_last_guardrail_block_when_auto_budget_stops_progress():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    state = _todo_runtime_state(current_stage="codegen")
+    state.policy.max_auto_steps_per_tick = 0
+
+    runtime = KairosRuntime(
+        state=state,
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+
+    await runtime.tick_once()
+    status = runtime.get_status()
+
+    assert status["last_guardrail_block"]["reason"] == "auto_step_budget_exhausted"
 
 
 @pytest.mark.asyncio

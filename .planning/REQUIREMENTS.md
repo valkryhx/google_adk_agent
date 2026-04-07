@@ -20,9 +20,9 @@
 
 ### Kairos Safety & Policy
 
-- [ ] **POL-01**: KAIROS 不会对同一个 workflow 重复创建相同的 follow-up Dex task
-- [ ] **POL-02**: KAIROS 的自动续推步数受到策略限制，避免无限循环或 runaway autonomy
-- [ ] **POL-03**: 开发者可以通过 API 或 status 输出观察 KAIROS 的自治策略状态与关键决策结果
+- [x] **POL-01**: KAIROS 不会对同一个 workflow 重复创建相同的 follow-up Dex task
+- [x] **POL-02**: KAIROS 的自动续推步数受到策略限制，避免无限循环或 runaway autonomy
+- [x] **POL-03**: 开发者可以通过 API 或 status 输出观察 KAIROS 的自治策略状态与关键决策结果
 
 ### Verification
 
@@ -64,9 +64,9 @@
 | RPT-01 | Phase 2 | Complete |
 | RPT-02 | Phase 2 | Complete |
 | RPT-03 | Phase 2 | Complete |
-| POL-01 | Phase 3 | Pending |
-| POL-02 | Phase 3 | Pending |
-| POL-03 | Phase 3 | Pending |
+| POL-01 | Phase 3 | Complete |
+| POL-02 | Phase 3 | Complete |
+| POL-03 | Phase 3 | Complete |
 | VER-01 | Phase 1 | Complete |
 | VER-02 | Phase 1 | Complete |
 | VER-03 | Phase 1 | Complete |
@@ -78,4 +78,4 @@
 
 ---
 *Requirements defined: 2026-04-05*
-*Last updated: 2026-04-05 after milestone v1.0 definition*
+*Last updated: 2026-04-07 after Phase 3 assistant-mode proactive runtime verification*

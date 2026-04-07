@@ -232,6 +232,10 @@ def run_todo_delivery_pipeline(repo_root: Path | None = None) -> dict[str, Any]:
     assert auto_status["kairos"]["task_summaries"]
     assert "decision_explanation" in auto_status["kairos"]
     assert "condition_tree" in auto_status["kairos"]
+    assert "unfinished_work_items" in auto_status["kairos"]
+    assert "proactive_candidates" in auto_status["kairos"]
+    assert "last_proactive_scan" in auto_status["kairos"]
+    assert "last_guardrail_block" in auto_status["kairos"]
 
     report_completed = _wait_for_dex_task_status(report_task["task_id"], "completed")
     final_status = _wait_for_untracked(session_id, [report_task["task_id"]])

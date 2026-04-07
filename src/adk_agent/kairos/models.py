@@ -84,6 +84,8 @@ class KairosContinuationPolicy:
     allow_llm_assist_for_brief: bool = True
     require_artifacts_before_follow_up: bool = True
     dedupe_enabled: bool = True
+    proactive_scan_enabled: bool = True
+    cooldown_seconds: int = 60
 
 
 @dataclass
@@ -112,6 +114,11 @@ class KairosState:
         }
     )
     condition_tree: dict[str, Any] | None = None
+    unfinished_work_items: list[dict[str, Any]] = field(default_factory=list)
+    proactive_candidates: list[dict[str, Any]] = field(default_factory=list)
+    last_proactive_scan: dict[str, Any] = field(default_factory=dict)
+    last_guardrail_block: dict[str, Any] = field(default_factory=dict)
+    last_planning_result: dict[str, Any] = field(default_factory=dict)
     recent_events: list[KairosEvent] = field(default_factory=list)
 
     def push_event(self, event: KairosEvent, limit: int = 20) -> None:
@@ -147,6 +154,11 @@ def load_kairos_state(raw: dict[str, Any] | None) -> KairosState:
             )
         ),
         condition_tree=raw.get("condition_tree"),
+        unfinished_work_items=list(raw.get("unfinished_work_items", [])),
+        proactive_candidates=list(raw.get("proactive_candidates", [])),
+        last_proactive_scan=dict(raw.get("last_proactive_scan", {})),
+        last_guardrail_block=dict(raw.get("last_guardrail_block", {})),
+        last_planning_result=dict(raw.get("last_planning_result", {})),
         recent_events=[KairosEvent(**item) for item in raw.get("recent_events", [])],
     )
 
@@ -206,6 +218,8 @@ def _load_policy(raw: dict[str, Any] | None) -> KairosContinuationPolicy:
         allow_llm_assist_for_brief=raw.get("allow_llm_assist_for_brief", True),
         require_artifacts_before_follow_up=raw.get("require_artifacts_before_follow_up", True),
         dedupe_enabled=raw.get("dedupe_enabled", True),
+        proactive_scan_enabled=raw.get("proactive_scan_enabled", True),
+        cooldown_seconds=raw.get("cooldown_seconds", 60),
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Callable
 
 from .models import KairosPlannedAction, KairosState, KairosTrigger, TriggerKind
@@ -14,8 +15,13 @@ class ContinuationDecision:
 
 
 class ContinuationEngine:
-    def __init__(self, path_exists: Callable[[str], bool] | None = None):
+    def __init__(
+        self,
+        path_exists: Callable[[str], bool] | None = None,
+        now: Callable[[], datetime] | None = None,
+    ):
         self._path_exists = path_exists or (lambda _path: True)
+        self._now = now or (lambda: datetime.now(UTC))
 
     def evaluate_after_dex_poll(self, state: KairosState, completed_tasks: list[Any], tracked_tasks: list[Any]) -> list[ContinuationDecision]:
         workflow = state.active_workflow
@@ -26,6 +32,57 @@ class ContinuationEngine:
         if workflow.workflow_id == "todo_delivery_pipeline":
             return self._evaluate_todo_delivery_pipeline(state, workflow, completed_tasks)
         return []
+
+    def refresh_unfinished_work(self, state: KairosState) -> None:
+        workflow = state.active_workflow
+        state.unfinished_work_items = []
+        state.proactive_candidates = []
+        if workflow is None or not state.policy.proactive_scan_enabled:
+            return
+
+        last_scan_ts = state.last_proactive_scan.get("ts")
+        if last_scan_ts:
+            elapsed = self._now() - datetime.fromisoformat(last_scan_ts)
+            if elapsed.total_seconds() < state.policy.cooldown_seconds:
+                state.last_guardrail_block = {
+                    "reason": "cooldown_active",
+                    "workflow_id": workflow.workflow_id,
+                }
+                return
+
+        current_stage = workflow.current_stage
+        for stage in workflow.stages:
+            if stage.stage_id != current_stage:
+                continue
+            if stage.status in {"completed", "failed"}:
+                continue
+            work_item = {
+                "work_id": f"{workflow.workflow_id}:{stage.stage_id}",
+                "kind": "workflow_stage",
+                "workflow_id": workflow.workflow_id,
+                "stage_id": stage.stage_id,
+                "priority": 10,
+                "reason": f"stage {stage.stage_id} still unfinished",
+            }
+            state.unfinished_work_items.append(work_item)
+            state.proactive_candidates.append(
+                {
+                    "candidate_id": work_item["work_id"],
+                    "action": "continue_workflow",
+                    "priority": 10,
+                    "reason": work_item["reason"],
+                    "blocked": False,
+                }
+            )
+            break
+
+        state.last_proactive_scan = {
+            "ts": self._now().isoformat(),
+            "result": "candidate_found" if state.proactive_candidates else "no_action",
+            "winner": state.proactive_candidates[0]["candidate_id"] if state.proactive_candidates else None,
+        }
+        if state.proactive_candidates:
+            state.last_guardrail_block = {}
 
     def _evaluate_demo_report_pipeline(self, state: KairosState, workflow, completed_tasks: list[Any]) -> list[ContinuationDecision]:
         if workflow.current_stage != "phase1":

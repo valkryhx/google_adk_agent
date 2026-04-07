@@ -331,6 +331,32 @@ def test_status_route_preserves_existing_fields_and_adds_reporting_fields():
     assert payload["condition_tree"]["missing"] == []
 
 
+def test_status_route_exposes_proactive_scan_fields():
+    app = FastAPI()
+    manager = FakeManager()
+    session = manager.get_or_create("demo", "alice", "session_1")
+    session.runtime.state["unfinished_work_items"] = [{"work_id": "todo:codegen", "stage_id": "codegen"}]
+    session.runtime.state["proactive_candidates"] = [{"candidate_id": "todo:codegen", "action": "continue_workflow"}]
+    session.runtime.state["last_proactive_scan"] = {"result": "candidate_found"}
+    session.runtime.state["last_guardrail_block"] = {"reason": "cooldown_active"}
+    session.runtime.state["last_planning_result"] = {"decision": "continue_workflow"}
+    register_kairos_routes(app, manager)
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/sessions/session_1/kairos/status",
+        params={"app_name": "demo", "user_id": "alice"},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["unfinished_work_items"][0]["stage_id"] == "codegen"
+    assert payload["proactive_candidates"][0]["action"] == "continue_workflow"
+    assert payload["last_proactive_scan"]["result"] == "candidate_found"
+    assert payload["last_guardrail_block"]["reason"] == "cooldown_active"
+    assert payload["last_planning_result"]["decision"] == "continue_workflow"
+
+
 def test_status_route_exposes_todo_delivery_workflow_when_active():
     app = FastAPI()
     manager = FakeManager()

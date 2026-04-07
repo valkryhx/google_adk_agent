@@ -92,6 +92,60 @@ def test_state_round_trip_preserves_workflow_and_planned_actions():
     assert restored.policy.require_artifacts_before_follow_up is True
 
 
+def test_state_round_trip_preserves_proactive_and_policy_fields():
+    state = KairosState(
+        unfinished_work_items=[
+            {
+                "work_id": "todo-verification-gap",
+                "kind": "workflow_stage",
+                "workflow_id": "todo_delivery_pipeline",
+                "stage_id": "verification",
+                "priority": 10,
+                "reason": "verification incomplete",
+            }
+        ],
+        proactive_candidates=[
+            {
+                "candidate_id": "continue-verification",
+                "action": "continue_workflow",
+                "priority": 10,
+                "reason": "verification pending",
+                "blocked": False,
+            }
+        ],
+        last_proactive_scan={
+            "ts": "2026-04-07T10:00:00+00:00",
+            "result": "candidate_found",
+            "winner": "continue-verification",
+        },
+        last_guardrail_block={
+            "reason": "cooldown_active",
+            "work_id": "todo-verification-gap",
+        },
+        last_planning_result={
+            "decision": "continue_workflow",
+            "summary": "resume verification",
+        },
+        policy=KairosContinuationPolicy(
+            max_auto_steps_per_tick=2,
+            allow_llm_assist_for_brief=True,
+            require_artifacts_before_follow_up=True,
+            dedupe_enabled=True,
+            proactive_scan_enabled=True,
+            cooldown_seconds=60,
+        ),
+    )
+
+    dumped = dump_kairos_state(state)
+    restored = load_kairos_state(dumped)
+
+    assert restored.unfinished_work_items[0]["work_id"] == "todo-verification-gap"
+    assert restored.proactive_candidates[0]["candidate_id"] == "continue-verification"
+    assert restored.last_proactive_scan["result"] == "candidate_found"
+    assert restored.last_guardrail_block["reason"] == "cooldown_active"
+    assert restored.last_planning_result["decision"] == "continue_workflow"
+    assert restored.policy.proactive_scan_enabled is True
+    assert restored.policy.cooldown_seconds == 60
 
 
 def test_policy_defaults_are_stable():
@@ -101,6 +155,8 @@ def test_policy_defaults_are_stable():
     assert policy.allow_llm_assist_for_brief is True
     assert policy.require_artifacts_before_follow_up is True
     assert policy.dedupe_enabled is True
+    assert policy.proactive_scan_enabled is True
+    assert policy.cooldown_seconds == 60
 
 
 def test_new_kairos_modes_exist():
@@ -119,6 +175,11 @@ def test_load_legacy_state_fills_phase3_defaults():
     assert state.blocked_reason is None
     assert state.policy.max_auto_steps_per_tick == 1
     assert state.policy.require_artifacts_before_follow_up is True
+    assert state.unfinished_work_items == []
+    assert state.proactive_candidates == []
+    assert state.last_proactive_scan == {}
+    assert state.last_guardrail_block == {}
+    assert state.last_planning_result == {}
 
 
 def test_dump_round_trip_preserves_schedule_and_trigger():

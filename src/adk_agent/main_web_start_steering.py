@@ -500,6 +500,28 @@ class SteeringSession:
         )
         return task
 
+    @staticmethod
+    def _build_kairos_tick_prompt(
+        reason: str,
+        workflow_summary: str,
+        unfinished_work_summary: str,
+        policy_summary: str,
+    ) -> str:
+        return (
+            "[KAIROS_TICK]\n"
+            f"reason={reason}\n"
+            "You are in assistant runtime mode for long-running autonomous work.\n"
+            f"workflow={workflow_summary}\n"
+            f"unfinished work={unfinished_work_summary}\n"
+            f"policy={policy_summary}\n"
+            "Check unfinished work first.\n"
+            "If there is a high-value next action within policy, continue it.\n"
+            "If user input is required, produce a concise ask-user brief.\n"
+            "If there is useful progress to surface, produce a concise proactive brief.\n"
+            "If there is no high-value work right now, sleep immediately.\n"
+            "Never emit empty status narration.\n"
+        )
+
     async def run_kairos_turn(self, reason: str):
         """
         执行 KAIROS autonomous turn，但不污染 session.events。
@@ -509,20 +531,32 @@ class SteeringSession:
         - 执行前后保存/恢复 session.events，避免历史膨胀
         - 结果只写入 recent_events 和 activity log
         """
-        # ==========================================
-        # 构造隐式 prompt 执行 turn
-        # ==========================================
-        synthetic_prompt = (
-            "[KAIROS_TICK]\n"
-            f"reason={reason}\n"
-            "你现在处于 assistant runtime 模式。请检查是否有需要汇报的状态、"
-            "是否有已完成的 Dex 任务、是否应该继续 sleep。输出简洁 brief；"
-            "如果没有实质工作，直接进入 sleep。"
+        runtime = self.get_or_create_kairos_runtime()
+        workflow = runtime.state.active_workflow
+        workflow_summary = "none"
+        if workflow:
+            workflow_summary = workflow.workflow_id
+            if workflow.current_stage:
+                workflow_summary = f"{workflow.workflow_id}: {workflow.current_stage}"
+        unfinished_work_summary = ", ".join(
+            item.get("stage_id", item.get("work_id", "unknown"))
+            for item in runtime.state.unfinished_work_items[:3]
+        ) or "none"
+        policy_summary = (
+            f"cooldown={runtime.state.policy.cooldown_seconds} "
+            f"max_auto_steps_per_tick={runtime.state.policy.max_auto_steps_per_tick} "
+            f"dedupe={runtime.state.policy.dedupe_enabled}"
+        )
+        synthetic_prompt = self._build_kairos_tick_prompt(
+            reason=reason,
+            workflow_summary=workflow_summary,
+            unfinished_work_summary=unfinished_work_summary,
+            policy_summary=policy_summary,
         )
 
         # 执行 turn，开启沙盒隔离模式，由底层屏蔽向真实数据库写入中间思考事件
         async for _ in self._run_agent_turn(
-            synthetic_prompt, images=None, yield_chunks=False, 
+            synthetic_prompt, images=None, yield_chunks=False,
             is_sandbox_turn=True
         ):
             pass

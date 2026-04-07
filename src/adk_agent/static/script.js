@@ -1990,6 +1990,20 @@ document.addEventListener('DOMContentLoaded', () => {
         ].join('\n');
     }
 
+    function formatKairosSimpleJson(value) {
+        if (!value || (Array.isArray(value) && value.length === 0)) return '无';
+        if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) return '无';
+        return JSON.stringify(value, null, 2);
+    }
+
+    function formatKairosGuardrailState(kairos, data) {
+        return formatKairosSimpleJson({
+            last_proactive_scan: kairos.last_proactive_scan || data.last_proactive_scan || {},
+            last_guardrail_block: kairos.last_guardrail_block || data.last_guardrail_block || {},
+            last_planning_result: kairos.last_planning_result || data.last_planning_result || {},
+        });
+    }
+
     function formatKairosStatus(kairos) {
         return [
             `enabled: ${kairos.enabled}`,
@@ -2088,6 +2102,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const plannedActionsEl = document.getElementById('kairosPlannedActions');
         const blockedReasonEl = document.getElementById('kairosBlockedReason');
         const resultSummaryEl = document.getElementById('kairosResultSummary');
+        const unfinishedWorkEl = document.getElementById('kairosUnfinishedWork');
+        const proactiveCandidatesEl = document.getElementById('kairosProactiveCandidates');
+        const guardrailStateEl = document.getElementById('kairosGuardrailState');
 
         if (!sessionId) {
             if (noSession) noSession.style.display = 'block';
@@ -2116,6 +2133,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (plannedActionsEl) plannedActionsEl.textContent = formatKairosPlannedActions(kairos.planned_actions || data.planned_actions || []);
             if (blockedReasonEl) blockedReasonEl.textContent = formatKairosConditionTree(kairos.condition_tree || data.condition_tree) || kairos.blocked_reason || data.blocked_reason || '无';
             if (resultSummaryEl) resultSummaryEl.textContent = formatKairosResultSummaries(kairos.task_summaries || data.task_summaries || []);
+            if (unfinishedWorkEl) unfinishedWorkEl.textContent = formatKairosSimpleJson(kairos.unfinished_work_items || data.unfinished_work_items || []);
+            if (proactiveCandidatesEl) proactiveCandidatesEl.textContent = formatKairosSimpleJson(kairos.proactive_candidates || data.proactive_candidates || []);
+            if (guardrailStateEl) guardrailStateEl.textContent = formatKairosGuardrailState(kairos, data);
         } catch (e) {
             console.error('[KAIROS] 刷新状态失败:', e);
             if (statusEl) statusEl.textContent = `加载失败: ${e.message}`;
@@ -2125,6 +2145,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (plannedActionsEl) plannedActionsEl.textContent = '无';
             if (blockedReasonEl) blockedReasonEl.textContent = '无';
             if (resultSummaryEl) resultSummaryEl.textContent = '无';
+            if (unfinishedWorkEl) unfinishedWorkEl.textContent = '无';
+            if (proactiveCandidatesEl) proactiveCandidatesEl.textContent = '无';
+            if (guardrailStateEl) guardrailStateEl.textContent = '无';
         }
     }
 
