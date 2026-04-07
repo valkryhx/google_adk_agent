@@ -1,13 +1,13 @@
 {
   "version": "1.0",
-  "timestamp": "2026-04-07T10:56:00Z",
+  "timestamp": "2026-04-07T11:09:58.306Z",
   "phase": "3",
   "phase_name": "Policy Hardening & Verification",
   "phase_dir": ".planning/phases/03-policy-hardening-verification",
-  "plan": 1,
+  "plan": 7,
   "task": 7,
   "total_tasks": 7,
-  "status": "completed",
+  "status": "paused",
   "completed_tasks": [
     {
       "id": 1,
@@ -47,9 +47,9 @@
     },
     {
       "id": 7,
-      "name": "Close verification and final runtime cleanup",
+      "name": "Close verification, cooldown fixes, cleanup, and planning finalization",
       "status": "done",
-      "commit": "849b1d3"
+      "commit": "49d4a7a"
     }
   ],
   "remaining_tasks": [],
@@ -57,35 +57,32 @@
     {
       "description": "Main worktree still has a local tracked modification in private_key.yaml, which contains secrets and must stay out of commits.",
       "type": "operational",
-      "workaround": "Treat private_key.yaml as local-only config drift; do not stage it when preparing future commits or PRs."
+      "workaround": "Treat private_key.yaml as local-only config drift; never stage it in future work."
     }
   ],
   "human_actions_pending": [
     {
-      "description": "Decide the next milestone / next phase from main instead of reopening Phase 3 implementation.",
-      "type": "decision"
+      "action": "Decide the next milestone / next phase from main.",
+      "context": "Phase 3 is complete and synced; future work should start from planning the next milestone rather than reopening old implementation checkpoints.",
+      "blocking": false
     }
   ],
   "decisions": [
     {
-      "decision": "Phase 3 is framed as assistant-mode long-running autonomy rather than narrow continuation hardening.",
-      "rationale": "Claude Code Kairos analysis showed the core value is long-running assistant mode with proactive unfinished-work scanning, brief, sleep/wake, and guarded autonomy.",
+      "decision": "Phase 3 is complete and should not be resumed from old worktree checkpoints.",
+      "rationale": "All code, verification, cooldown semantics, cleanup, and planning records are already on main/origin.",
       "phase": "3"
     },
     {
-      "decision": "Implement proactive autonomy as rule-guided agentic behavior, not free-form LLM planning.",
-      "rationale": "The user wants real agent intelligence, but still within strong guardrails so the system remains testable, observable, and stable.",
-      "phase": "3"
-    },
-    {
-      "decision": "Phase 3 implementation was validated in the worktree, then absorbed into main and pushed to origin/main.",
-      "rationale": "Main/origin now contain the verified runtime changes through `5e9f7b5`, `d553fd3`, `fdc9ddb`, and `849b1d3`, so future work should continue from main rather than resuming old worktree checkpoints.",
+      "decision": "Continue future work from main, not from feature worktrees.",
+      "rationale": "Temporary worktrees and branches were cleaned up; main is now the authoritative baseline.",
       "phase": "3"
     }
   ],
   "uncommitted_files": [
-    "private_key.yaml"
+    "private_key.yaml",
+    "docs/实现phase-3的kairos/2026-04-07-之后下次继续工作的指导.md"
   ],
-  "next_action": "Resume from main for any future work. Phase 3 coding is complete; if continuing this project, focus on next milestone planning or operational cleanup, not more Phase 3 implementation.",
-  "context_notes": "Phase 3 assistant-mode runtime work is complete, verified, pushed, and synced to origin/main. Temporary agent worktrees and branches were cleaned up, and the phase worktree was resynced to main. The only remaining local drift is private_key.yaml."
+  "next_action": "Resume from main, read STATE/MILESTONES/ROADMAP and the resume guides, then decide the next milestone instead of continuing Phase 3 coding.",
+  "context_notes": "Phase 3 assistant-mode runtime work is complete, verified (`96 passed`), pushed to origin/main, and operational cleanup is mostly done. The only codebase-local drift left is private_key.yaml and one newly written resume guide markdown file not yet committed."
 }
