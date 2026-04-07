@@ -8,7 +8,7 @@ from skills.dex.tools import DexManager, get_tools
 from src.adk_agent.kairos.dex_bridge import KairosDexBridge
 from src.adk_agent.kairos.models import KairosMode, KairosState
 from src.adk_agent.kairos.runtime import KairosRuntime
-from tests.kairos.live_http_kairos_demo_outputs_regression import run_todo_delivery_pipeline
+from tests.kairos.live_http_kairos_demo_outputs_regression import TODO_DEMO_DIR, run_todo_delivery_pipeline
 
 
 TODO_DEMO_COMMANDS = {
@@ -290,7 +290,7 @@ async def test_real_dex_todo_delivery_pipeline_produces_real_todo_app_artifacts(
     monkeypatch.chdir(tmp_path)
     result = run_todo_delivery_pipeline(tmp_path)
 
-    app_root = Path("D:/git_repos/google_adk_agent/demo_delivery/todo_app")
+    app_root = TODO_DEMO_DIR
     app_js = (app_root / "app.js").read_text(encoding="utf-8")
     smoke = json.loads((app_root / "smoke_check.json").read_text(encoding="utf-8"))
 

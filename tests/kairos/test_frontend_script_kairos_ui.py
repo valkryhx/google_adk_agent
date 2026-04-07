@@ -1,6 +1,8 @@
 from pathlib import Path
 
-SCRIPT = Path(r"D:/git_repos/google_adk_agent/src/adk_agent/static/script.js")
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "src" / "adk_agent" / "static" / "script.js"
+INDEX = ROOT / "src" / "adk_agent" / "static" / "index.html"
 
 
 def test_script_exposes_kairos_helpers_for_tracked_tasks():
@@ -32,14 +34,14 @@ def test_frontend_helpers_can_render_todo_delivery_summaries():
 
 
 def test_kairos_modal_contains_result_summary_panel():
-    html = Path(r"D:/git_repos/google_adk_agent/src/adk_agent/static/index.html").read_text(encoding="utf-8")
+    html = INDEX.read_text(encoding="utf-8")
 
     assert 'id="kairosResultSummary"' in html
     assert '<label>Result Summary</label>' in html
 
 
 def test_kairos_panels_preserve_multiline_text_rendering():
-    html = Path(r"D:/git_repos/google_adk_agent/src/adk_agent/static/index.html").read_text(encoding="utf-8")
+    html = INDEX.read_text(encoding="utf-8")
 
     assert 'id="kairosWorkflow"' in html
     assert 'id="kairosPlannedActions"' in html
