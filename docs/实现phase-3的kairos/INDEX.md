@@ -1,6 +1,6 @@
 # KAIROS Phase 3 文档索引
 
-> 日期：2026-04-05
+> 日期：2026-04-07
 > 目录：`docs/实现phase-3的kairos`
 > 用途：汇总本轮已形成的 phase-3 文档，帮助后续直接进入实现、规划或验证。
 
@@ -103,33 +103,61 @@
 
 ---
 
+### 1.7 基于 Claude Code 源码分析的再定位与推进结论
+- `2026-04-07-KAIROS-phase-3-基于-ClaudeCode-源码分析的再定位与推进结论.md`
+
+**用途：**
+基于 `docs/探讨claudecode/KAIROS-特性源码分析报告.md`、当前仓库 recent commits、`.planning` 状态与 live HTTP 验证结果，重新定义：
+- Kairos 在本项目中的真正目标
+- Kairos 与 ReAct / plan-to-do 的关系
+- proactive 的本质为何应是 unfinished-work scanning
+- 为什么 Phase 3 应朝 assistant mode / long-running autonomous runtime 演进
+
+**适合阅读时机：**
+- 需要重新校准 Phase 3 方向时
+- 准备从“自动续推 demo”升级到“长期自治 assistant mode”时
+- 开始编写 `03-CONTEXT.md` 或重写 Phase 3 计划前
+
+---
+
 ## 2. 推荐阅读顺序
 
 如果是第一次接手 phase-3，建议按下面顺序读：
 
 1. `2026-04-05-KAIROS-phase-3-演进思考.md`
-2. `2026-04-05-KAIROS-phase-3-实施计划-第一版.md`
-3. `2026-04-05-KAIROS-phase-3-精确代码改造清单.md`
-4. `2026-04-05-KAIROS-phase-3-测试矩阵.md`
-5. `2026-04-05-KAIROS-phase-3-roadmap-与验收标准.md`
-6. `2026-04-05-KAIROS-phase-3-下一步行动清单.md`
+2. `2026-04-07-KAIROS-phase-3-基于-ClaudeCode-源码分析的再定位与推进结论.md`
+3. `2026-04-05-KAIROS-phase-3-实施计划-第一版.md`
+4. `2026-04-05-KAIROS-phase-3-精确代码改造清单.md`
+5. `2026-04-05-KAIROS-phase-3-测试矩阵.md`
+6. `2026-04-05-KAIROS-phase-3-roadmap-与验收标准.md`
+7. `2026-04-05-KAIROS-phase-3-下一步行动清单.md`
 
 如果目标只是“现在就开始开发”，可以直接读：
 
-1. `2026-04-05-KAIROS-phase-3-下一步行动清单.md`
-2. `2026-04-05-KAIROS-phase-3-精确代码改造清单.md`
-3. `2026-04-05-KAIROS-phase-3-测试矩阵.md`
+1. `2026-04-07-KAIROS-phase-3-基于-ClaudeCode-源码分析的再定位与推进结论.md`
+2. `2026-04-05-KAIROS-phase-3-下一步行动清单.md`
+3. `2026-04-05-KAIROS-phase-3-精确代码改造清单.md`
+4. `2026-04-05-KAIROS-phase-3-测试矩阵.md`
 
 ---
 
 ## 3. 当前统一结论
 
-本轮所有 phase-3 文档的共同结论是：
+本目录当前更新后的统一结论应表述为：
 
-> **phase-3 的核心不是继续增强 KAIROS 的“观察能力”，而是让它能在任务完成后主动发现下一步并自动续推 workflow。**
+> **Phase 3 的核心不再只是“增强 KAIROS 的观察能力”或“证明一次自动续推”，而是让它在规则护栏约束下，持续扫描未完成工作、主动选择下一步、主动 brief/ask-user/sleep，并逐步演进为长期运行的 autonomous assistant mode runtime。**
 
-因此当前最关键、最值得优先落地的目标是：
+因此当前最关键、最值得优先推进的目标不应再局限于：
 
-> **在 live HTTP demo 中，不再由人手工注册 report task，而是由 KAIROS 自己发现 phase-1 已收敛，并自动推进 report 阶段。**
+> 在 live HTTP demo 中，不再由人手工注册 report task，而是由 KAIROS 自己发现 phase-1 已收敛，并自动推进 report 阶段。
 
-这也是当前判断 KAIROS 是否开始真正跳出 REPL 主导模式的最小、最真实、最可验证标准。
+这条仍然是重要的最小闭环证据，但在当前阶段，它更准确地应被看作：
+
+> **证明 KAIROS 已经具备“跳出 REPL 主导模式”的最小技术跑道，而不是 Phase 3 的最终目标本身。**
+
+在此基础上，后续更关键的推进方向是：
+
+1. 让 Kairos 具备真正的 unfinished-work scanning 能力
+2. 让 tick/wake/sleep/brief 成为正式的 assistant mode contract
+3. 让 agent intelligence 在规则护栏内主动推动任务，而不只是等待用户 prompt 或单次 follow-up 事件
+4. 让系统逐步从“自动续推 demo”演进为“长期自治 assistant runtime”
