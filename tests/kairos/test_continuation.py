@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from src.adk_agent.kairos.continuation import ContinuationEngine
 from src.adk_agent.kairos.models import (
     KairosContinuationPolicy,
@@ -140,13 +142,20 @@ def test_refresh_unfinished_work_respects_cooldown_guardrail():
         "winner": "todo-codegen",
     }
     state.policy.cooldown_seconds = 999999
-    engine = ContinuationEngine(path_exists=lambda _: True)
+    now_calls = iter([
+        datetime.fromisoformat("2026-04-07T10:00:30+00:00"),
+        datetime.fromisoformat("2026-04-07T10:00:30+00:00"),
+    ])
+    engine = ContinuationEngine(path_exists=lambda _: True, now=lambda: next(now_calls))
 
     engine.refresh_unfinished_work(state)
 
     assert state.unfinished_work_items[0]["stage_id"] == "codegen"
     assert state.proactive_candidates == []
     assert state.last_guardrail_block["reason"] == "cooldown_active"
+    assert state.last_proactive_scan["result"] == "cooldown_active"
+    assert state.last_proactive_scan["winner"] is None
+    assert state.last_proactive_scan["ts"] == "2026-04-07T10:00:00+00:00"
 
 
 

@@ -66,6 +66,11 @@ class ContinuationEngine:
                     "workflow_id": workflow.workflow_id,
                     "work_id": state.unfinished_work_items[0]["work_id"] if state.unfinished_work_items else None,
                 }
+                state.last_proactive_scan = {
+                    "ts": last_scan_ts,
+                    "result": "cooldown_active",
+                    "winner": None,
+                }
                 return
 
         if state.unfinished_work_items:
