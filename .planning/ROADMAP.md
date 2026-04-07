@@ -4,6 +4,8 @@
 
 这个 milestone 聚焦 KAIROS 从“观察 Dex 后台任务状态”向“主动发现下一步并自动续推 workflow”的跃迁。路线分为三个 phase：先做 Autonomous Continuation MVP，证明系统能在 staged workflow 中自动创建 report follow-up；再做 artifact-aware proactive reporting 与前端/API 可视化；最后做 policy hardening 与分层验证，确保自治能力可解释、可测试、不失控。
 
+当前 v1.0 路线已经完成，后续 roadmap 应以新的 milestone/phase 继续扩展，而不是重复 Phase 1-3 的实现工作。
+
 ## Phases
 
 **Phase Numbering:**
@@ -12,9 +14,9 @@
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Autonomous Continuation MVP** - 引入 workflow-aware state 与 continuation engine，打通自动创建 report follow-up 的最小自治闭环
-- [ ] **Phase 2: Artifact-Aware Reporting & Visibility** - 增强结果摘要、blocked reason 与 workflow/planned actions 可视化
-- [ ] **Phase 3: Policy Hardening & Verification** - 增加去重、限步、策略观测与完整回归验证，稳固自治能力
+- [x] **Phase 1: Autonomous Continuation MVP** - 引入 workflow-aware state 与 continuation engine，打通自动创建 report follow-up 的最小自治闭环
+- [x] **Phase 2: Artifact-Aware Reporting & Visibility** - 增强结果摘要、blocked reason 与 workflow/planned actions 可视化
+- [x] **Phase 3: Policy Hardening & Verification** - 增加去重、限步、策略观测与完整回归验证，稳固自治能力
 
 ## Phase Details
 
@@ -45,8 +47,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 02-01: 增强 Dex snapshot/result/log 摘要消费与 artifact-aware proactive brief
-- [ ] 02-02: 扩展 API 与前端面板，展示 workflow / planned actions / blocked reason
+- [x] 02-01: 增强 Dex snapshot/result/log 摘要消费与 artifact-aware proactive brief
+- [x] 02-02: 扩展 API 与前端面板，展示 workflow / planned actions / blocked reason
 
 ### Phase 3: Policy Hardening & Verification
 **Goal**: 让 phase-3 的自治续推具备去重、限步、策略可观测与稳定回归保障，避免重复续推和失控。
@@ -60,8 +62,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 03-01: 实现 continuation history、dedupe、cooldown / max auto steps 等策略护栏
-- [ ] 03-02: 补齐 runtime / integration / live-http / frontend 回归矩阵并固化状态观测输出
+- [x] 03-01: 实现 continuation history、dedupe、cooldown / max auto steps 等策略护栏
+- [x] 03-02: 补齐 runtime / integration / live-http / frontend 回归矩阵并固化状态观测输出
 
 ## Progress
 
@@ -70,6 +72,9 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Autonomous Continuation MVP | 0/3 | Not started | - |
-| 2. Artifact-Aware Reporting & Visibility | 0/2 | Not started | - |
-| 3. Policy Hardening & Verification | 0/2 | Not started | - |
+| 1. Autonomous Continuation MVP | 3/3 | Complete | 2026-04-06 |
+| 2. Artifact-Aware Reporting & Visibility | 2/2 | Complete | 2026-04-06 |
+| 3. Policy Hardening & Verification | 2/2 | Complete | 2026-04-07 |
+
+---
+*Last updated: 2026-04-07 after Phase 3 closeout and sync to origin/main*

@@ -62,7 +62,7 @@
   ],
   "human_actions_pending": [
     {
-      "description": "Decide whether to leave private_key.yaml as local-only drift or normalize it outside git-tracked workflows.",
+      "description": "Decide the next milestone / next phase from main instead of reopening Phase 3 implementation.",
       "type": "decision"
     }
   ],
