@@ -10,13 +10,13 @@
 - [x] **KAI-01**: 用户可以让 KAIROS 在已跟踪的阶段性任务完成后自动发现下一步 workflow 动作，而不必手工注册每个后续 task
 - [x] **KAI-02**: 用户可以看到 KAIROS 当前正在推进的 workflow、当前阶段和下一步 planned actions
 - [x] **KAI-03**: 当 staged workflow 的 phase-1 输入全部满足时，KAIROS 可以自动创建并接管 report follow-up Dex task
-- [ ] **KAI-04**: KAIROS 在 follow-up 条件不满足时会进入 blocked 或 waiting_input，而不是盲目继续或空转
+- [x] **KAI-04**: KAIROS 在 follow-up 条件不满足时会进入 blocked 或 waiting_input，而不是盲目继续或空转
 
 ### Kairos Reporting
 
-- [ ] **RPT-01**: 用户可以从 KAIROS recent events / status 中看到 task 完成后的结果摘要，而不只是 completed/failed 状态
-- [ ] **RPT-02**: 用户可以看到 KAIROS 为什么继续、为什么停住、以及当前的 blocked reason
-- [ ] **RPT-03**: 用户可以在前端面板查看 workflow、planned actions、blocked reason 等自治状态
+- [x] **RPT-01**: 用户可以从 KAIROS recent events / status 中看到 task 完成后的结果摘要，而不只是 completed/failed 状态
+- [x] **RPT-02**: 用户可以看到 KAIROS 为什么继续、为什么停住、以及当前的 blocked reason
+- [x] **RPT-03**: 用户可以在前端面板查看 workflow、planned actions、blocked reason 等自治状态
 
 ### Kairos Safety & Policy
 
@@ -26,7 +26,7 @@
 
 ### Verification
 
-- [ ] **VER-01**: phase-3 的 continuation 行为具备 runtime 层回归测试
+- [x] **VER-01**: phase-3 的 continuation 行为具备 runtime 层回归测试
 - [x] **VER-02**: phase-3 的自动 follow-up 行为具备真实 Dex 集成测试
 - [x] **VER-03**: phase-3 的自动续推闭环具备 live HTTP regression，并证明 report task 不再需要人工手工注册
 
@@ -60,14 +60,14 @@
 | KAI-01 | Phase 1 | Complete |
 | KAI-02 | Phase 1 | Complete |
 | KAI-03 | Phase 1 | Complete |
-| KAI-04 | Phase 1 | Pending |
-| RPT-01 | Phase 2 | Pending |
-| RPT-02 | Phase 2 | Pending |
-| RPT-03 | Phase 2 | Pending |
+| KAI-04 | Phase 1 | Complete |
+| RPT-01 | Phase 2 | Complete |
+| RPT-02 | Phase 2 | Complete |
+| RPT-03 | Phase 2 | Complete |
 | POL-01 | Phase 3 | Pending |
 | POL-02 | Phase 3 | Pending |
 | POL-03 | Phase 3 | Pending |
-| VER-01 | Phase 1 | Pending |
+| VER-01 | Phase 1 | Complete |
 | VER-02 | Phase 1 | Complete |
 | VER-03 | Phase 1 | Complete |
 
