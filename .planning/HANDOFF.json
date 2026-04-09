@@ -1,88 +1,100 @@
 {
   "version": "1.0",
-  "timestamp": "2026-04-07T11:09:58.306Z",
-  "phase": "3",
-  "phase_name": "Policy Hardening & Verification",
-  "phase_dir": ".planning/phases/03-policy-hardening-verification",
-  "plan": 7,
-  "task": 7,
-  "total_tasks": 7,
+  "timestamp": "2026-04-09T03:53:53.829Z",
+  "phase": "4A",
+  "phase_name": "Explainability, History & Operator UX",
+  "phase_dir": ".planning/phases/04A-explainability-history-ux",
+  "plan": 0,
+  "task": 0,
+  "total_tasks": 0,
   "status": "paused",
   "completed_tasks": [
     {
       "id": 1,
-      "name": "Capture assistant-mode phase-3 direction in planning docs",
+      "name": "Complete Phase 1-3 Kairos runtime and verification baseline",
       "status": "done",
-      "commit": "79d1135"
+      "commit": "849b1d3"
     },
     {
       "id": 2,
-      "name": "Sync validated Kairos requirements with current evidence",
+      "name": "Finalize planning and resume artifacts for Phase 3",
       "status": "done",
-      "commit": "74500fc"
+      "commit": "49d4a7a"
     },
     {
       "id": 3,
-      "name": "Create phase-3 assistant-mode runtime implementation plan",
+      "name": "Write and commit Phase 4 design spec",
       "status": "done",
-      "commit": "e92a950"
+      "commit": "92f787b"
     },
     {
       "id": 4,
-      "name": "Write phase-3 resume guide and checkpoint",
+      "name": "Sync approved Phase 4A/4B direction into GSD artifacts",
       "status": "done",
-      "commit": "7de870a"
-    },
+      "commit": "working_tree"
+    }
+  ],
+  "remaining_tasks": [
     {
       "id": 5,
-      "name": "Repair worktree baseline path assumptions",
-      "status": "done",
-      "commit": "61493fe"
+      "name": "Commit updated planning artifacts for Phase 4A/4B",
+      "status": "not_started"
     },
     {
       "id": 6,
-      "name": "Execute assistant-mode runtime implementation",
-      "status": "done",
-      "commit": "5e9f7b5"
+      "name": "Create a detailed implementation plan for Phase 4A",
+      "status": "not_started"
     },
     {
       "id": 7,
-      "name": "Close verification, cooldown fixes, cleanup, and planning finalization",
-      "status": "done",
-      "commit": "49d4a7a"
+      "name": "Implement Kairos history API and operator UX redesign",
+      "status": "not_started"
+    },
+    {
+      "id": 8,
+      "name": "Follow with Phase 4B planning intelligence work",
+      "status": "not_started"
     }
   ],
-  "remaining_tasks": [],
   "blockers": [
     {
-      "description": "Main worktree still has a local tracked modification in private_key.yaml, which contains secrets and must stay out of commits.",
+      "description": "Main worktree still contains a local tracked modification in private_key.yaml, which contains secrets and must stay out of commits.",
       "type": "operational",
       "workaround": "Treat private_key.yaml as local-only config drift; never stage it in future work."
     }
   ],
   "human_actions_pending": [
     {
-      "action": "Decide the next milestone / next phase from main.",
-      "context": "Phase 3 is complete and synced; future work should start from planning the next milestone rather than reopening old implementation checkpoints.",
+      "action": "Resume from main and turn the approved Phase 4 spec into concrete 4A planning docs and implementation work.",
+      "context": "The design is approved, but implementation planning/execution for 4A has not started yet.",
       "blocking": false
     }
   ],
   "decisions": [
     {
-      "decision": "Phase 3 is complete and should not be resumed from old worktree checkpoints.",
-      "rationale": "All code, verification, cooldown semantics, cleanup, and planning records are already on main/origin.",
-      "phase": "3"
+      "decision": "Phase 4 is split into 4A and 4B rather than one monolithic follow-up phase.",
+      "rationale": "4A first solves visibility/history/operator UX so 4B planning intelligence can be made visible and testable instead of opaque.",
+      "phase": "4"
     },
     {
-      "decision": "Continue future work from main, not from feature worktrees.",
-      "rationale": "Temporary worktrees and branches were cleaned up; main is now the authoritative baseline.",
-      "phase": "3"
+      "decision": "4A should focus on explainability/history UX before stronger planning intelligence.",
+      "rationale": "The user’s strongest pain is not whether Kairos did work, but that the frontend does not make its work and reasoning visible.",
+      "phase": "4A"
+    },
+    {
+      "decision": "The user wants both strong operator-facing explainability and stronger visible planning intelligence, but in sequence rather than in one giant phase.",
+      "rationale": "This keeps execution and validation manageable while preserving the long-term goal of making Kairos both visibly and actually more intelligent.",
+      "phase": "4A/4B"
     }
   ],
   "uncommitted_files": [
-    "private_key.yaml",
-    "docs/实现phase-3的kairos/2026-04-07-之后下次继续工作的指导.md"
+    ".planning/HANDOFF.json",
+    ".planning/MILESTONES.md",
+    ".planning/ROADMAP.md",
+    ".planning/STATE.md",
+    ".planning/phases/03-policy-hardening-verification/.continue-here.md",
+    "private_key.yaml"
   ],
-  "next_action": "Resume from main, read STATE/MILESTONES/ROADMAP and the resume guides, then decide the next milestone instead of continuing Phase 3 coding.",
-  "context_notes": "Phase 3 assistant-mode runtime work is complete, verified (`96 passed`), pushed to origin/main, and operational cleanup is mostly done. The only codebase-local drift left is private_key.yaml and one newly written resume guide markdown file not yet committed."
+  "next_action": "Resume from main, commit the updated Phase 4A/4B GSD artifacts if desired, then create a detailed implementation plan for Phase 4A from the approved spec.",
+  "context_notes": "Phase 3 is done. The project is now at the transition point between Phase 3 closeout and Phase 4A planning. The most important thing for the next session is to not reopen old worktree/debug loops; instead, immediately use the approved Phase 4 spec to write planning artifacts and begin 4A implementation planning."
 }
