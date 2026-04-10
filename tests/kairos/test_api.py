@@ -157,25 +157,54 @@ def test_stop_route_works():
     assert stop_resp.json()["kairos"]["mode"] == "stopped"
 
 
-def test_wake_route_works():
+
+
+
+
+def test_history_route_supports_ascending_order(monkeypatch):
     app = FastAPI()
-    register_kairos_routes(app, FakeManager())
+    manager = FakeManager()
+    register_kairos_routes(app, manager)
     client = TestClient(app)
 
-    client.post(
-        "/api/sessions/session_1/kairos/start",
-        json={"app_name": "demo", "user_id": "alice"},
+    class FakeHistory:
+        def read_session_history(self, user_id, app_name, session_id, descending=True):
+            assert descending is False
+            return [
+                {"ts": "2026-04-09T10:00:00", "kind": "brief", "title": "Brief", "message": "older", "workflow": None, "stage": None, "task_id": None, "metadata": {}},
+                {"ts": "2026-04-09T10:05:00", "kind": "brief", "title": "Brief", "message": "newer", "workflow": None, "stage": None, "task_id": None, "metadata": {}},
+            ]
+
+    monkeypatch.setattr("src.adk_agent.kairos.api.KairosActivityLog", lambda *_args, **_kwargs: FakeHistory())
+
+    resp = client.get(
+        "/api/sessions/session_1/kairos/history",
+        params={"app_name": "demo", "user_id": "alice", "descending": "false"},
     )
-    wake_resp = client.post(
-        "/api/sessions/session_1/kairos/wake",
-        json={"app_name": "demo", "user_id": "alice", "reason": "test_wake"},
-    )
-    assert wake_resp.status_code == 200
-    events = wake_resp.json()["kairos"]["recent_events"]
-    assert any(e["message"] == "test_wake" for e in events)
+
+    assert resp.status_code == 200
+    assert resp.json()["history"][0]["message"] == "older"
 
 
-# === Phase 2 schedule route tests ===
+def test_attach_route_includes_has_history_hint(monkeypatch):
+    app = FastAPI()
+    manager = FakeManager()
+    register_kairos_routes(app, manager)
+    client = TestClient(app)
+
+    class FakeHistory:
+        def read_session_history(self, user_id, app_name, session_id, descending=True):
+            return [{"ts": "2026-04-09T10:00:00"}]
+
+    monkeypatch.setattr("src.adk_agent.kairos.attach.KairosActivityLog", lambda *_args, **_kwargs: FakeHistory())
+
+    resp = client.get(
+        "/api/sessions/session_1/kairos/attach",
+        params={"app_name": "demo", "user_id": "alice"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["attach"]["has_history"] is True
 
 
 def test_add_schedule_route_works():

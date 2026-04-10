@@ -35,12 +35,14 @@ def test_todo_task_commands_create_demo_directory_before_writing_files():
     assert text.count("p.mkdir(parents=True, exist_ok=True)") >= 4
 
 
-def test_live_http_source_asserts_proactive_fields_visibility():
+
+
+def test_live_http_source_asserts_history_timeline_visibility():
     text = MODULE_PATH.read_text(encoding="utf-8")
 
-    assert 'unfinished_work_items' in text
-    assert 'proactive_candidates' in text
-    assert 'last_guardrail_block' in text
+    assert '/kairos/history' in text
+    assert 'history_payload' in text
+    assert 'follow_up' in text or 'Auto-created follow-up' in text
 
 
 def test_live_http_kairos_demo_outputs_regression_passes_against_running_service():

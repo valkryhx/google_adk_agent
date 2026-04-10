@@ -94,6 +94,13 @@ def _fetch_kairos_status(session_id: str) -> dict[str, Any]:
     )
 
 
+def _fetch_kairos_history(session_id: str) -> dict[str, Any]:
+    return _request(
+        "GET",
+        f"/api/sessions/{session_id}/kairos/history?app_name={APP_NAME}&user_id={USER_ID}&descending=true",
+    )
+
+
 def _start_task(task_id: str, command: str, session_id: str) -> list[dict[str, Any]]:
     DexManager(base_dir=REPO_ROOT, user_id=USER_ID).start_background_process(
         task_id,
@@ -242,6 +249,12 @@ def run_todo_delivery_pipeline(repo_root: Path | None = None) -> dict[str, Any]:
 
     report_completed = _wait_for_dex_task_status(report_task["task_id"], "completed")
     final_status = _wait_for_untracked(session_id, [report_task["task_id"]])
+    history_payload = _fetch_kairos_history(session_id)
+    history_entries = history_payload["history"]
+
+    assert history_entries
+    assert any(entry["kind"] in {"follow_up", "task_completion"} for entry in history_entries)
+    assert any("todo delivery report" in entry["message"] for entry in history_entries)
 
     assert TODO_DEMO_DIR.exists()
     assert (TODO_DEMO_DIR / "requirements.md").exists()
@@ -263,7 +276,12 @@ def run_todo_delivery_pipeline(repo_root: Path | None = None) -> dict[str, Any]:
     assert any("generate todo delivery report" in message for message in messages)
     assert final_status["kairos"]["tracked_dex_task_ids"] == []
     assert final_status["kairos"]["mode"] == "idle"
-    return {"session_id": session_id, "final_status": final_status, "report_task": report_task}
+    return {
+        "session_id": session_id,
+        "final_status": final_status,
+        "report_task": report_task,
+        "history_payload": history_payload,
+    }
 
 
 def main() -> None:

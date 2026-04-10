@@ -168,99 +168,115 @@
 
     <!-- KAIROS Modal -->
     <div id="kairosModal" class="modal-overlay">
-        <div class="modal-content" style="max-width: 640px;">
-            <div class="modal-header">
+        <div class="modal-content kairos-modal" style="max-width: 1280px;">
+            <div class="modal-header kairos-modal-header">
                 <h2>KAIROS 自主运行时</h2>
                 <button class="close-btn" id="closeKairos">&times;</button>
             </div>
-            <div class="modal-body" id="kairosBody">
+            <div class="modal-body kairos-modal-body" id="kairosBody">
                 <div id="kairosNoSession" style="color:#666; text-align:center; padding:20px;">
                     请先选择或创建一个对话，然后再管理 KAIROS。
                 </div>
                 <div id="kairosPanel" style="display:none;">
-                    <!-- Status -->
-                    <div class="setting-group">
-                        <label>运行状态</label>
-                        <div id="kairosStatus" style="font-size:13px; color:#444; padding:8px; background:#f8f9fa; border-radius:6px; max-height:200px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">加载中...</div>
-                    </div>
-                    <!-- Controls -->
-                    <div class="setting-group" style="display:flex; gap:8px; flex-wrap:wrap;">
-                        <button class="primary-btn" id="kairosStartBtn">启动</button>
-                        <button class="secondary-btn" id="kairosStopBtn">停止</button>
-                        <button class="secondary-btn" id="kairosWakeBtn">唤醒</button>
-                        <button class="secondary-btn" id="kairosRefreshBtn">刷新状态</button>
-                    </div>
-                    <!-- Wake reason -->
-                    <div class="setting-group">
-                        <label>唤醒原因</label>
-                        <input type="text" id="kairosWakeReason" placeholder="manual_smoke" value="manual_smoke">
-                    </div>
-                    <!-- Schedule -->
-                    <div class="setting-group">
-                        <label>注册 Cron Schedule</label>
-                        <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                            <input type="text" id="kairosSchedId" placeholder="schedule_id" value="morning" style="flex:1; min-width:100px;">
-                            <input type="text" id="kairosSchedCron" placeholder="cron 表达式" value="*/5 * * * *" style="flex:1; min-width:120px;">
-                            <input type="text" id="kairosSchedReason" placeholder="reason" value="morning_checkin" style="flex:1; min-width:100px;">
+                    <div id="kairosConsole" class="kairos-console">
+                        <div id="kairosLiveColumn" class="kairos-column kairos-column-live">
+                            <div id="kairosOverviewCard" class="setting-group kairos-card">
+                                <label>Runtime Overview</label>
+                            </div>
+                            <div id="kairosControlsCard" class="setting-group kairos-card kairos-controls-row">
+                                <button class="primary-btn" id="kairosStartBtn">启动</button>
+                                <button class="secondary-btn" id="kairosStopBtn">停止</button>
+                                <button class="secondary-btn" id="kairosWakeBtn">唤醒</button>
+                                <button class="secondary-btn" id="kairosRefreshBtn">刷新状态</button>
+                            </div>
+                            <!-- Status -->
+                            <div class="setting-group kairos-card">
+                                <label>运行状态</label>
+                                <div id="kairosStatus" style="font-size:13px; color:#444; padding:8px; background:#f8f9fa; border-radius:6px; max-height:200px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">加载中...</div>
+                            </div>
+                            <!-- Wake reason -->
+                            <div class="setting-group kairos-card">
+                                <label>唤醒原因</label>
+                                <input type="text" id="kairosWakeReason" placeholder="manual_smoke" value="manual_smoke">
+                            </div>
+                            <!-- Dex Handoff -->
+                            <div class="setting-group kairos-card">
+                                <label>注册 Dex Handoff</label>
+                                <div style="display:flex; gap:6px;">
+                                    <input type="text" id="kairosDexTaskId" placeholder="task_id" style="flex:1;">
+                                    <input type="text" id="kairosDexDesc" placeholder="description" style="flex:1;">
+                                    <button class="primary-btn" id="kairosDexRegBtn">注册</button>
+                                </div>
+                            </div>
+                            <!-- Workflow -->
+                            <div class="setting-group kairos-card">
+                                <label>Active Workflow</label>
+                                <div id="kairosWorkflow" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:220px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
+                            </div>
+                            <!-- Planned Actions -->
+                            <div class="setting-group kairos-card">
+                                <label>Planned Actions</label>
+                                <div id="kairosPlannedActions" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:220px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
+                            </div>
+                            <!-- Blocked Reason -->
+                            <div class="setting-group kairos-card">
+                                <label>Blocked Reason</label>
+                                <div id="kairosBlockedReason" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:120px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
+                            </div>
+                            <!-- Result Summary -->
+                            <div class="setting-group kairos-card">
+                                <label>Result Summary</label>
+                                <div id="kairosResultSummary" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:220px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
+                            </div>
+                            <!-- Unfinished Work -->
+                            <div class="setting-group kairos-card">
+                                <label>Unfinished Work</label>
+                                <div id="kairosUnfinishedWork" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:200px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
+                            </div>
+                            <!-- Proactive Candidates -->
+                            <div class="setting-group kairos-card">
+                                <label>Proactive Candidates</label>
+                                <div id="kairosProactiveCandidates" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:200px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
+                            </div>
+                            <!-- Guardrail State -->
+                            <div class="setting-group kairos-card">
+                                <label>Guardrail State</label>
+                                <div id="kairosGuardrailState" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:220px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
+                            </div>
+                            <!-- Tracked Dex Tasks -->
+                            <div class="setting-group kairos-card">
+                                <label>Tracked Dex Tasks</label>
+                                <div id="kairosTrackedDexTasks" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:220px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
+                            </div>
+                            <!-- Events -->
+                            <div class="setting-group kairos-card">
+                                <label>最近事件</label>
+                                <div id="kairosEvents" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:200px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
+                            </div>
                         </div>
-                        <div style="margin-top:6px; display:flex; gap:6px;">
-                            <button class="primary-btn" id="kairosAddSchedBtn">添加 Schedule</button>
-                            <button class="secondary-btn" id="kairosDelSchedBtn">删除 Schedule</button>
+                        <div id="kairosHistoryColumn" class="kairos-column kairos-column-history">
+                            <div class="setting-group kairos-card kairos-right-rail-card">
+                                <label>注册 Cron Schedule</label>
+                                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                                    <input type="text" id="kairosSchedId" placeholder="schedule_id" value="morning" style="flex:1; min-width:100px;">
+                                    <input type="text" id="kairosSchedCron" placeholder="cron 表达式" value="*/5 * * * *" style="flex:1; min-width:120px;">
+                                    <input type="text" id="kairosSchedReason" placeholder="reason" value="morning_checkin" style="flex:1; min-width:100px;">
+                                </div>
+                                <div style="margin-top:6px; display:flex; gap:6px;">
+                                    <button class="primary-btn" id="kairosAddSchedBtn">添加 Schedule</button>
+                                    <button class="secondary-btn" id="kairosDelSchedBtn">删除 Schedule</button>
+                                </div>
+                            </div>
+                            <div class="setting-group kairos-card">
+                                <label>History Timeline</label>
+                                <div id="kairosHistoryTimeline" class="kairos-timeline">
+                                    <div class="kairos-timeline-item">
+                                        <div class="kairos-timeline-dot"></div>
+                                        <div class="kairos-timeline-content">加载中...</div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                    </div>
-                    <!-- Dex Handoff -->
-                    <div class="setting-group">
-                        <label>注册 Dex Handoff</label>
-                        <div style="display:flex; gap:6px;">
-                            <input type="text" id="kairosDexTaskId" placeholder="task_id" style="flex:1;">
-                            <input type="text" id="kairosDexDesc" placeholder="description" style="flex:1;">
-                            <button class="primary-btn" id="kairosDexRegBtn">注册</button>
-                        </div>
-                    </div>
-                    <!-- Workflow -->
-                    <div class="setting-group">
-                        <label>Active Workflow</label>
-                        <div id="kairosWorkflow" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:220px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
-                    </div>
-                    <!-- Planned Actions -->
-                    <div class="setting-group">
-                        <label>Planned Actions</label>
-                        <div id="kairosPlannedActions" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:220px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
-                    </div>
-                    <!-- Blocked Reason -->
-                    <div class="setting-group">
-                        <label>Blocked Reason</label>
-                        <div id="kairosBlockedReason" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:120px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
-                    </div>
-                    <!-- Result Summary -->
-                    <div class="setting-group">
-                        <label>Result Summary</label>
-                        <div id="kairosResultSummary" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:220px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
-                    </div>
-                    <!-- Unfinished Work -->
-                    <div class="setting-group">
-                        <label>Unfinished Work</label>
-                        <div id="kairosUnfinishedWork" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:200px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
-                    </div>
-                    <!-- Proactive Candidates -->
-                    <div class="setting-group">
-                        <label>Proactive Candidates</label>
-                        <div id="kairosProactiveCandidates" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:200px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
-                    </div>
-                    <!-- Guardrail State -->
-                    <div class="setting-group">
-                        <label>Guardrail State</label>
-                        <div id="kairosGuardrailState" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:220px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
-                    </div>
-                    <!-- Tracked Dex Tasks -->
-                    <div class="setting-group">
-                        <label>Tracked Dex Tasks</label>
-                        <div id="kairosTrackedDexTasks" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:220px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
-                    </div>
-                    <!-- Events -->
-                    <div class="setting-group">
-                        <label>最近事件</label>
-                        <div id="kairosEvents" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:200px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;">无</div>
                     </div>
                 </div>
             </div>

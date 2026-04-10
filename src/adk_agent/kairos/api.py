@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from .activity_log import KairosActivityLog
 from .attach import build_runtime_summary, list_runtime_summaries
 from .models import KairosSchedule
 
@@ -81,6 +84,26 @@ def register_kairos_routes(app, session_manager):
             "last_proactive_scan": status.get("last_proactive_scan", {}),
             "last_guardrail_block": status.get("last_guardrail_block", {}),
             "last_planning_result": status.get("last_planning_result", {}),
+        }
+
+    @router.get("/api/sessions/{session_id}/kairos/history")
+    async def kairos_history(
+        session_id: str,
+        app_name: str,
+        user_id: str,
+        descending: bool = True,
+    ):
+        project_root = Path(__file__).resolve().parents[3]
+        history = KairosActivityLog(project_root).read_session_history(
+            user_id=user_id,
+            app_name=app_name,
+            session_id=session_id,
+            descending=descending,
+        )
+        return {
+            "status": "ok",
+            "session_id": session_id,
+            "history": history,
         }
 
     # --- Phase 2: Schedule routes ---

@@ -1,32 +1,32 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: completed
-last_updated: "2026-04-07T11:00:29Z"
-last_activity: 2026-04-07
+milestone: v1.1
+milestone_name: kairos-phase-4
+status: in_progress
+last_updated: "2026-04-10T00:00:00Z"
+last_activity: 2026-04-10
 progress:
-  total_phases: 3
+  total_phases: 5
   completed_phases: 3
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 8
+  completed_plans: 8
 ---
 
 # STATE.md
 
 ## Current Position
 
-Phase: 3
-Plan: Completed
-Status: Phase 3 assistant-mode runtime, cooldown semantics, and live demo hardening are complete; `main` and `origin/main` are synced at `849b1d3`
-Last activity: 2026-04-07
+Phase: 4A
+Plan: 04A-01 completed
+Status: Phase 4A 的第一条执行链已落地：history reader、history API、attach history hint、operator console shell、timeline rail、history fetch 与 live todo delivery history evidence 均已完成；下一步可继续细化 left-column cockpit 渲染或转入 4B（Goal-Driven Planning Intelligence）规划
+Last activity: 2026-04-10
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-06)
 
 **Core value:** 把普通的一次一答式 agent 运行时，演进成一个可扩展、可观测、可长期运行、能自主推进工作的现代 Agent Operating System。
-**Current focus:** Phase 03 — policy-hardening-verification 已完成。下次续推不应再回到 Phase 3 实现本身，而应以 `main` 为基线决定下一 milestone / 下一 phase，并继续保持敏感本地配置不进入提交。
+**Current focus:** v1.1 Phase 4A — Explainability, History & Operator UX。当前重点不再是验证 Kairos 是否做过工作，而是让前端/operator 能清楚看到它做了什么、为什么做、为什么停，以及为 4B 的更强 planning intelligence 建立可观测基础。
 
 ## Accumulated Context
 
@@ -36,15 +36,17 @@ See: .planning/PROJECT.md (updated 2026-04-06)
 - todo boss demo 已经落地最小闭环：`todo_requirements -> todo_design -> todo_codegen -> todo_tests -> generate todo delivery report`。
 - 上述闭环已通过真实宿主 follow-up、真实 Dex 产物生成、真实 HTTP 服务与 live regression 验证。
 - 当前 main 上已进一步升级为 richer real todo app flow：真实 HTML/CSS/JS 单页 app、verification gating、runtime blocked-state 处理与 live HTTP 回归均已通过。
-- 当前对真实进度的正确口径是：Phase 1/2 已完成，Phase 3 已完成 assistant-mode runtime、cooldown semantics 与 live demo hardening，相关提交已在 `main` 并同步到 `origin/main`。
-- 已验证关键回归证据主要来自 `tests/kairos/test_continuation.py`、`tests/kairos/test_runtime.py`、`tests/dex/test_tools.py`、`tests/kairos/test_live_http_kairos_demo_outputs_regression.py`；当前仓库在 `PYTHONPATH=.` 且 `KAIROS_BASE_URL=http://127.0.0.1:8012` 下已实测完整 Phase 3 回归 `96 passed`。
+- 当前对真实进度的正确口径是：Phase 1/2/3 已完成并已推送；下一个开发目标不是再增强 Phase 3，而是按已认可的 spec 进入 Phase 4A/4B。
+- 已认可的下一阶段设计文档为 `docs/superpowers/specs/2026-04-09-kairos-phase-4-design.md`，其中 4A 负责历史/解释/左右布局 operator UX，4B 负责多候选 planning intelligence。
+- 4A-01 已完成：当前 main 已具备 session-scoped Kairos history API、attach `has_history` 提示、timeline parser，以及第一轮 operator console UI（左右双栏、timeline rail、white-card controls、整体滚动与 live history regression）。
+- 当前用户最新 UI 偏好已经过真实反馈确认：Kairos 卡片使用白底更清晰，控制按钮需紧凑横排，Cron 注册区放右侧更合理，整面板需要纵向滚动避免下方卡片被遮挡。
 - 当前本地剩余漂移只应视为操作性注意事项：`private_key.yaml` 仍是 tracked 且本地 modified，不能误入后续提交。
 
 ## Session Continuity
 
-Last session: 2026-04-07
-Stopped at: Phase 3 coding / verification / push / worktree cleanup 已完成；下次应从 `main` 决定后续 milestone，而不是回到旧 Phase 3 resume checkpoint
-Resume file: .planning/phases/03-policy-hardening-verification/03-RESUME-GUIDE-2026-04-07-FINAL.md
+Last session: 2026-04-10
+Stopped at: 4A-01 已实现并验证完成；当前最自然的下一步是继续把 left-column cockpit 渲染从 hook 升级为更成熟的卡片化 overview，或开始 4B planning intelligence 规划
+Resume file: .planning/phases/04A-explainability-history-ux/04A-01-SUMMARY.md
 
 ---
-*Last updated: 2026-04-07 after reconciling GSD state with synced main/origin and final Phase 3 status*
+*Last updated: 2026-04-10 after completing 4A-01 history/operator UX implementation and live verification*

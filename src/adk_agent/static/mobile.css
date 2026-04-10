@@ -32,6 +32,22 @@
     display: none;
 }
 
+@media (max-width: 960px) {
+    .kairos-console {
+        grid-template-columns: 1fr;
+    }
+
+    .kairos-modal {
+        width: min(96vw, 96vw);
+        max-width: 96vw !important;
+    }
+
+    .kairos-modal-body {
+        max-height: 82vh;
+        overflow-y: auto;
+    }
+}
+
 @media (max-width: 768px) {
 
     /* ==========================================

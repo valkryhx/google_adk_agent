@@ -4,7 +4,7 @@
 
 这个 milestone 聚焦 KAIROS 从“观察 Dex 后台任务状态”向“主动发现下一步并自动续推 workflow”的跃迁。路线分为三个 phase：先做 Autonomous Continuation MVP，证明系统能在 staged workflow 中自动创建 report follow-up；再做 artifact-aware proactive reporting 与前端/API 可视化；最后做 policy hardening 与分层验证，确保自治能力可解释、可测试、不失控。
 
-当前 v1.0 路线已经完成，后续 roadmap 应以新的 milestone/phase 继续扩展，而不是重复 Phase 1-3 的实现工作。
+当前 v1.0 路线已经完成。下一步将进入 v1.1，拆成两个连续 phase：先做 `4A`（Explainability, History & Operator UX），解决 Kairos 做了很多事但前端看不清的问题；再做 `4B`（Goal-Driven Planning Intelligence），让 Kairos 在可见、可解释的基础上，显式比较候选动作、留下 planning 痕迹并做更强的目标驱动推进。
 
 ## Phases
 
@@ -17,6 +17,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Autonomous Continuation MVP** - 引入 workflow-aware state 与 continuation engine，打通自动创建 report follow-up 的最小自治闭环
 - [x] **Phase 2: Artifact-Aware Reporting & Visibility** - 增强结果摘要、blocked reason 与 workflow/planned actions 可视化
 - [x] **Phase 3: Policy Hardening & Verification** - 增加去重、限步、策略观测与完整回归验证，稳固自治能力
+- [ ] **Phase 4A: Explainability, History & Operator UX** - 让 Kairos 的当前状态与完整推进历史在前端/API 中同时可见，并重构操作面板为高密度可用的左右布局
+- [ ] **Phase 4B: Goal-Driven Planning Intelligence** - 在 4A 的可见性基础上，引入多候选 next-step selection、真实 planning result 与可解释的 re-plan 痕迹
 
 ## Phase Details
 
@@ -50,22 +52,23 @@ Plans:
 - [x] 02-01: 增强 Dex snapshot/result/log 摘要消费与 artifact-aware proactive brief
 - [x] 02-02: 扩展 API 与前端面板，展示 workflow / planned actions / blocked reason
 
-### Phase 3: Policy Hardening & Verification
-**Goal**: 让 phase-3 的自治续推具备去重、限步、策略可观测与稳定回归保障，避免重复续推和失控。
-**Depends on**: Phase 2
-**Requirements**: [POL-01, POL-02, POL-03]
+### Phase 4: Explainability & Planning Intelligence
+
+### Phase 4A: Explainability, History & Operator UX
+**Goal**: 让 Kairos 的当前状态与完整推进历史在前端/API 中同时可见，并重构操作面板为高密度可用的左右布局。
+**Depends on**: Phase 3
+**Requirements**: [4A-HIS-01, 4A-UX-01, 4A-VER-01]
 **Success Criteria** (what must be TRUE):
-  1. KAIROS 不会对同一个 workflow 重复创建相同的 follow-up Dex task
-  2. KAIROS 的自动续推步数受到策略限制，不会出现无限循环或 runaway autonomy
-  3. 开发者可以通过 API 或 status 观察 KAIROS 的关键自治策略状态与决策结果
-  4. 分层回归测试能够稳定覆盖去重、限步、blocked/waiting_input 与 live HTTP 自动续推闭环
-**Plans**: 2 plans
+  1. 用户可以通过 session-scoped history API 读取完整 Kairos 历史，而不再只能依赖 `recent_events`
+  2. KAIROS 面板可以同时展示 current runtime state 与 history timeline
+  3. 历史 timeline 能显示 follow-up 创建、任务完成、guardrail 等工作证据，而不只是状态存在
+  4. live todo delivery regression 能同时验证 current status 与 history evidence
+**Plans**: 1 plan
 
 Plans:
-- [x] 03-01: 实现 continuation history、dedupe、cooldown / max auto steps 等策略护栏
-- [x] 03-02: 补齐 runtime / integration / live-http / frontend 回归矩阵并固化状态观测输出
+- [x] 04A-01: 落地 history reader / history API / operator console shell / timeline rail / live history evidence
 
-## Progress
+### Phase 4B: Goal-Driven Planning Intelligence
 
 **Execution Order:**
 Phases execute in numeric order: 1 → 2 → 3
@@ -75,6 +78,8 @@ Phases execute in numeric order: 1 → 2 → 3
 | 1. Autonomous Continuation MVP | 3/3 | Complete | 2026-04-06 |
 | 2. Artifact-Aware Reporting & Visibility | 2/2 | Complete | 2026-04-06 |
 | 3. Policy Hardening & Verification | 2/2 | Complete | 2026-04-07 |
+| 4A. Explainability, History & Operator UX | 1/1 | In progress | - |
+| 4B. Goal-Driven Planning Intelligence | 0/? | Not started | - |
 
 ---
-*Last updated: 2026-04-07 after Phase 3 closeout and sync to origin/main*
+*Last updated: 2026-04-10 after completing Phase 4A plan 01 history/operator UX execution*

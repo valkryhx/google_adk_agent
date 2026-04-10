@@ -3,6 +3,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "src" / "adk_agent" / "static" / "script.js"
 INDEX = ROOT / "src" / "adk_agent" / "static" / "index.html"
+STYLE = ROOT / "src" / "adk_agent" / "static" / "style.css"
+MOBILE = ROOT / "src" / "adk_agent" / "static" / "mobile.css"
 
 
 def test_script_exposes_kairos_helpers_for_tracked_tasks():
@@ -62,3 +64,24 @@ def test_kairos_panels_preserve_multiline_text_rendering():
     assert 'id="kairosEvents"' in html
     assert 'id="kairosTrackedDexTasks" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:220px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;"' in html
     assert 'id="kairosEvents" style="font-size:12px; color:#555; padding:8px; background:#f8f9fa; border-radius:6px; max-height:200px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;"' in html
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def test_kairos_modal_enables_vertical_scrolling_for_hidden_cards():
+    css = STYLE.read_text(encoding="utf-8")
+
+    assert '.kairos-modal-body {' in css
+    assert 'overflow-y: auto;' in css
+    assert '.kairos-column {' in css
+    assert 'min-height: 0;' in css

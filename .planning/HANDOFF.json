@@ -4,10 +4,10 @@
   "phase": "4A",
   "phase_name": "Explainability, History & Operator UX",
   "phase_dir": ".planning/phases/04A-explainability-history-ux",
-  "plan": 0,
+  "plan": 1,
   "task": 0,
   "total_tasks": 0,
-  "status": "paused",
+  "status": "active",
   "completed_tasks": [
     {
       "id": 1,
@@ -36,21 +36,6 @@
   ],
   "remaining_tasks": [
     {
-      "id": 5,
-      "name": "Commit updated planning artifacts for Phase 4A/4B",
-      "status": "not_started"
-    },
-    {
-      "id": 6,
-      "name": "Create a detailed implementation plan for Phase 4A",
-      "status": "not_started"
-    },
-    {
-      "id": 7,
-      "name": "Implement Kairos history API and operator UX redesign",
-      "status": "not_started"
-    },
-    {
       "id": 8,
       "name": "Follow with Phase 4B planning intelligence work",
       "status": "not_started"
@@ -65,8 +50,8 @@
   ],
   "human_actions_pending": [
     {
-      "action": "Resume from main and turn the approved Phase 4 spec into concrete 4A planning docs and implementation work.",
-      "context": "The design is approved, but implementation planning/execution for 4A has not started yet.",
+      "action": "Phase 4A plan 01 is complete on main; next move is either polish the left-column cockpit rendering or start concrete 4B planning.",
+      "context": "The design, implementation plan, history API, operator UX shell, timeline rail, white-card layout fixes, and live verification for 4A-01 are all complete.",
       "blocking": false
     }
   ],
@@ -95,6 +80,6 @@
     ".planning/phases/03-policy-hardening-verification/.continue-here.md",
     "private_key.yaml"
   ],
-  "next_action": "Resume from main, commit the updated Phase 4A/4B GSD artifacts if desired, then create a detailed implementation plan for Phase 4A from the approved spec.",
-  "context_notes": "Phase 3 is done. The project is now at the transition point between Phase 3 closeout and Phase 4A planning. The most important thing for the next session is to not reopen old worktree/debug loops; instead, immediately use the approved Phase 4 spec to write planning artifacts and begin 4A implementation planning."
+  "next_action": "Commit the completed 4A-01 implementation/docs on main, then either continue refining the left-column cockpit rendering or begin detailed 4B planning from the approved spec.",
+  "context_notes": "Phase 4A plan 01 is no longer just planned; it has been implemented and verified. The codebase now has a session history API, parsed timeline entries, a split operator console shell, white-card controls/layout fixes, and live history evidence. The next session should build on this baseline rather than recreating the initial 4A planning work."
 }

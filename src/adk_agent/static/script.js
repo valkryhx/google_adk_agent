@@ -2004,6 +2004,54 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function formatKairosHistoryTimeline(entries) {
+        if (!entries || entries.length === 0) return '无历史记录';
+        return entries.map((entry) => {
+            return [
+                `[${entry.ts || '-'}] ${entry.title || entry.kind || 'Kairos event'}`,
+                entry.message || '-',
+                entry.workflow ? `workflow: ${entry.workflow}` : null,
+                entry.stage ? `stage: ${entry.stage}` : null,
+                entry.task_id ? `task_id: ${entry.task_id}` : null,
+            ].filter(Boolean).join('\n');
+        }).join('\n\n');
+    }
+
+    function formatKairosOverview(kairos) {
+        return {
+            mode: kairos.mode || '-',
+            running: Boolean(kairos.running),
+            busy: Boolean(kairos.busy),
+            last_tick_at: kairos.last_tick_at || '-',
+            sleep_until: kairos.sleep_until || '-',
+        };
+    }
+
+    async function refreshKairosHistory() {
+        const sessionId = getCurrentSessionId();
+        const historyEl = document.getElementById('kairosHistoryTimeline');
+        if (!historyEl) return;
+        if (!sessionId) {
+            historyEl.textContent = '请先选择或创建一个对话';
+            return;
+        }
+        try {
+            const params = new URLSearchParams({
+                app_name: APP_NAME,
+                user_id: getUserId(),
+                descending: 'true',
+            });
+            const response = await fetch(`/api/sessions/${sessionId}/kairos/history?${params.toString()}`);
+            if (!response.ok) {
+                throw new Error(`KAIROS history failed: ${response.status}`);
+            }
+            const data = await response.json();
+            historyEl.textContent = formatKairosHistoryTimeline(data.history || []);
+        } catch (e) {
+            historyEl.textContent = `加载失败: ${e.message}`;
+        }
+    }
+
     function formatKairosStatus(kairos) {
         return [
             `enabled: ${kairos.enabled}`,
@@ -2088,7 +2136,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         kairosNoSession.style.display = 'none';
         kairosPanel.style.display = 'block';
-        await refreshKairosStatus();
+        await Promise.all([refreshKairosStatus(), refreshKairosHistory()]);
     }
 
     async function refreshKairosStatus() {
@@ -2105,6 +2153,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const unfinishedWorkEl = document.getElementById('kairosUnfinishedWork');
         const proactiveCandidatesEl = document.getElementById('kairosProactiveCandidates');
         const guardrailStateEl = document.getElementById('kairosGuardrailState');
+        const historyEl = document.getElementById('kairosHistoryTimeline');
 
         if (!sessionId) {
             if (noSession) noSession.style.display = 'block';
@@ -2136,6 +2185,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (unfinishedWorkEl) unfinishedWorkEl.textContent = formatKairosSimpleJson(kairos.unfinished_work_items || data.unfinished_work_items || []);
             if (proactiveCandidatesEl) proactiveCandidatesEl.textContent = formatKairosSimpleJson(kairos.proactive_candidates || data.proactive_candidates || []);
             if (guardrailStateEl) guardrailStateEl.textContent = formatKairosGuardrailState(kairos, data);
+            await refreshKairosHistory();
         } catch (e) {
             console.error('[KAIROS] 刷新状态失败:', e);
             if (statusEl) statusEl.textContent = `加载失败: ${e.message}`;
@@ -2148,6 +2198,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (unfinishedWorkEl) unfinishedWorkEl.textContent = '无';
             if (proactiveCandidatesEl) proactiveCandidatesEl.textContent = '无';
             if (guardrailStateEl) guardrailStateEl.textContent = '无';
+            if (historyEl) historyEl.textContent = '无';
         }
     }
 
