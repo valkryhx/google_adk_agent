@@ -1,85 +1,74 @@
 {
   "version": "1.0",
-  "timestamp": "2026-04-09T03:53:53.829Z",
-  "phase": "4A",
-  "phase_name": "Explainability, History & Operator UX",
-  "phase_dir": ".planning/phases/04A-explainability-history-ux",
+  "timestamp": "2026-04-11T10:14:37.679Z",
+  "phase": "4B",
+  "phase_name": "Goal-Driven Planning Intelligence",
+  "phase_dir": ".planning/phases/04B-goal-driven-planning-intelligence",
   "plan": 1,
-  "task": 0,
-  "total_tasks": 0,
-  "status": "active",
+  "task": 1,
+  "total_tasks": 3,
+  "status": "paused",
   "completed_tasks": [
     {
       "id": 1,
-      "name": "Complete Phase 1-3 Kairos runtime and verification baseline",
+      "name": "Generate 4B research artifact",
       "status": "done",
-      "commit": "849b1d3"
+      "commit": "345badf"
     },
     {
       "id": 2,
-      "name": "Finalize planning and resume artifacts for Phase 3",
+      "name": "Create 04B-01/02/03 execution plans",
       "status": "done",
-      "commit": "49d4a7a"
-    },
-    {
-      "id": 3,
-      "name": "Write and commit Phase 4 design spec",
-      "status": "done",
-      "commit": "92f787b"
-    },
-    {
-      "id": 4,
-      "name": "Sync approved Phase 4A/4B direction into GSD artifacts",
-      "status": "done",
-      "commit": "working_tree"
+      "commit": "345badf"
     }
   ],
   "remaining_tasks": [
     {
-      "id": 8,
-      "name": "Follow with Phase 4B planning intelligence work",
+      "id": 3,
+      "name": "Execute 04B-01 with strict TDD",
+      "status": "not_started"
+    },
+    {
+      "id": 4,
+      "name": "Execute 04B-02 after 04B-01 lands",
+      "status": "not_started"
+    },
+    {
+      "id": 5,
+      "name": "Execute 04B-03 and run phase verification",
       "status": "not_started"
     }
   ],
   "blockers": [
     {
-      "description": "Main worktree still contains a local tracked modification in private_key.yaml, which contains secrets and must stay out of commits.",
+      "description": "private_key.yaml is still tracked and locally modified; it contains secrets and must stay out of all future commits.",
       "type": "operational",
-      "workaround": "Treat private_key.yaml as local-only config drift; never stage it in future work."
-    }
-  ],
-  "human_actions_pending": [
+      "workaround": "Stage only explicit 4B files and keep private_key.yaml excluded from every commit."
+    },
     {
-      "action": "Phase 4A plan 01 is complete on main; next move is either polish the left-column cockpit rendering or start concrete 4B planning.",
-      "context": "The design, implementation plan, history API, operator UX shell, timeline rail, white-card layout fixes, and live verification for 4A-01 are all complete.",
-      "blocking": false
+      "description": "Formal gsd-plan-checker subagent verification did not complete cleanly in this session because the agent/team spawning path was unstable.",
+      "type": "technical",
+      "workaround": "Resume from the written 04B plan files directly; if needed, do a manual plan review or rerun checker later."
     }
   ],
+  "human_actions_pending": [],
   "decisions": [
     {
-      "decision": "Phase 4 is split into 4A and 4B rather than one monolithic follow-up phase.",
-      "rationale": "4A first solves visibility/history/operator UX so 4B planning intelligence can be made visible and testable instead of opaque.",
-      "phase": "4"
+      "decision": "4B execution should follow the three-plan sequence 04B-01 -> 04B-02 -> 04B-03 with strict TDD.",
+      "rationale": "The backend planning core must stabilize before runtime/history surfacing, and those must land before UI/regression work.",
+      "phase": "4B"
     },
     {
-      "decision": "4A should focus on explainability/history UX before stronger planning intelligence.",
-      "rationale": "The user’s strongest pain is not whether Kairos did work, but that the frontend does not make its work and reasoning visible.",
-      "phase": "4A"
-    },
-    {
-      "decision": "The user wants both strong operator-facing explainability and stronger visible planning intelligence, but in sequence rather than in one giant phase.",
-      "rationale": "This keeps execution and validation manageable while preserving the long-term goal of making Kairos both visibly and actually more intelligent.",
-      "phase": "4A/4B"
+      "decision": "4B remains deterministic and policy-backed rather than introducing an unrestricted LLM planner.",
+      "rationale": "The approved 4B context explicitly requires fixed candidate taxonomy, tiered winner supersession, and no chain-of-thought persistence.",
+      "phase": "4B"
     }
   ],
   "uncommitted_files": [
+    "private_key.yaml",
     ".planning/HANDOFF.json",
-    ".planning/MILESTONES.md",
-    ".planning/ROADMAP.md",
-    ".planning/STATE.md",
-    ".planning/phases/03-policy-hardening-verification/.continue-here.md",
-    "private_key.yaml"
+    ".planning/phases/04B-goal-driven-planning-intelligence/.continue-here.md"
   ],
-  "next_action": "Commit the completed 4A-01 implementation/docs on main, then either continue refining the left-column cockpit rendering or begin detailed 4B planning from the approved spec.",
-  "context_notes": "Phase 4A plan 01 is no longer just planned; it has been implemented and verified. The codebase now has a session history API, parsed timeline entries, a split operator console shell, white-card controls/layout fixes, and live history evidence. The next session should build on this baseline rather than recreating the initial 4A planning work."
+  "next_action": "Start with 04B-01 Task 1: add failing tests in tests/kairos/test_models.py for the stable last_planning_result artifact shape, then implement the minimum models.py changes to make those tests pass.",
+  "context_notes": "Phase 4B planning is complete and committed in 345badf. Execution had just begun when the session was paused: execute-phase context was initialized, but no 04B implementation code was changed yet. The correct resume path is to begin 04B-01 from the first TDD task, not to re-plan 4B. Keep commits explicit and avoid staging private_key.yaml."
 }
