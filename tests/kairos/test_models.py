@@ -1,4 +1,5 @@
 from src.adk_agent.kairos.models import (
+    DocumentReadResult,
     KairosContinuationPolicy,
     KairosEvent,
     KairosMode,
@@ -510,3 +511,30 @@ def test_load_state_with_unknown_fields_is_tolerant():
     state = load_kairos_state(raw)
     assert state.enabled is True
     assert state.mode is KairosMode.IDLE
+
+
+def test_document_read_result_round_trip_preserves_open_questions_and_artifacts():
+    state = KairosState(
+        document_work_items=[
+            DocumentReadResult(
+                work_id="work:python-cli",
+                goal="build python cli app",
+                status="in_progress",
+                current_step="requirements",
+                next_actions=["draft requirements", "ask for output directory"],
+                blockers=[],
+                expected_artifacts=["specs/python-cli/PLAN.md"],
+                open_questions=["Should persistence use sqlite?"],
+                human_input_required=True,
+                source_docs=["specs/python-cli/PLAN.md"],
+            )
+        ]
+    )
+
+    restored = load_kairos_state(dump_kairos_state(state))
+
+    assert restored.document_work_items[0].work_id == "work:python-cli"
+    assert restored.document_work_items[0].current_step == "requirements"
+    assert restored.document_work_items[0].expected_artifacts == ["specs/python-cli/PLAN.md"]
+    assert restored.document_work_items[0].open_questions == ["Should persistence use sqlite?"]
+    assert restored.document_work_items[0].human_input_required is True

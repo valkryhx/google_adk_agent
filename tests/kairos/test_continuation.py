@@ -2,6 +2,7 @@ from datetime import datetime
 
 from src.adk_agent.kairos.continuation import ContinuationEngine
 from src.adk_agent.kairos.models import (
+    DocumentReadResult,
     KairosContinuationPolicy,
     KairosPlannedAction,
     KairosState,
@@ -294,6 +295,54 @@ def test_verification_failure_selects_blocked_or_ask_user_candidate():
 
 
 
+def test_refresh_unfinished_work_uses_document_backed_items_without_workflow_template():
+    state = KairosState(
+        document_work_items=[
+            DocumentReadResult(
+                work_id="work:python-cli",
+                goal="build python cli",
+                status="in_progress",
+                current_step="design",
+                next_actions=["write cli outline"],
+                blockers=[],
+                expected_artifacts=["specs/python-cli/DESIGN.md"],
+                source_docs=["specs/python-cli/PLAN.md"],
+            )
+        ]
+    )
+    engine = ContinuationEngine(path_exists=lambda _: True)
+
+    engine.refresh_unfinished_work(state)
+
+    assert state.unfinished_work_items[0]["work_id"] == "work:python-cli"
+    assert state.unfinished_work_items[0]["kind"] == "document_work_item"
+    assert state.proactive_candidates[0]["action"] == "continue_workflow"
+    assert state.last_planning_result["goal"] == "build python cli"
+
+
+def test_refresh_unfinished_work_routes_blocked_document_to_high_tier_candidate():
+    state = KairosState(
+        document_work_items=[
+            DocumentReadResult(
+                work_id="work:python-cli",
+                goal="build python cli",
+                status="blocked",
+                current_step="requirements",
+                blockers=["Need packaging target"],
+                open_questions=["Which packaging target matters most?"],
+                human_input_required=True,
+            )
+        ]
+    )
+    engine = ContinuationEngine(path_exists=lambda _: True)
+
+    engine.refresh_unfinished_work(state)
+
+    assert state.last_planning_result["selected_candidate"]["action"] in {"ask_user", "blocked"}
+    assert state.last_planning_result["selected_candidate"]["tier"] == "high"
+    assert state.last_proactive_scan["result"] == "waiting_input"
+
+
 def _todo_workflow_state(*, completed_task_ids, current_stage="verification"):
     return KairosState(
         active_workflow=KairosWorkflow(
@@ -352,7 +401,6 @@ def _todo_workflow_state(*, completed_task_ids, current_stage="verification"):
         ),
         policy=KairosContinuationPolicy(),
     )
-
 
 
 def test_todo_delivery_all_required_artifacts_ready_returns_delivery_report_decision():

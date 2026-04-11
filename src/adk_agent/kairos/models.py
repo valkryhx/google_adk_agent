@@ -115,6 +115,20 @@ def _load_planning_result(raw: dict[str, Any] | None) -> dict[str, Any]:
 
 
 @dataclass
+class DocumentReadResult:
+    work_id: str
+    goal: str
+    status: str
+    current_step: str | None = None
+    next_actions: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
+    expected_artifacts: list[str] = field(default_factory=list)
+    open_questions: list[str] = field(default_factory=list)
+    human_input_required: bool = False
+    source_docs: list[str] = field(default_factory=list)
+
+
+@dataclass
 class KairosState:
     enabled: bool = False
     running: bool = False
@@ -141,6 +155,7 @@ class KairosState:
     )
     condition_tree: dict[str, Any] | None = None
     unfinished_work_items: list[dict[str, Any]] = field(default_factory=list)
+    document_work_items: list[DocumentReadResult] = field(default_factory=list)
     proactive_candidates: list[dict[str, Any]] = field(default_factory=list)
     last_proactive_scan: dict[str, Any] = field(default_factory=dict)
     last_guardrail_block: dict[str, Any] = field(default_factory=dict)
@@ -181,6 +196,7 @@ def load_kairos_state(raw: dict[str, Any] | None) -> KairosState:
         ),
         condition_tree=raw.get("condition_tree"),
         unfinished_work_items=list(raw.get("unfinished_work_items", [])),
+        document_work_items=[DocumentReadResult(**item) for item in raw.get("document_work_items", [])],
         proactive_candidates=list(raw.get("proactive_candidates", [])),
         last_proactive_scan=dict(raw.get("last_proactive_scan", {})),
         last_guardrail_block=dict(raw.get("last_guardrail_block", {})),

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Callable
 
-from .models import KairosPlannedAction, KairosState, KairosTrigger, TriggerKind
+from .models import DocumentReadResult, KairosPlannedAction, KairosState, KairosTrigger, TriggerKind
 
 
 @dataclass
@@ -41,7 +41,43 @@ class ContinuationEngine:
         workflow = state.active_workflow
         state.unfinished_work_items = []
         state.proactive_candidates = []
-        if workflow is None or not state.policy.proactive_scan_enabled:
+        if not state.policy.proactive_scan_enabled:
+            return
+
+        document_work_item = self._build_document_unfinished_work_item(state.document_work_items)
+        if document_work_item is not None:
+            state.unfinished_work_items.append(document_work_item)
+            scan_ts = self._now().isoformat()
+            candidates = self._build_document_proactive_candidates(document_work_item)
+            state.proactive_candidates = candidates
+            selected_candidate, same_tier_retained = self._select_candidate(state, candidates)
+            rejected_candidates = self._build_rejected_candidates(
+                candidates,
+                selected_candidate,
+                same_tier_retained=same_tier_retained,
+                cooldown_active=False,
+            )
+            final_action = self._build_final_action(selected_candidate)
+            state.last_guardrail_block = {}
+            state.last_proactive_scan = {
+                "ts": scan_ts,
+                "result": "waiting_input" if document_work_item["status"] == "blocked" else "candidate_found",
+                "winner": selected_candidate["candidate_id"],
+            }
+            state.last_planning_result = {
+                "ts": scan_ts,
+                "goal": document_work_item["goal"],
+                "workflow_id": None,
+                "stage_id": document_work_item["stage_id"],
+                "candidates_considered": [dict(candidate) for candidate in candidates],
+                "selected_candidate": dict(selected_candidate),
+                "rejected_candidates": rejected_candidates,
+                "final_action": final_action,
+                "policy_note": "winner chosen under tiered-action policy",
+            }
+            return
+
+        if workflow is None:
             return
 
         work_item = self._build_unfinished_work_item(workflow)
@@ -136,6 +172,91 @@ class ContinuationEngine:
                 "reason": f"stage {stage.stage_id} still unfinished",
             }
         return None
+
+    def _build_document_unfinished_work_item(
+        self,
+        document_work_items: list[DocumentReadResult],
+    ) -> dict[str, Any] | None:
+        for item in document_work_items:
+            if item.status in {"completed", "done", "cancelled"}:
+                continue
+            return {
+                "work_id": item.work_id,
+                "kind": "document_work_item",
+                "workflow_id": None,
+                "stage_id": item.current_step or "document_work",
+                "priority": 10,
+                "reason": item.blockers[0] if item.blockers else f"document work {item.work_id} still unfinished",
+                "goal": item.goal,
+                "status": item.status,
+                "next_actions": list(item.next_actions),
+                "open_questions": list(item.open_questions),
+                "human_input_required": item.human_input_required,
+            }
+        return None
+
+    def _build_document_proactive_candidates(self, work_item: dict[str, Any]) -> list[dict[str, Any]]:
+        waiting_input = work_item["status"] == "blocked" or work_item["human_input_required"]
+        reason = work_item["reason"]
+        stage_id = work_item["stage_id"]
+        work_id = work_item["work_id"]
+        return [
+            {
+                "candidate_id": f"{work_id}:{stage_id}:continue_workflow",
+                "action": "continue_workflow",
+                "tier": "medium",
+                "priority": 50,
+                "blocked": waiting_input,
+                "selected": False,
+                "reason": reason,
+            },
+            {
+                "candidate_id": f"{work_id}:{stage_id}:create_follow_up",
+                "action": "create_follow_up",
+                "tier": "medium",
+                "priority": 60,
+                "blocked": True,
+                "selected": False,
+                "reason": "follow-up not available for document work yet",
+                "payload": {},
+            },
+            {
+                "candidate_id": f"{work_id}:{stage_id}:emit_brief",
+                "action": "emit_brief",
+                "tier": "low",
+                "priority": 20,
+                "blocked": False,
+                "selected": False,
+                "reason": f"summarize unfinished work for {stage_id}",
+            },
+            {
+                "candidate_id": f"{work_id}:{stage_id}:ask_user",
+                "action": "ask_user",
+                "tier": "high",
+                "priority": 100,
+                "blocked": not waiting_input,
+                "selected": False,
+                "reason": reason,
+            },
+            {
+                "candidate_id": f"{work_id}:{stage_id}:sleep",
+                "action": "sleep",
+                "tier": "low",
+                "priority": 10,
+                "blocked": False,
+                "selected": False,
+                "reason": "no stronger action available",
+            },
+            {
+                "candidate_id": f"{work_id}:{stage_id}:blocked",
+                "action": "blocked",
+                "tier": "high",
+                "priority": 90,
+                "blocked": not waiting_input,
+                "selected": False,
+                "reason": reason,
+            },
+        ]
 
     def _build_proactive_candidates(self, state: KairosState, workflow, work_item: dict[str, Any]) -> list[dict[str, Any]]:
         stage_id = work_item["stage_id"]
