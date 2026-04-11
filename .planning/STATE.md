@@ -2,24 +2,24 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: execution_completed
-stopped_at: Phase 4B fully implemented and validated
-last_updated: "2026-04-11T13:20:00Z"
+status: execution_in_progress
+stopped_at: Phase 5A paused after implementation; summary and phase bookkeeping remain
+last_updated: "2026-04-11T16:51:05Z"
 last_activity: 2026-04-11
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 9
-  completed_plans: 9
+  total_plans: 12
+  completed_plans: 10
 ---
 
 # STATE.md
 
 ## Current Position
 
-Phase: 4B
-Plan: 04B-03 completed
-Status: Phase 4B 已完整落地：planning artifact contract、fixed candidate planner、runtime re-plan/history/API surfacing、operator console planning cards，以及 live HTTP planning evidence 均已完成并验证通过。
+Phase: 5
+Plan: 05A implementation committed; summary pending
+Status: Phase 5A 的代码工作已完成并提交（`32fed15 feat(kairos): add document-driven work protocol base`）。当前已暂停在 phase-close 边缘：`document_protocol.py`、`document_reader.py`、`DocumentReadResult` / `document_work_items`、以及 document-backed continuation 接线均已落地并通过 focused pytest，下一步是补 `05A-SUMMARY.md` 与更新 phase bookkeeping。
 Last activity: 2026-04-11
 
 ## Project Reference
@@ -27,7 +27,7 @@ Last activity: 2026-04-11
 See: .planning/PROJECT.md (updated 2026-04-06)
 
 **Core value:** 把普通的一次一答式 agent 运行时，演进成一个可扩展、可观测、可长期运行、能自主推进工作的现代 Agent Operating System。
-**Current focus:** v1.1 Phase 4B — Goal-Driven Planning Intelligence 已完成。下一步应转入 phase verification / 更新交接状态 / 准备后续 Phase 5 或收尾提交流程，而不是回到 4B 重新规划。
+**Current focus:** v1.1 Phase 5A 已完成主要实现并已暂停。下一步不是继续补底层协议代码，而是写 `05A-SUMMARY.md`、更新 phase 状态，并决定是否推进 05B。
 
 ## Accumulated Context
 
@@ -38,23 +38,25 @@ See: .planning/PROJECT.md (updated 2026-04-06)
 - 4B-01 已完成：`KairosState.last_planning_result` 现在是稳定 planning artifact，包含 `candidates_considered`、`selected_candidate`、`rejected_candidates`、`final_action`、`policy_note`，且无 chain-of-thought 持久化。
 - 4B-02 已完成：runtime 会显式记录 re-plan / winner diff，API 以 additive 方式暴露 `planning_winner`、`planning_rejected_summary`、`planning_replan`，history timeline 已支持 `planning_selected` / `planning_replan` / `planning_blocked` / `planning_ask_user` / `planning_sleep`。
 - 4B-03 已完成：operator console 已显示 planning winner / rejected / re-plan 卡片，history timeline 已改为结构化渲染与正序显示，并通过真实本地服务 live HTTP 验证 planning evidence 可见。
+- 5A 已完成主要代码落地：`src/adk_agent/kairos/document_protocol.py` 定义了 prompt-governed 文档协议锚点；`src/adk_agent/kairos/document_reader.py` 提供最小 normalized read result；`KairosState` 已支持 `DocumentReadResult` / `document_work_items`；`refresh_unfinished_work()` 已能消费 document-backed work item。
+- Focused verification 当前为绿色：`tests/kairos/test_document_protocol.py`、`tests/kairos/test_document_reader.py`、`tests/kairos/test_models.py`、`tests/kairos/test_continuation.py` 已通过。
 - 当前本地剩余漂移只应视为操作性注意事项：`private_key.yaml` 仍是 tracked 且本地 modified，不能误入后续提交。
 
 ## Session Continuity
 
-### How to retest Phase 4B
-- Full source regression:
-  - `PYTHONIOENCODING=utf-8 PYTHONPATH=. pytest tests/kairos/test_models.py tests/kairos/test_continuation.py tests/kairos/test_runtime.py tests/kairos/test_api.py tests/kairos/test_activity_log.py tests/kairos/test_frontend_script_kairos_ui.py tests/kairos/test_live_http_kairos_demo_outputs_regression.py -q`
-- Live HTTP validation:
-  - start service with `PYTHONIOENCODING=utf-8 python -m src.adk_agent.main_web_start_steering --port 8000`
-  - then run `PYTHONIOENCODING=utf-8 python tests/kairos/live_http_kairos_demo_outputs_regression.py`
-- Manual UI check:
-  - verify planning cards render
-  - verify history timeline is structured, ascending, and readable
+### How to verify / close Phase 5A
+- Focused source verification:
+  - `PYTHONIOENCODING=utf-8 PYTHONPATH=. pytest tests/kairos/test_document_protocol.py tests/kairos/test_document_reader.py tests/kairos/test_models.py tests/kairos/test_continuation.py -q`
+- Implementation evidence:
+  - commit `32fed15 feat(kairos): add document-driven work protocol base`
+- Immediate closure work:
+  - write `.planning/phases/05-document-driven-continuation/05A-SUMMARY.md`
+  - update phase bookkeeping / state so resume and transition reflect 05A code completion
+  - then decide whether to advance into 05B
 
-Last session: 2026-04-11T13:20:00Z
-Stopped at: Phase 4B fully implemented and validated
-Resume file: .planning/phases/04B-goal-driven-planning-intelligence/04B-03-SUMMARY.md
+Last session: 2026-04-11T16:51:05Z
+Stopped at: Phase 5A paused after implementation; summary and bookkeeping remain
+Resume file: .planning/HANDOFF.json
 
 ---
-*Last updated: 2026-04-11 after completing 4B-01/02/03 implementation, source regressions, and live HTTP validation*
+*Last updated: 2026-04-11 after pausing with 05A implementation committed and handoff refreshed*
