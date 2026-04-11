@@ -139,7 +139,13 @@ def test_refresh_unfinished_work_respects_cooldown_guardrail():
     state.last_proactive_scan = {
         "ts": "2026-04-07T10:00:00+00:00",
         "result": "candidate_found",
-        "winner": "todo-codegen",
+        "winner": "todo_delivery_pipeline:codegen:continue_workflow",
+    }
+    state.last_planning_result["selected_candidate"] = {
+        "candidate_id": "todo_delivery_pipeline:codegen:continue_workflow",
+        "action": "continue_workflow",
+        "tier": "medium",
+        "priority": 50,
     }
     state.policy.cooldown_seconds = 999999
     now_calls = iter([
@@ -151,11 +157,140 @@ def test_refresh_unfinished_work_respects_cooldown_guardrail():
     engine.refresh_unfinished_work(state)
 
     assert state.unfinished_work_items[0]["stage_id"] == "codegen"
-    assert state.proactive_candidates == []
+    assert [candidate["action"] for candidate in state.proactive_candidates] == [
+        "continue_workflow",
+        "create_follow_up",
+        "emit_brief",
+        "ask_user",
+        "sleep",
+        "blocked",
+    ]
     assert state.last_guardrail_block["reason"] == "cooldown_active"
     assert state.last_proactive_scan["result"] == "cooldown_active"
-    assert state.last_proactive_scan["winner"] is None
-    assert state.last_proactive_scan["ts"] == "2026-04-07T10:00:00+00:00"
+    assert state.last_proactive_scan["winner"] == "todo_delivery_pipeline:codegen:sleep"
+    assert state.last_planning_result["selected_candidate"]["action"] == "sleep"
+    assert state.last_planning_result["final_action"]["kind"] == "sleep"
+    assert state.last_planning_result["rejected_candidates"][0]["action"] == "continue_workflow"
+
+
+def test_refresh_unfinished_work_evaluates_fixed_candidate_taxonomy():
+    state = _todo_workflow_state(
+        completed_task_ids=["todo_requirements", "todo_design"],
+        current_stage="codegen",
+    )
+    state.active_workflow.stages[2].status = "running"
+    engine = ContinuationEngine(path_exists=lambda _: True)
+
+    engine.refresh_unfinished_work(state)
+
+    assert [candidate["action"] for candidate in state.proactive_candidates] == [
+        "continue_workflow",
+        "create_follow_up",
+        "emit_brief",
+        "ask_user",
+        "sleep",
+        "blocked",
+    ]
+    assert {candidate["tier"] for candidate in state.proactive_candidates} == {"high", "medium", "low"}
+    assert state.last_planning_result["selected_candidate"]["action"] == "continue_workflow"
+    assert state.last_proactive_scan["winner"] == state.last_planning_result["selected_candidate"]["candidate_id"]
+
+
+
+def test_same_tier_candidate_does_not_supersede_current_winner():
+    state = _todo_workflow_state(
+        completed_task_ids=[
+            "todo_requirements",
+            "todo_design",
+            "todo_codegen",
+            "todo_tests",
+        ],
+        current_stage="verification",
+    )
+    state.active_workflow.metadata["verification_result"] = {"ready": True, "failures": []}
+    state.last_planning_result["selected_candidate"] = {
+        "candidate_id": "todo_delivery_pipeline:verification:continue_workflow",
+        "action": "continue_workflow",
+        "tier": "medium",
+        "priority": 50,
+    }
+    engine = ContinuationEngine(
+        path_exists=lambda path: path in {
+            "demo_delivery/todo_app/requirements.md",
+            "demo_delivery/todo_app/design.md",
+            "demo_delivery/todo_app/file_plan.json",
+            "demo_delivery/todo_app/index.html",
+            "demo_delivery/todo_app/style.css",
+            "demo_delivery/todo_app/app.js",
+            "demo_delivery/todo_app/test_plan.md",
+            "demo_delivery/todo_app/smoke_check.json",
+        }
+    )
+
+    engine.refresh_unfinished_work(state)
+
+    assert state.last_planning_result["selected_candidate"]["action"] == "continue_workflow"
+    rejected = {candidate["action"]: candidate for candidate in state.last_planning_result["rejected_candidates"]}
+    assert rejected["create_follow_up"]["rejected_reason"] == "same tier candidate cannot supersede current winner"
+
+
+
+def test_higher_tier_candidate_supersedes_current_winner():
+    state = _todo_workflow_state(
+        completed_task_ids=[
+            "todo_requirements",
+            "todo_design",
+            "todo_codegen",
+            "todo_tests",
+        ],
+        current_stage="verification",
+    )
+    state.active_workflow.status = "waiting_input"
+    state.blocked_reason = "verification checks failed for todo delivery report"
+    state.condition_tree = {
+        "failed_checks": [{"check": "edit_item", "reason": "editing flow failed"}],
+        "missing": [],
+    }
+    state.last_planning_result["selected_candidate"] = {
+        "candidate_id": "todo_delivery_pipeline:verification:continue_workflow",
+        "action": "continue_workflow",
+        "tier": "medium",
+        "priority": 50,
+    }
+    engine = ContinuationEngine(path_exists=lambda _: True)
+
+    engine.refresh_unfinished_work(state)
+
+    assert state.last_planning_result["selected_candidate"]["action"] == "ask_user"
+    assert state.last_proactive_scan["winner"] == state.last_planning_result["selected_candidate"]["candidate_id"]
+    rejected = {candidate["action"]: candidate for candidate in state.last_planning_result["rejected_candidates"]}
+    assert rejected["continue_workflow"]["rejected_reason"] == "higher tier candidate selected"
+
+
+
+def test_verification_failure_selects_blocked_or_ask_user_candidate():
+    state = _todo_workflow_state(
+        completed_task_ids=[
+            "todo_requirements",
+            "todo_design",
+            "todo_codegen",
+            "todo_tests",
+        ],
+        current_stage="verification",
+    )
+    state.active_workflow.status = "waiting_input"
+    state.blocked_reason = "verification checks failed for todo delivery report"
+    state.condition_tree = {
+        "failed_checks": [{"check": "edit_item", "reason": "editing flow failed"}],
+        "missing": [],
+    }
+    engine = ContinuationEngine(path_exists=lambda _: True)
+
+    engine.refresh_unfinished_work(state)
+
+    assert state.last_planning_result["selected_candidate"]["action"] in {"blocked", "ask_user"}
+    assert state.last_planning_result["selected_candidate"]["tier"] == "high"
+    assert state.last_proactive_scan["result"] == "waiting_input"
 
 
 
@@ -389,3 +524,82 @@ def test_todo_delivery_blocks_when_verification_checks_fail():
     assert decisions == []
     assert state.blocked_reason == "verification checks failed for todo delivery report"
     assert state.condition_tree["failed_checks"][0]["check"] == "edit_item"
+
+
+def test_final_action_matches_follow_up_decision_payload():
+    state = _todo_workflow_state(
+        completed_task_ids=[
+            "todo_requirements",
+            "todo_design",
+            "todo_codegen",
+            "todo_tests",
+        ],
+        current_stage="verification",
+    )
+    state.active_workflow.metadata["verification_result"] = {"ready": True, "failures": []}
+    engine = ContinuationEngine(
+        path_exists=lambda path: path in {
+            "demo_delivery/todo_app/requirements.md",
+            "demo_delivery/todo_app/design.md",
+            "demo_delivery/todo_app/file_plan.json",
+            "demo_delivery/todo_app/index.html",
+            "demo_delivery/todo_app/style.css",
+            "demo_delivery/todo_app/app.js",
+            "demo_delivery/todo_app/test_plan.md",
+            "demo_delivery/todo_app/smoke_check.json",
+        }
+    )
+
+    engine.refresh_unfinished_work(state)
+    decisions = engine.evaluate_after_dex_poll(state, completed_tasks=[], tracked_tasks=[])
+
+    assert state.last_planning_result["selected_candidate"]["action"] == "create_follow_up"
+    assert state.last_planning_result["final_action"]["kind"] == "create_dex_task"
+    assert state.last_planning_result["final_action"]["payload"] == decisions[0].payload
+
+
+def test_apply_decisions_uses_final_action_payload_for_follow_up():
+    state = KairosState()
+    engine = ContinuationEngine()
+    decision = engine._decision_from_final_action(
+        {
+            "kind": "create_dex_task",
+            "reason": "todo_delivery_ready",
+            "payload": {
+                "workflow_id": "todo_delivery_pipeline",
+                "description": "generate todo delivery report",
+            },
+        }
+    )
+
+    triggers = engine.apply_decisions(state, [decision])
+
+    assert state.planned_actions[0].payload == {
+        "workflow_id": "todo_delivery_pipeline",
+        "description": "generate todo delivery report",
+    }
+    assert triggers[0].metadata == state.planned_actions[0].payload
+
+
+def test_sleep_winner_leaves_explicit_final_action_kind():
+    state = _todo_workflow_state(
+        completed_task_ids=["todo_requirements", "todo_design"],
+        current_stage="codegen",
+    )
+    state.active_workflow.stages[2].status = "running"
+    state.last_proactive_scan = {
+        "ts": "2026-04-07T10:00:00+00:00",
+        "result": "candidate_found",
+        "winner": "todo_delivery_pipeline:codegen:continue_workflow",
+    }
+    state.policy.cooldown_seconds = 999999
+    now_calls = iter([
+        datetime.fromisoformat("2026-04-07T10:00:30+00:00"),
+        datetime.fromisoformat("2026-04-07T10:00:30+00:00"),
+    ])
+    engine = ContinuationEngine(path_exists=lambda _: True, now=lambda: next(now_calls))
+
+    engine.refresh_unfinished_work(state)
+
+    assert state.last_planning_result["selected_candidate"]["action"] == "sleep"
+    assert state.last_planning_result["final_action"]["kind"] == "sleep"

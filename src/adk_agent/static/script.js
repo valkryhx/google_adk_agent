@@ -2004,6 +2004,37 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function formatKairosPlanningWinner(planning) {
+        if (!planning || !planning.selected_candidate || Object.keys(planning.selected_candidate).length === 0) return '无';
+        const candidate = planning.selected_candidate;
+        return [
+            `${candidate.action || '-'}${candidate.tier ? ` [${candidate.tier}]` : ''}`,
+            `reason: ${candidate.reason || '-'}`,
+            `candidate_id: ${candidate.candidate_id || '-'}`,
+        ].join('\n');
+    }
+
+    function formatKairosPlanningRejected(planning) {
+        const rejected = planning?.rejected_candidates || [];
+        if (!rejected.length) return '无';
+        return rejected.map((candidate) => [
+            `- ${candidate.action || '-'}`,
+            `  reason: ${candidate.rejected_reason || candidate.reason || '-'}`,
+        ].join('\n')).join('\n\n');
+    }
+
+    function formatKairosPlanningReplan(planning) {
+        const replan = planning?.replan || {};
+        if (replan.changed && replan.previous_winner && replan.current_winner) {
+            return `${replan.previous_winner.action || '-'} -> ${replan.current_winner.action || '-'}`;
+        }
+        const winner = planning?.selected_candidate || {};
+        if (winner.action) {
+            return `retained: ${winner.action}`;
+        }
+        return '无';
+    }
+
     function formatKairosHistoryTimeline(entries) {
         if (!entries || entries.length === 0) return '无历史记录';
         return entries.map((entry) => {
@@ -2015,6 +2046,42 @@ document.addEventListener('DOMContentLoaded', () => {
                 entry.task_id ? `task_id: ${entry.task_id}` : null,
             ].filter(Boolean).join('\n');
         }).join('\n\n');
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+    }
+
+    function renderKairosHistoryTimeline(entries) {
+        if (!entries || entries.length === 0) {
+            return '<div class="kairos-timeline-empty">无历史记录</div>';
+        }
+        return entries.map((entry) => {
+            const title = escapeHtml(entry.title || entry.kind || 'Kairos event');
+            const message = escapeHtml(entry.message || '-');
+            const ts = escapeHtml(entry.ts || '-');
+            const meta = [
+                entry.workflow ? `workflow: ${entry.workflow}` : null,
+                entry.stage ? `stage: ${entry.stage}` : null,
+                entry.task_id ? `task_id: ${entry.task_id}` : null,
+            ].filter(Boolean).map(escapeHtml).join(' · ');
+            return `
+                <div class="kairos-timeline-item">
+                    <div class="kairos-timeline-dot"></div>
+                    <div class="kairos-timeline-content">
+                        <div class="kairos-timeline-entry-title">[${title}]</div>
+                        <div class="kairos-timeline-entry-time">${ts}</div>
+                        <div class="kairos-timeline-entry-message">${message}</div>
+                        ${meta ? `<div class="kairos-timeline-entry-meta">${meta}</div>` : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
     }
 
     function formatKairosOverview(kairos) {
@@ -2039,14 +2106,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const params = new URLSearchParams({
                 app_name: APP_NAME,
                 user_id: getUserId(),
-                descending: 'true',
+                descending: 'false',
             });
             const response = await fetch(`/api/sessions/${sessionId}/kairos/history?${params.toString()}`);
             if (!response.ok) {
                 throw new Error(`KAIROS history failed: ${response.status}`);
             }
             const data = await response.json();
-            historyEl.textContent = formatKairosHistoryTimeline(data.history || []);
+            historyEl.innerHTML = renderKairosHistoryTimeline(data.history || []);
         } catch (e) {
             historyEl.textContent = `加载失败: ${e.message}`;
         }
@@ -2153,6 +2220,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const unfinishedWorkEl = document.getElementById('kairosUnfinishedWork');
         const proactiveCandidatesEl = document.getElementById('kairosProactiveCandidates');
         const guardrailStateEl = document.getElementById('kairosGuardrailState');
+        const planningWinnerEl = document.getElementById('kairosPlanningWinner');
+        const planningRejectedEl = document.getElementById('kairosPlanningRejected');
+        const planningReplanEl = document.getElementById('kairosPlanningReplan');
         const historyEl = document.getElementById('kairosHistoryTimeline');
 
         if (!sessionId) {
@@ -2175,6 +2245,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const data = await response.json();
             const kairos = data.kairos || {};
+            const planning = kairos.last_planning_result || data.last_planning_result || {};
             if (statusEl) statusEl.textContent = formatKairosStatus(kairos);
             if (eventsEl) eventsEl.textContent = formatKairosEvents(kairos.recent_events || []);
             if (trackedEl) trackedEl.textContent = formatKairosTrackedTasks(kairos.tracked_dex_tasks || []);
@@ -2185,6 +2256,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (unfinishedWorkEl) unfinishedWorkEl.textContent = formatKairosSimpleJson(kairos.unfinished_work_items || data.unfinished_work_items || []);
             if (proactiveCandidatesEl) proactiveCandidatesEl.textContent = formatKairosSimpleJson(kairos.proactive_candidates || data.proactive_candidates || []);
             if (guardrailStateEl) guardrailStateEl.textContent = formatKairosGuardrailState(kairos, data);
+            if (planningWinnerEl) planningWinnerEl.textContent = formatKairosPlanningWinner(planning);
+            if (planningRejectedEl) planningRejectedEl.textContent = formatKairosPlanningRejected(planning);
+            if (planningReplanEl) planningReplanEl.textContent = formatKairosPlanningReplan(planning);
             await refreshKairosHistory();
         } catch (e) {
             console.error('[KAIROS] 刷新状态失败:', e);

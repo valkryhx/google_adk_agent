@@ -46,6 +46,14 @@
         max-height: 82vh;
         overflow-y: auto;
     }
+
+    .kairos-planning-card {
+        min-height: 0;
+    }
+
+    .kairos-planning-list {
+        max-height: none;
+    }
 }
 
 @media (max-width: 768px) {

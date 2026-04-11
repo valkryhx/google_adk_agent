@@ -88,6 +88,32 @@ class KairosContinuationPolicy:
     cooldown_seconds: int = 60
 
 
+def _default_planning_result() -> dict[str, Any]:
+    return {
+        "ts": None,
+        "goal": None,
+        "workflow_id": None,
+        "stage_id": None,
+        "candidates_considered": [],
+        "selected_candidate": {},
+        "rejected_candidates": [],
+        "final_action": {},
+        "policy_note": None,
+    }
+
+
+def _load_planning_result(raw: dict[str, Any] | None) -> dict[str, Any]:
+    planning_result = _default_planning_result()
+    if not raw:
+        return planning_result
+    planning_result.update(dict(raw))
+    planning_result["candidates_considered"] = list(raw.get("candidates_considered", []))
+    planning_result["selected_candidate"] = dict(raw.get("selected_candidate", {}))
+    planning_result["rejected_candidates"] = list(raw.get("rejected_candidates", []))
+    planning_result["final_action"] = dict(raw.get("final_action", {}))
+    return planning_result
+
+
 @dataclass
 class KairosState:
     enabled: bool = False
@@ -118,7 +144,7 @@ class KairosState:
     proactive_candidates: list[dict[str, Any]] = field(default_factory=list)
     last_proactive_scan: dict[str, Any] = field(default_factory=dict)
     last_guardrail_block: dict[str, Any] = field(default_factory=dict)
-    last_planning_result: dict[str, Any] = field(default_factory=dict)
+    last_planning_result: dict[str, Any] = field(default_factory=_default_planning_result)
     recent_events: list[KairosEvent] = field(default_factory=list)
 
     def push_event(self, event: KairosEvent, limit: int = 20) -> None:
@@ -158,7 +184,7 @@ def load_kairos_state(raw: dict[str, Any] | None) -> KairosState:
         proactive_candidates=list(raw.get("proactive_candidates", [])),
         last_proactive_scan=dict(raw.get("last_proactive_scan", {})),
         last_guardrail_block=dict(raw.get("last_guardrail_block", {})),
-        last_planning_result=dict(raw.get("last_planning_result", {})),
+        last_planning_result=_load_planning_result(raw.get("last_planning_result")),
         recent_events=[KairosEvent(**item) for item in raw.get("recent_events", [])],
     )
 

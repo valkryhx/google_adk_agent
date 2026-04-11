@@ -251,10 +251,20 @@ def run_todo_delivery_pipeline(repo_root: Path | None = None) -> dict[str, Any]:
     final_status = _wait_for_untracked(session_id, [report_task["task_id"]])
     history_payload = _fetch_kairos_history(session_id)
     history_entries = history_payload["history"]
+    planning = final_status["kairos"]["last_planning_result"]
 
     assert history_entries
     assert any(entry["kind"] in {"follow_up", "task_completion"} for entry in history_entries)
     assert any("todo delivery report" in entry["message"] for entry in history_entries)
+    assert planning["selected_candidate"]
+    assert "rejected_candidates" in planning
+    assert "final_action" in planning
+    assert final_status["planning_winner"]["action"]
+    assert "changed" in final_status["planning_replan"]
+    assert any(
+        entry["kind"] in {"planning_selected", "planning_replan", "planning_blocked", "planning_ask_user", "planning_sleep"}
+        for entry in history_entries
+    )
 
     assert TODO_DEMO_DIR.exists()
     assert (TODO_DEMO_DIR / "requirements.md").exists()

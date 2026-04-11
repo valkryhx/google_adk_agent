@@ -359,6 +359,126 @@ async def test_start_creates_background_tick_loop_and_stop_cancels_it():
 
 
 @pytest.mark.asyncio
+async def test_runtime_records_replan_when_higher_tier_candidate_replaces_winner():
+    _, emitted, logged, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return None
+
+    state = _todo_runtime_state(current_stage="verification")
+    state.active_workflow.metadata["completed_task_ids"] = [
+        "todo_requirements",
+        "todo_design",
+        "todo_codegen",
+        "todo_tests",
+    ]
+    state.active_workflow.status = "waiting_input"
+    state.blocked_reason = "verification checks failed for todo delivery report"
+    state.condition_tree = {
+        "failed_checks": [{"check": "edit_item", "reason": "editing flow failed"}],
+        "missing": [],
+    }
+    state.last_planning_result["selected_candidate"] = {
+        "candidate_id": "todo_delivery_pipeline:verification:continue_workflow",
+        "action": "continue_workflow",
+        "tier": "medium",
+        "priority": 50,
+    }
+
+    runtime = KairosRuntime(
+        state=state,
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+
+    await runtime.tick_once()
+
+    assert runtime.state.last_planning_result["selected_candidate"]["action"] == "ask_user"
+    assert runtime.state.last_planning_result["replan"]["previous_winner"]["action"] == "continue_workflow"
+    assert runtime.state.last_planning_result["replan"]["current_winner"]["action"] == "ask_user"
+    assert any("Re-plan:" in message for _, message in emitted)
+    assert any("ask_user" in message for message in logged)
+
+
+@pytest.mark.asyncio
+async def test_runtime_does_not_emit_replan_for_same_tier_reordering():
+    _, emitted, logged, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return None
+
+    state = _todo_runtime_state(current_stage="verification")
+    state.active_workflow.metadata["completed_task_ids"] = [
+        "todo_requirements",
+        "todo_design",
+        "todo_codegen",
+        "todo_tests",
+    ]
+    state.active_workflow.metadata["verification_result"] = {"ready": True, "failures": []}
+    state.last_planning_result["selected_candidate"] = {
+        "candidate_id": "todo_delivery_pipeline:verification:continue_workflow",
+        "action": "continue_workflow",
+        "tier": "medium",
+        "priority": 50,
+    }
+
+    runtime = KairosRuntime(
+        state=state,
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+
+    await runtime.tick_once()
+
+    assert runtime.state.last_planning_result["selected_candidate"]["action"] == "continue_workflow"
+    assert runtime.state.last_planning_result.get("replan", {}).get("changed") in {None, False}
+    assert not any("Re-plan:" in message for _, message in emitted)
+    assert not any("Re-plan:" in message for message in logged)
+
+
+@pytest.mark.asyncio
+async def test_runtime_records_special_planning_state_when_sleep_selected():
+    _, emitted, logged, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return None
+
+    state = _todo_runtime_state(current_stage="codegen")
+    state.last_proactive_scan = {
+        "ts": "2026-04-07T10:00:00+00:00",
+        "result": "candidate_found",
+        "winner": "todo_delivery_pipeline:codegen:continue_workflow",
+    }
+    state.policy.cooldown_seconds = 999999
+
+    runtime = KairosRuntime(
+        state=state,
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+    runtime._continuation_engine._now = lambda: datetime.fromisoformat("2026-04-07T10:00:30+00:00")
+
+    await runtime.tick_once()
+
+    assert runtime.state.last_planning_result["selected_candidate"]["action"] == "sleep"
+    assert runtime.state.last_planning_result["final_action"]["kind"] == "sleep"
+    assert any("Selected winner: sleep" in message for _, message in emitted)
+    assert any("sleep" in message for message in logged)
+
+
+@pytest.mark.asyncio
 async def test_wake_triggers_prompt_execution_without_waiting_full_interval():
     ticks = asyncio.Event()
     _, _, _, save_state, emit_event, append_log = _make_callbacks()

@@ -106,3 +106,69 @@ def test_read_session_history_descends_by_default(tmp_path: Path):
     )
 
     assert [entry["message"] for entry in entries] == ["second", "first"]
+
+
+def test_planning_events_map_to_typed_timeline_entries(tmp_path: Path):
+    writer = KairosActivityLog(project_root=tmp_path)
+    writer.append_entry(
+        "alice",
+        "demo_app",
+        "session_123",
+        "brief",
+        "Selected winner: sleep workflow_id=todo_delivery_pipeline stage_id=codegen",
+        "2026-04-09T10:00:00",
+    )
+    writer.append_entry(
+        "alice",
+        "demo_app",
+        "session_123",
+        "brief",
+        "Re-plan: continue_workflow -> ask_user workflow_id=todo_delivery_pipeline stage_id=verification",
+        "2026-04-09T10:01:00",
+    )
+    writer.append_entry(
+        "alice",
+        "demo_app",
+        "session_123",
+        "brief",
+        "Selected winner: blocked workflow_id=todo_delivery_pipeline stage_id=verification",
+        "2026-04-09T10:02:00",
+    )
+    writer.append_entry(
+        "alice",
+        "demo_app",
+        "session_123",
+        "brief",
+        "Selected winner: ask_user workflow_id=todo_delivery_pipeline stage_id=verification",
+        "2026-04-09T10:03:00",
+    )
+
+    entries = writer.read_session_history("alice", "demo_app", "session_123", descending=False)
+
+    assert [entry["kind"] for entry in entries] == [
+        "planning_sleep",
+        "planning_replan",
+        "planning_blocked",
+        "planning_ask_user",
+    ]
+    assert entries[0]["title"] == "Planning sleep"
+    assert entries[1]["title"] == "Planning re-plan"
+    assert entries[2]["workflow"] == "todo_delivery_pipeline"
+    assert entries[3]["stage"] == "verification"
+
+
+def test_plain_planning_scan_does_not_become_timeline_event(tmp_path: Path):
+    writer = KairosActivityLog(project_root=tmp_path)
+    writer.append_entry(
+        "alice",
+        "demo_app",
+        "session_123",
+        "brief",
+        "planning scan complete workflow_id=todo_delivery_pipeline stage_id=codegen",
+        "2026-04-09T10:00:00",
+    )
+
+    entry = writer.read_session_history("alice", "demo_app", "session_123")[0]
+
+    assert entry["kind"] == "brief"
+    assert entry["title"] == "Brief"

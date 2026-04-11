@@ -368,7 +368,18 @@ def test_status_route_exposes_proactive_scan_fields():
     session.runtime.state["proactive_candidates"] = [{"candidate_id": "todo:codegen", "action": "continue_workflow"}]
     session.runtime.state["last_proactive_scan"] = {"result": "candidate_found"}
     session.runtime.state["last_guardrail_block"] = {"reason": "cooldown_active"}
-    session.runtime.state["last_planning_result"] = {"decision": "continue_workflow"}
+    session.runtime.state["last_planning_result"] = {
+        "ts": "2026-04-10T08:30:00+00:00",
+        "goal": "advance todo delivery pipeline toward shippable report",
+        "workflow_id": "todo_delivery_pipeline",
+        "stage_id": "verification",
+        "candidates_considered": [],
+        "selected_candidate": {"action": "continue_workflow", "candidate_id": "todo:continue"},
+        "rejected_candidates": [{"action": "sleep", "rejected_reason": "higher tier candidate selected"}],
+        "final_action": {"kind": "continue_workflow_scan"},
+        "policy_note": "winner retained under tiered-action policy",
+        "replan": {"changed": False},
+    }
     register_kairos_routes(app, manager)
     client = TestClient(app)
 
@@ -383,7 +394,35 @@ def test_status_route_exposes_proactive_scan_fields():
     assert payload["proactive_candidates"][0]["action"] == "continue_workflow"
     assert payload["last_proactive_scan"]["result"] == "candidate_found"
     assert payload["last_guardrail_block"]["reason"] == "cooldown_active"
-    assert payload["last_planning_result"]["decision"] == "continue_workflow"
+    assert payload["last_planning_result"]["selected_candidate"]["action"] == "continue_workflow"
+    assert payload["last_planning_result"]["final_action"]["kind"] == "continue_workflow_scan"
+    assert payload["planning_winner"]["action"] == "continue_workflow"
+    assert payload["planning_rejected_summary"][0]["action"] == "sleep"
+    assert payload["planning_replan"]["changed"] is False
+
+
+def test_attach_route_stays_lightweight_without_history_array(monkeypatch):
+    app = FastAPI()
+    manager = FakeManager()
+    register_kairos_routes(app, manager)
+    client = TestClient(app)
+
+    class FakeHistory:
+        def read_session_history(self, user_id, app_name, session_id, descending=True):
+            return [{"ts": "2026-04-09T10:00:00"}]
+
+    monkeypatch.setattr("src.adk_agent.kairos.attach.KairosActivityLog", lambda *_args, **_kwargs: FakeHistory())
+
+    resp = client.get(
+        "/api/sessions/session_1/kairos/attach",
+        params={"app_name": "demo", "user_id": "alice"},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["attach"]["has_history"] is True
+    assert "history" not in payload["attach"]
+    assert "last_planning_result" not in payload["attach"]
 
 
 def test_status_route_exposes_todo_delivery_workflow_when_active():

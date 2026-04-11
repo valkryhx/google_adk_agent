@@ -69,6 +69,7 @@ def register_kairos_routes(app, session_manager):
         session = manager.get_or_create(app_name, user_id, session_id)
         runtime = session.get_or_create_kairos_runtime()
         status = runtime.get_status()
+        planning = status.get("last_planning_result", {})
         return {
             "status": "ok",
             "session_id": session_id,
@@ -83,7 +84,10 @@ def register_kairos_routes(app, session_manager):
             "proactive_candidates": status.get("proactive_candidates", []),
             "last_proactive_scan": status.get("last_proactive_scan", {}),
             "last_guardrail_block": status.get("last_guardrail_block", {}),
-            "last_planning_result": status.get("last_planning_result", {}),
+            "last_planning_result": planning,
+            "planning_winner": planning.get("selected_candidate", {}),
+            "planning_rejected_summary": planning.get("rejected_candidates", []),
+            "planning_replan": planning.get("replan", {}),
         }
 
     @router.get("/api/sessions/{session_id}/kairos/history")

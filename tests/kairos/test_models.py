@@ -123,8 +123,36 @@ def test_state_round_trip_preserves_proactive_and_policy_fields():
             "work_id": "todo-verification-gap",
         },
         last_planning_result={
-            "decision": "continue_workflow",
-            "summary": "resume verification",
+            "ts": "2026-04-07T10:00:00+00:00",
+            "goal": "resume verification for todo delivery",
+            "workflow_id": "todo_delivery_pipeline",
+            "stage_id": "verification",
+            "candidates_considered": [
+                {
+                    "candidate_id": "continue-verification",
+                    "action": "continue_workflow",
+                    "tier": "medium",
+                    "priority": 10,
+                    "blocked": False,
+                    "selected": True,
+                    "reason": "verification pending",
+                }
+            ],
+            "selected_candidate": {
+                "candidate_id": "continue-verification",
+                "action": "continue_workflow",
+                "tier": "medium",
+                "priority": 10,
+                "blocked": False,
+                "selected": True,
+                "reason": "verification pending",
+            },
+            "rejected_candidates": [],
+            "final_action": {
+                "kind": "continue_workflow_scan",
+                "reason": "verification_incomplete",
+            },
+            "policy_note": "winner retained under tiered-action policy",
         },
         policy=KairosContinuationPolicy(
             max_auto_steps_per_tick=2,
@@ -143,7 +171,15 @@ def test_state_round_trip_preserves_proactive_and_policy_fields():
     assert restored.proactive_candidates[0]["candidate_id"] == "continue-verification"
     assert restored.last_proactive_scan["result"] == "candidate_found"
     assert restored.last_guardrail_block["reason"] == "cooldown_active"
-    assert restored.last_planning_result["decision"] == "continue_workflow"
+    assert restored.last_planning_result["ts"] == "2026-04-07T10:00:00+00:00"
+    assert restored.last_planning_result["goal"] == "resume verification for todo delivery"
+    assert restored.last_planning_result["workflow_id"] == "todo_delivery_pipeline"
+    assert restored.last_planning_result["stage_id"] == "verification"
+    assert restored.last_planning_result["candidates_considered"][0]["action"] == "continue_workflow"
+    assert restored.last_planning_result["selected_candidate"]["candidate_id"] == "continue-verification"
+    assert restored.last_planning_result["rejected_candidates"] == []
+    assert restored.last_planning_result["final_action"]["kind"] == "continue_workflow_scan"
+    assert restored.last_planning_result["policy_note"] == "winner retained under tiered-action policy"
     assert restored.policy.proactive_scan_enabled is True
     assert restored.policy.cooldown_seconds == 60
 
@@ -179,7 +215,15 @@ def test_load_legacy_state_fills_phase3_defaults():
     assert state.proactive_candidates == []
     assert state.last_proactive_scan == {}
     assert state.last_guardrail_block == {}
-    assert state.last_planning_result == {}
+    assert state.last_planning_result["ts"] is None
+    assert state.last_planning_result["goal"] is None
+    assert state.last_planning_result["workflow_id"] is None
+    assert state.last_planning_result["stage_id"] is None
+    assert state.last_planning_result["candidates_considered"] == []
+    assert state.last_planning_result["selected_candidate"] == {}
+    assert state.last_planning_result["rejected_candidates"] == []
+    assert state.last_planning_result["final_action"] == {}
+    assert state.last_planning_result["policy_note"] is None
 
 
 def test_dump_round_trip_preserves_schedule_and_trigger():
@@ -225,6 +269,115 @@ def test_dump_round_trip_preserves_schedule_and_trigger():
     assert restored.schedules[0].schedule_id == "morning-checkin"
     assert restored.schedules[0].next_fire_at == "2026-04-03T09:00:00+00:00"
     assert restored.last_tick_at == "2026-04-02T12:00:00+00:00"
+
+
+def test_last_planning_result_round_trip_preserves_selected_and_rejected_candidates():
+    state = KairosState(
+        last_planning_result={
+            "ts": "2026-04-10T08:30:00+00:00",
+            "goal": "advance todo delivery pipeline toward shippable report",
+            "workflow_id": "todo_delivery_pipeline",
+            "stage_id": "verification",
+            "candidates_considered": [
+                {
+                    "candidate_id": "todo_delivery_pipeline:verification:continue",
+                    "action": "continue_workflow",
+                    "tier": "medium",
+                    "priority": 50,
+                    "blocked": False,
+                    "selected": False,
+                    "reason": "verification stage still unfinished",
+                    "policy_note": "eligible but follow-up is higher leverage",
+                },
+                {
+                    "candidate_id": "todo_delivery_pipeline:delivery_report:create_follow_up",
+                    "action": "create_follow_up",
+                    "tier": "medium",
+                    "priority": 60,
+                    "blocked": False,
+                    "selected": True,
+                    "reason": "all prerequisite tasks and artifacts are satisfied",
+                    "policy_note": "allowed by continuation policy",
+                },
+                {
+                    "candidate_id": "todo_delivery_pipeline:sleep",
+                    "action": "sleep",
+                    "tier": "low",
+                    "priority": 10,
+                    "blocked": False,
+                    "selected": False,
+                    "reason": "no stronger action available",
+                    "policy_note": "fallback only",
+                },
+            ],
+            "selected_candidate": {
+                "candidate_id": "todo_delivery_pipeline:delivery_report:create_follow_up",
+                "action": "create_follow_up",
+                "tier": "medium",
+                "priority": 60,
+                "blocked": False,
+                "selected": True,
+                "reason": "all prerequisite tasks and artifacts are satisfied",
+                "selected_reason": "best eligible candidate in current tier ordering",
+            },
+            "rejected_candidates": [
+                {
+                    "candidate_id": "todo_delivery_pipeline:verification:continue",
+                    "action": "continue_workflow",
+                    "tier": "medium",
+                    "priority": 50,
+                    "blocked": False,
+                    "selected": False,
+                    "rejected_reason": "same tier but lower auxiliary priority",
+                    "policy_note": "follow-up unlocks more value",
+                },
+                {
+                    "candidate_id": "todo_delivery_pipeline:sleep",
+                    "action": "sleep",
+                    "tier": "low",
+                    "priority": 10,
+                    "blocked": False,
+                    "selected": False,
+                    "rejected_reason": "lower tier than selected winner",
+                    "policy_note": "only valid as fallback",
+                },
+            ],
+            "final_action": {
+                "kind": "create_dex_task",
+                "reason": "todo_delivery_ready",
+                "payload": {
+                    "workflow_id": "todo_delivery_pipeline",
+                    "description": "generate todo delivery report",
+                },
+            },
+            "policy_note": "winner chosen under tiered-action policy; no unrestricted planning used",
+        }
+    )
+
+    restored = load_kairos_state(dump_kairos_state(state))
+    artifact = restored.last_planning_result
+
+    assert artifact["ts"] == "2026-04-10T08:30:00+00:00"
+    assert artifact["goal"] == "advance todo delivery pipeline toward shippable report"
+    assert artifact["workflow_id"] == "todo_delivery_pipeline"
+    assert artifact["stage_id"] == "verification"
+    assert [candidate["action"] for candidate in artifact["candidates_considered"]] == [
+        "continue_workflow",
+        "create_follow_up",
+        "sleep",
+    ]
+    assert artifact["selected_candidate"]["candidate_id"] == "todo_delivery_pipeline:delivery_report:create_follow_up"
+    assert artifact["selected_candidate"]["selected"] is True
+    assert artifact["selected_candidate"]["tier"] == "medium"
+    assert artifact["rejected_candidates"][0]["action"] == "continue_workflow"
+    assert artifact["rejected_candidates"][0]["rejected_reason"] == "same tier but lower auxiliary priority"
+    assert artifact["rejected_candidates"][1]["action"] == "sleep"
+    assert artifact["final_action"]["kind"] == "create_dex_task"
+    assert artifact["final_action"]["payload"]["description"] == "generate todo delivery report"
+    assert artifact["policy_note"] == "winner chosen under tiered-action policy; no unrestricted planning used"
+    assert "deliberation" not in artifact
+    assert "chain_of_thought" not in artifact
+    assert "cot" not in artifact
 
 
 def test_dump_round_trip_with_pending_triggers():

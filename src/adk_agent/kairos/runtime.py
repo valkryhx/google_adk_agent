@@ -168,8 +168,10 @@ class KairosRuntime:
             self.state.pending_triggers.extend(due_triggers)
             ready_trigger_count = len(self.state.pending_triggers)
             self._continuation_engine._path_exists = self._path_exists
+            previous_planning_snapshot = dict(self.state.last_planning_result)
             await self._poll_dex()
             self._continuation_engine.refresh_unfinished_work(self.state)
+            await self._record_planning_transition(previous_planning_snapshot)
 
             if not self.state.running:
                 return
@@ -310,6 +312,39 @@ class KairosRuntime:
         payload["last_guardrail_block"] = dict(payload.get("last_guardrail_block", {}))
         payload["last_planning_result"] = dict(payload.get("last_planning_result", {}))
         return payload
+
+    async def _record_planning_transition(self, previous_planning_snapshot: dict[str, Any]) -> None:
+        previous_winner = dict(previous_planning_snapshot.get("selected_candidate", {}))
+        current_winner = dict(self.state.last_planning_result.get("selected_candidate", {}))
+        previous_candidate_id = previous_winner.get("candidate_id")
+        current_candidate_id = current_winner.get("candidate_id")
+        previous_action = previous_winner.get("action")
+        current_action = current_winner.get("action")
+
+        if not current_action:
+            self.state.last_planning_result["replan"] = {"changed": False}
+            return
+
+        special_actions = {"ask_user", "blocked", "sleep"}
+        changed = bool(previous_candidate_id and current_candidate_id and previous_candidate_id != current_candidate_id)
+        if changed:
+            self.state.last_planning_result["replan"] = {
+                "changed": True,
+                "previous_winner": previous_winner,
+                "current_winner": current_winner,
+            }
+            await self._record(
+                "brief",
+                f"Re-plan: {previous_action or 'none'} -> {current_action} workflow_id={self.state.active_workflow.workflow_id if self.state.active_workflow else 'unknown'} stage_id={self.state.active_workflow.current_stage if self.state.active_workflow else 'unknown'}",
+            )
+            return
+
+        self.state.last_planning_result["replan"] = {"changed": False}
+        if current_action in special_actions and previous_action != current_action:
+            await self._record(
+                "brief",
+                f"Selected winner: {current_action} workflow_id={self.state.active_workflow.workflow_id if self.state.active_workflow else 'unknown'} stage_id={self.state.active_workflow.current_stage if self.state.active_workflow else 'unknown'}",
+            )
 
     async def _run_loop(self) -> None:
         try:

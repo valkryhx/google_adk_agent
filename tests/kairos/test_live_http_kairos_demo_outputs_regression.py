@@ -45,6 +45,17 @@ def test_live_http_source_asserts_history_timeline_visibility():
     assert 'follow_up' in text or 'Auto-created follow-up' in text
 
 
+def test_live_http_source_asserts_planning_evidence_visibility():
+    text = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert 'last_planning_result' in text
+    assert 'selected_candidate' in text
+    assert 'rejected_candidates' in text
+    assert 'final_action' in text
+    assert 'planning_winner' in text or 'planning_replan' in text
+    assert 'planning_selected' in text or 'planning_replan' in text or 'planning_sleep' in text
+
+
 def test_live_http_kairos_demo_outputs_regression_passes_against_running_service():
     import os
     import urllib.request

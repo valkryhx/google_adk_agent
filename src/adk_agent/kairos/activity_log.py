@@ -112,7 +112,22 @@ class KairosActivityLog:
         title = "Kairos event"
         task_id = self._extract_task_id(message)
 
-        if "auto-created dex task" in message:
+        if message.startswith("Re-plan:"):
+            entry_kind = "planning_replan"
+            title = "Planning re-plan"
+        elif message.startswith("Selected winner: sleep"):
+            entry_kind = "planning_sleep"
+            title = "Planning sleep"
+        elif message.startswith("Selected winner: blocked"):
+            entry_kind = "planning_blocked"
+            title = "Planning blocked"
+        elif message.startswith("Selected winner: ask_user"):
+            entry_kind = "planning_ask_user"
+            title = "Planning ask user"
+        elif message.startswith("Selected winner:"):
+            entry_kind = "planning_selected"
+            title = "Planning selected"
+        elif "auto-created dex task" in message:
             entry_kind = "follow_up"
             title = "Auto-created follow-up"
         elif " completed:" in message or message.startswith("completed "):
