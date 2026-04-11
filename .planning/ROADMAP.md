@@ -4,7 +4,7 @@
 
 这个 milestone 聚焦 KAIROS 从“观察 Dex 后台任务状态”向“主动发现下一步并自动续推 workflow”的跃迁。路线分为三个 phase：先做 Autonomous Continuation MVP，证明系统能在 staged workflow 中自动创建 report follow-up；再做 artifact-aware proactive reporting 与前端/API 可视化；最后做 policy hardening 与分层验证，确保自治能力可解释、可测试、不失控。
 
-当前 v1.0 路线已经完成。下一步将进入 v1.1，拆成两个连续 phase：先做 `4A`（Explainability, History & Operator UX），解决 Kairos 做了很多事但前端看不清的问题；再做 `4B`（Goal-Driven Planning Intelligence），让 Kairos 在可见、可解释的基础上，显式比较候选动作、留下 planning 痕迹并做更强的目标驱动推进。
+当前 v1.0 路线已经完成。下一步将进入 v1.1，拆成两个连续 phase：先做 `4A`（Explainability, History & Operator UX），解决 Kairos 做了很多事但前端看不清的问题；再做 `4B`（Goal-Driven Planning Intelligence），让 Kairos 在可见、可解释的基础上，显式比较候选动作、留下 planning 痕迹并做更强的目标驱动推进。Phase 4 现已完成，下一步进入 `5`（Document-Driven Continuation），让 Kairos 从硬编码 workflow 续推器升级为文档驱动的后台常驻 assistant。
 
 ## Phases
 
@@ -17,8 +17,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Autonomous Continuation MVP** - 引入 workflow-aware state 与 continuation engine，打通自动创建 report follow-up 的最小自治闭环
 - [x] **Phase 2: Artifact-Aware Reporting & Visibility** - 增强结果摘要、blocked reason 与 workflow/planned actions 可视化
 - [x] **Phase 3: Policy Hardening & Verification** - 增加去重、限步、策略观测与完整回归验证，稳固自治能力
-- [ ] **Phase 4A: Explainability, History & Operator UX** - 让 Kairos 的当前状态与完整推进历史在前端/API 中同时可见，并重构操作面板为高密度可用的左右布局
-- [ ] **Phase 4B: Goal-Driven Planning Intelligence** - 在 4A 的可见性基础上，引入多候选 next-step selection、真实 planning result 与可解释的 re-plan 痕迹
+- [x] **Phase 4A: Explainability, History & Operator UX** - 让 Kairos 的当前状态与完整推进历史在前端/API 中同时可见，并重构操作面板为高密度可用的左右布局
+- [x] **Phase 4B: Goal-Driven Planning Intelligence** - 在 4A 的可见性基础上，引入多候选 next-step selection、真实 planning result 与可解释的 re-plan 痕迹
+- [ ] **Phase 5: Document-Driven Continuation** - 让 Kairos 从硬编码 workflow 续推器升级为通过提示词协议生成、阅读、更新工作文档的后台常驻 assistant，能够从需求和工作文档中发现、规划、推进未完成任务与新任务
 
 ## Phase Details
 
@@ -69,17 +70,48 @@ Plans:
 - [x] 04A-01: 落地 history reader / history API / operator console shell / timeline rail / live history evidence
 
 ### Phase 4B: Goal-Driven Planning Intelligence
+**Goal**: 在 4A 的可见性基础上，让 Kairos 具备真实 planning artifact、固定候选动作选择、显式 re-plan 事件以及 operator 可见 planning trace。
+**Depends on**: Phase 4A
+**Requirements**: [4B-PLN-01, 4B-PLN-02, 4B-OBS-01, 4B-UX-01, 4B-VER-01]
+**Success Criteria** (what must be TRUE):
+  1. `last_planning_result` 成为稳定 planning artifact，而不是占位字段
+  2. planner 只从固定候选动作集合中选 winner，并遵守 tier-based supersession
+  3. runtime / API / history / operator console 都能看到 planning winner、rejected summary 与 re-plan trace
+  4. live HTTP flow 能证明 planning evidence 在真实运行链路中可见
+**Plans**: 3 plans
+
+Plans:
+- [x] 04B-01: 落地稳定 planning artifact、fixed candidate planner 与 final_action bridge
+- [x] 04B-02: 接通 runtime re-plan、API mirrors 与 sparse planning history timeline
+- [x] 04B-03: 接通 operator console planning cards、timeline polish 与 live planning evidence
+
+### Phase 5: Document-Driven Continuation
+**Goal**: 让 Kairos 从硬编码 workflow 续推器升级为通过提示词协议生成、阅读、更新工作文档的后台常驻 assistant，能够从需求和工作文档中发现、规划、推进未完成任务与新任务。
+**Depends on**: Phase 4B
+**Requirements**: [DOC-01, DOC-02, DOC-03, DOC-04, DOC-05, DOC-VER-01, DOC-VER-02, DOC-VER-03]
+**Success Criteria** (what must be TRUE):
+  1. Kairos 能通过提示词协议把需求与工作状态沉淀为规范化文档，而不再只依赖 `demo_report_pipeline` / `todo_delivery_pipeline`
+  2. 用户需求可以先落为 spec/plan/work item 文档，再进入 Kairos 的持续推进链路
+  3. 自动唤醒时，Kairos 能通过阅读文档和工件状态发现 unfinished work 和新派生任务，并在安全边界内持续推进
+  4. planning winner / rejected / re-plan / history / UI trace 继续成立，但对象变为 document-backed work items
+**Plans**: 3 plans
+
+Plans:
+- [ ] 05A: 文档协议与阅读/写入底座
+- [ ] 05B: 需求落盘与工作草案生成
+- [ ] 05C: 自主发现新任务与持续编排
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3
+Phases execute in numeric order: 1 → 2 → 3 → 4A → 4B → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Autonomous Continuation MVP | 3/3 | Complete | 2026-04-06 |
 | 2. Artifact-Aware Reporting & Visibility | 2/2 | Complete | 2026-04-06 |
 | 3. Policy Hardening & Verification | 2/2 | Complete | 2026-04-07 |
-| 4A. Explainability, History & Operator UX | 1/1 | In progress | - |
-| 4B. Goal-Driven Planning Intelligence | 0/? | Not started | - |
+| 4A. Explainability, History & Operator UX | 1/1 | Complete | 2026-04-10 |
+| 4B. Goal-Driven Planning Intelligence | 3/3 | Complete | 2026-04-11 |
+| 5. Document-Driven Continuation | 0/3 | Not started | - |
 
 ---
-*Last updated: 2026-04-10 after completing Phase 4A plan 01 history/operator UX execution*
+*Last updated: 2026-04-11 after finalizing the draft for Phase 5 document-driven continuation*

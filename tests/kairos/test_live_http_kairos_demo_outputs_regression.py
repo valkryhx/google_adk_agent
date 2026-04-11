@@ -56,6 +56,14 @@ def test_live_http_source_asserts_planning_evidence_visibility():
     assert 'planning_selected' in text or 'planning_replan' in text or 'planning_sleep' in text
 
 
+def test_live_http_source_documents_user_requirement_boundary_for_kairos():
+    text = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert 'run_user_requirement_boundary_check' in text
+    assert '/api/chat' in text
+    assert '无法仅凭自然语言需求直接自动分解并推进' in text
+
+
 def test_live_http_kairos_demo_outputs_regression_passes_against_running_service():
     import os
     import urllib.request

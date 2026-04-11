@@ -294,6 +294,28 @@ def run_todo_delivery_pipeline(repo_root: Path | None = None) -> dict[str, Any]:
     }
 
 
+def run_user_requirement_boundary_check(requirement: str, repo_root: Path | None = None) -> dict[str, Any]:
+    root = repo_root or REPO_ROOT
+    created = _request("POST", "/api/sessions", {"app_name": APP_NAME, "user_id": USER_ID})
+    session_id = created["session_id"]
+
+    _request(
+        "POST",
+        f"/api/sessions/{session_id}/kairos/start",
+        {"app_name": APP_NAME, "user_id": USER_ID, "reason": "user_requirement_boundary_check"},
+    )
+    chat_chunks = _chat_for_json(requirement, session_id)
+    status = _fetch_kairos_status(session_id)
+
+    return {
+        "session_id": session_id,
+        "chat_chunks": chat_chunks,
+        "status": status,
+        "conclusion": "当前 Kairos 无法仅凭自然语言需求直接自动分解并推进；它目前只能对已知 workflow/task 描述进行续推。",
+    }
+
+
+
 def main() -> None:
     if DEMO_DIR.exists():
         shutil.rmtree(DEMO_DIR)

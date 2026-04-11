@@ -22,10 +22,17 @@ google_adk_agent（Ciri）是一个基于 Google ADK 从零构建的现代 AI Ag
 
 ### Active
 
-- [ ] KAIROS 能在任务完成后主动发现下一步并自动续推 workflow
-- [ ] KAIROS 具备 workflow / planned actions / blocked reason 等自治状态建模
-- [ ] KAIROS 能输出 artifact-aware proactive summary，而不只是状态事件
-- [ ] KAIROS 具备去重、限步、blocked/waiting_input 等自治策略护栏
+- [x] KAIROS 能在任务完成后主动发现下一步并自动续推 workflow
+- [x] KAIROS 具备 workflow / planned actions / blocked reason 等自治状态建模
+- [x] KAIROS 能输出 artifact-aware proactive summary，而不只是状态事件
+- [x] KAIROS 具备去重、限步、blocked/waiting_input 等自治策略护栏
+
+### Next
+
+- [ ] KAIROS 能通过提示词协议生成规范化工作文档，而不只是回复建议
+- [ ] KAIROS 能通过提示词协议阅读和更新工作文档，把文档作为工作事实来源
+- [ ] KAIROS 能把用户需求与系统发现的问题统一转成可续推工作项
+- [ ] KAIROS 支持从“需求 -> 文档 -> 执行推进 -> 派生工作 -> 再推进”的下一阶段自治跃迁
 
 ### Out of Scope
 
@@ -37,7 +44,7 @@ google_adk_agent（Ciri）是一个基于 Google ADK 从零构建的现代 AI Ag
 
 ## Context
 
-当前仓库已是一个 brownfield agent codebase：主宿主为 `src/adk_agent/main_web_start_steering.py`，动态技能系统由 `SkillManager` 管理，Dex 负责长任务后台执行，KAIROS phase-2 已经落出 runtime/scheduler/api/attach/dex_bridge/frontend 展示与 live HTTP 回归。当前最重要的下一步不是继续增强“观察后台任务”，而是让 KAIROS 从 poller/handoff tracker 升级为能够主动发现下一步并自动推进 workflow 的自治 runtime。
+当前仓库已是一个 brownfield agent codebase：主宿主为 `src/adk_agent/main_web_start_steering.py`，动态技能系统由 `SkillManager` 管理，Dex 负责长任务后台执行。Phase 4 已完成：4A 解决了 history/operator UX，可在前端/API 中看到 current state + history timeline；4B 进一步完成了 planning artifact、固定候选动作选择、runtime re-plan、API/history/UI planning trace 与 live HTTP planning evidence。当前最重要的下一步，不再是继续补 Phase 4 可见性，而是让 KAIROS 从“预定义 workflow 的续推器”升级为“根据需求动态生成 workflow / task 的自主编排器”。
 
 ## Constraints
 
@@ -55,15 +62,35 @@ google_adk_agent（Ciri）是一个基于 Google ADK 从零构建的现代 AI Ag
 | Phase-3 第一里程��以 `sales/traffic/quality -> report` 自动续推闭环为主 | 当前已有 live demo、真实 Dex 子进程与回归链路，最适合证明跳出 REPL 主导模式 | — Pending |
 | 第一版采用 rule-based continuation，而不是把自治全交给 LLM | 便于测试、去重、限步与风险控制 | — Pending |
 
-## Current Milestone: v1.0 Kairos phase-3
+## Current Milestone: v1.1 Kairos phase-4 complete
 
-**Goal:** 让 KAIROS 从观察 Dex 后台任务，升级为能主动发现下一步并自动续推 workflow。
+**Goal achieved:** 让 KAIROS 从观察 Dex 后台任务，升级为能主动发现下一步、留下 planning 痕迹、并把 planning trace 暴露给 operator。
 
-**Target features:**
+**Delivered features:**
 - Continuation Engine + internal trigger
 - workflow / planned actions / blocked reason 状态与可视化
 - staged workflow 中自动创建并接管 report follow-up
 - artifact-aware proactive reporting 与 policy hardening
+- planning artifact / fixed candidate taxonomy / final_action
+- runtime re-plan + API/history/operator console planning trace
+
+## Next Milestone Candidate
+
+**Direction:** 从“预定义 workflow 续推”升级为“需求驱动 workflow / task 生成”。
+
+### Phase 5 draft
+
+建议命名：`Prompt-Governed Document-Driven Continuation`
+
+建议总目标：
+- 让 Kairos 从依赖硬编码 pipeline 的续推器，升级为通过提示词协议生成、阅读、更新工作文档的后台常驻 assistant
+- 既能接管用户需求并落为工作文档，也能在自动唤醒时通过阅读文档和工件状态发现未完成任务与新派生任务
+- 用 LLM 负责文档理解与文档生成，用代码负责目录白名单、安全边界、审计与少量关键约束校验
+
+建议阶段拆分：
+- **5A：文档协议与阅读/写入底座** — 定义文档语义锚点与三类核心提示词（生成/阅读/更新）
+- **5B：需求落盘与工作草案生成** — `/api/chat` 需求转文档化 work item，而不是只回复文本
+- **5C：自主发现新任务与持续编排** — 从 progress/verification/artifacts/history 中发现新工作并写回文档
 
 ## Evolution
 

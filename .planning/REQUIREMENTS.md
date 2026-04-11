@@ -44,6 +44,22 @@
 - **LTR-02**: KAIROS 具备高保真 remote bridge / attach continuity
 - **LTR-03**: KAIROS 具备 nightly memory distill / dream 体系
 
+## v3 Requirements
+
+### Document-Driven Continuation
+
+- **DOC-01**: KAIROS 能通过提示词协议生成规范化工作文档，而不只是回复自然语言建议
+- **DOC-02**: KAIROS 能通过提示词协议阅读已有工作文档，提取当前状态、当前步骤、阻塞、预期工件与下一步动作
+- **DOC-03**: KAIROS 在步骤完成、阻塞变化、重规划发生时，能将进展和决策回写为工作文档事实
+- **DOC-04**: 用户通过 `/api/chat` 提出的受支持需求，可以被 KAIROS 落盘为 spec/plan/work item 文档并进入持续推进链路
+- **DOC-05**: KAIROS 在自动唤醒时，能从文档与工件状态中发现未完成任务和新派生任务，并在安全边界内继续推进
+
+### Verification
+
+- **DOC-VER-01**: 文档生成、阅读、更新三类提示词协议具备 source/integration 测试
+- **DOC-VER-02**: 文档驱动 continuation 行为具备 runtime/API/history regression
+- **DOC-VER-03**: 至少一个 live HTTP flow 证明“用户需求 -> 文档 -> 推进 -> 派生工作 -> 再推进”闭环
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -71,9 +87,19 @@
 | VER-02 | Phase 1 | Complete |
 | VER-03 | Phase 1 | Complete |
 
+| DOC-01 | Phase 5 | Planned |
+| DOC-02 | Phase 5 | Planned |
+| DOC-03 | Phase 5 | Planned |
+| DOC-04 | Phase 5 | Planned |
+| DOC-05 | Phase 5 | Planned |
+| DOC-VER-01 | Phase 5 | Planned |
+| DOC-VER-02 | Phase 5 | Planned |
+| DOC-VER-03 | Phase 5 | Planned |
+
 **Coverage:**
 - v1 requirements: 13 total
-- Mapped to phases: 13
+- v3 requirements: 8 total
+- Mapped to phases: 21
 - Unmapped: 0 ✓
 
 ---
