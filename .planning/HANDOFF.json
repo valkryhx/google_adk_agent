@@ -1,11 +1,11 @@
 {
   "version": "1.0",
-  "timestamp": "2026-04-11T16:12:30.616Z",
+  "timestamp": "2026-04-11T16:46:21Z",
   "phase": "5",
   "phase_name": "Prompt-Governed Document-Driven Continuation",
   "phase_dir": ".planning/phases/05-document-driven-continuation",
   "plan": 1,
-  "task": 1,
+  "task": 3,
   "total_tasks": 3,
   "status": "paused",
   "completed_tasks": [
@@ -29,24 +29,36 @@
     },
     {
       "id": 4,
-      "name": "Start 05A with strict TDD",
-      "status": "in_progress",
-      "progress": "Added failing document protocol tests in tests/kairos/test_document_protocol.py and failing model round-trip coverage in tests/kairos/test_models.py; pytest now fails because DocumentReadResult is not implemented yet."
+      "name": "Implement 05A document protocol anchors and normalized document read result",
+      "status": "done",
+      "commit": "32fed15"
+    },
+    {
+      "id": 5,
+      "name": "Connect continuation to document-backed unfinished work",
+      "status": "done",
+      "commit": "32fed15"
+    },
+    {
+      "id": 6,
+      "name": "Run focused Phase 5A source verification",
+      "status": "done",
+      "commit": "32fed15"
     }
   ],
   "remaining_tasks": [
     {
-      "id": 5,
-      "name": "Implement 05A document protocol and normalized document read result",
-      "status": "not_started"
-    },
-    {
-      "id": 6,
-      "name": "Execute 05B after 05A lands",
-      "status": "not_started"
-    },
-    {
       "id": 7,
+      "name": "Write 05A summary artifact",
+      "status": "not_started"
+    },
+    {
+      "id": 8,
+      "name": "Execute 05B after 05A summary lands",
+      "status": "not_started"
+    },
+    {
+      "id": 9,
       "name": "Execute 05C and verify Phase 5",
       "status": "not_started"
     }
@@ -66,22 +78,22 @@
       "phase": "5"
     },
     {
-      "decision": "05A execution must start from document protocol anchor tests before implementing helpers.",
-      "rationale": "The first risk is drifting back toward hardcoded workflow modeling; anchor-first tests lock the intended doc-protocol direction.",
+      "decision": "DocumentReadResult should remain a minimal runtime intermediate shape rather than a rigid markdown schema.",
+      "rationale": "Runtime needs a stable handoff from LLM reading results while keeping document semantics soft and markdown-first.",
       "phase": "5"
     },
     {
-      "decision": "DocumentReadResult should be introduced as a minimal runtime intermediate shape, not as a rigid markdown schema.",
-      "rationale": "Runtime still needs a stable handoff from LLM reading results, but the document format itself should remain soft-protocol markdown.",
+      "decision": "Document-backed continuation should reuse the 4B candidate taxonomy and final_action pipeline incrementally.",
+      "rationale": "This extends Kairos toward document-driven orchestration without deleting or destabilizing the existing todo/demo workflow branches.",
       "phase": "5"
     }
   ],
   "uncommitted_files": [
     ".planning/HANDOFF.json",
-    "tests/kairos/test_models.py",
-    "tests/kairos/test_document_protocol.py",
+    ".planning/phases/05-document-driven-continuation/.continue-here.md",
+    ".planning/STATE.md",
     "private_key.yaml"
   ],
-  "next_action": "Resume with 05A Task 2: implement DocumentReadResult in src/adk_agent/kairos/models.py, add document_work_items to KairosState, then create src/adk_agent/kairos/document_protocol.py so the current failing tests can pass before moving on to document_reader.py.",
-  "context_notes": "Phase 5 planning is committed. 05A execution has begun with strict TDD. The first failing tests are now in place and intentionally force the new document-driven model surface into existence. The immediate implementation path is clear: add minimal data structures first, then prompt-governed protocol helpers, then continue with document_reader and continuation integration. Avoid staging private_key.yaml."
+  "next_action": "Start by writing .planning/phases/05-document-driven-continuation/05A-SUMMARY.md with the delivered protocol/model/continuation work and the passing pytest evidence, then decide whether to transition Phase 5A to complete or move into 05B.",
+  "context_notes": "05A code and focused tests are now green and committed in 32fed15. The remaining work before leaving 05A is documentation/phase bookkeeping, not more protocol plumbing. Do not reopen parser-style work; preserve the prompt-governed, markdown-first direction. Keep private_key.yaml out of any future commit."
 }
