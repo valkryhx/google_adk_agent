@@ -1,11 +1,11 @@
 {
   "version": "1.0",
-  "timestamp": "2026-04-11T10:14:37.679Z",
+  "timestamp": "2026-04-11T13:37:43.888Z",
   "phase": "4B",
   "phase_name": "Goal-Driven Planning Intelligence",
   "phase_dir": ".planning/phases/04B-goal-driven-planning-intelligence",
-  "plan": 1,
-  "task": 1,
+  "plan": 3,
+  "task": 3,
   "total_tasks": 3,
   "status": "paused",
   "completed_tasks": [
@@ -20,55 +20,81 @@
       "name": "Create 04B-01/02/03 execution plans",
       "status": "done",
       "commit": "345badf"
-    }
-  ],
-  "remaining_tasks": [
+    },
     {
       "id": 3,
       "name": "Execute 04B-01 with strict TDD",
-      "status": "not_started"
+      "status": "done"
     },
     {
       "id": 4,
       "name": "Execute 04B-02 after 04B-01 lands",
-      "status": "not_started"
+      "status": "done"
     },
     {
       "id": 5,
       "name": "Execute 04B-03 and run phase verification",
-      "status": "not_started"
+      "status": "done"
+    },
+    {
+      "id": 6,
+      "name": "Update GSD docs and verification guidance",
+      "status": "done"
     }
   ],
+  "remaining_tasks": [],
   "blockers": [
     {
       "description": "private_key.yaml is still tracked and locally modified; it contains secrets and must stay out of all future commits.",
       "type": "operational",
-      "workaround": "Stage only explicit 4B files and keep private_key.yaml excluded from every commit."
-    },
-    {
-      "description": "Formal gsd-plan-checker subagent verification did not complete cleanly in this session because the agent/team spawning path was unstable.",
-      "type": "technical",
-      "workaround": "Resume from the written 04B plan files directly; if needed, do a manual plan review or rerun checker later."
+      "workaround": "Stage only explicit files and keep private_key.yaml excluded from every commit."
     }
   ],
   "human_actions_pending": [],
   "decisions": [
     {
-      "decision": "4B execution should follow the three-plan sequence 04B-01 -> 04B-02 -> 04B-03 with strict TDD.",
-      "rationale": "The backend planning core must stabilize before runtime/history surfacing, and those must land before UI/regression work.",
+      "decision": "4B execution followed the sequence 04B-01 -> 04B-02 -> 04B-03 with strict TDD.",
+      "rationale": "The planning artifact contract had to stabilize before runtime, API, history, and frontend layers could consume it safely.",
       "phase": "4B"
     },
     {
-      "decision": "4B remains deterministic and policy-backed rather than introducing an unrestricted LLM planner.",
-      "rationale": "The approved 4B context explicitly requires fixed candidate taxonomy, tiered winner supersession, and no chain-of-thought persistence.",
+      "decision": "4B remained deterministic and policy-backed rather than introducing an unrestricted LLM planner.",
+      "rationale": "The approved 4B scope required fixed candidate taxonomy, tiered winner supersession, and no chain-of-thought persistence.",
+      "phase": "4B"
+    },
+    {
+      "decision": "History Timeline now renders in ascending order with structured entries and bracketed titles.",
+      "rationale": "The original plaintext block was hard to read; the operator needs chronological top-to-bottom scanning and clearer title/content contrast.",
       "phase": "4B"
     }
   ],
   "uncommitted_files": [
-    "private_key.yaml",
     ".planning/HANDOFF.json",
-    ".planning/phases/04B-goal-driven-planning-intelligence/.continue-here.md"
+    ".planning/STATE.md",
+    ".planning/phases/04B-goal-driven-planning-intelligence/.continue-here.md",
+    ".planning/phases/04B-goal-driven-planning-intelligence/04B-01-SUMMARY.md",
+    ".planning/phases/04B-goal-driven-planning-intelligence/04B-02-SUMMARY.md",
+    ".planning/phases/04B-goal-driven-planning-intelligence/04B-03-SUMMARY.md",
+    ".planning/phases/04B-goal-driven-planning-intelligence/04B-VERIFICATION.md",
+    "src/adk_agent/kairos/activity_log.py",
+    "src/adk_agent/kairos/api.py",
+    "src/adk_agent/kairos/continuation.py",
+    "src/adk_agent/kairos/models.py",
+    "src/adk_agent/kairos/runtime.py",
+    "src/adk_agent/static/index.html",
+    "src/adk_agent/static/mobile.css",
+    "src/adk_agent/static/script.js",
+    "src/adk_agent/static/style.css",
+    "tests/kairos/live_http_kairos_demo_outputs_regression.py",
+    "tests/kairos/test_activity_log.py",
+    "tests/kairos/test_api.py",
+    "tests/kairos/test_continuation.py",
+    "tests/kairos/test_frontend_script_kairos_ui.py",
+    "tests/kairos/test_live_http_kairos_demo_outputs_regression.py",
+    "tests/kairos/test_models.py",
+    "tests/kairos/test_runtime.py",
+    "private_key.yaml"
   ],
-  "next_action": "Start with 04B-01 Task 1: add failing tests in tests/kairos/test_models.py for the stable last_planning_result artifact shape, then implement the minimum models.py changes to make those tests pass.",
-  "context_notes": "Phase 4B planning is complete and committed in 345badf. Execution had just begun when the session was paused: execute-phase context was initialized, but no 04B implementation code was changed yet. The correct resume path is to begin 04B-01 from the first TDD task, not to re-plan 4B. Keep commits explicit and avoid staging private_key.yaml."
+  "next_action": "Resume from 4B verification or the next approved phase. If retesting is needed, use 04B-VERIFICATION.md and the retest instructions now recorded in STATE.md and 04B-03-SUMMARY.md.",
+  "context_notes": "Phase 4B is fully implemented and validated. The codebase now includes a stable planning artifact, fixed candidate planner, runtime re-plan tracking, additive API mirrors, sparse planning history classification, operator console planning cards, structured ascending timeline rendering, and documented retest instructions. Do not restart 4B planning; treat any new UI polish as follow-up work. Avoid staging private_key.yaml."
 }
