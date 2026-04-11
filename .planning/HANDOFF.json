@@ -1,43 +1,52 @@
 {
   "version": "1.0",
-  "timestamp": "2026-04-11T16:00:37.152Z",
+  "timestamp": "2026-04-11T16:12:30.616Z",
   "phase": "5",
   "phase_name": "Prompt-Governed Document-Driven Continuation",
   "phase_dir": ".planning/phases/05-document-driven-continuation",
-  "plan": 0,
-  "task": 0,
+  "plan": 1,
+  "task": 1,
   "total_tasks": 3,
   "status": "paused",
   "completed_tasks": [
     {
       "id": 1,
       "name": "Define Phase 5 goal and subphase draft",
-      "status": "done"
+      "status": "done",
+      "commit": "a657e28"
     },
     {
       "id": 2,
       "name": "Write Phase 5 context and research documents",
-      "status": "done"
+      "status": "done",
+      "commit": "a657e28"
     },
     {
       "id": 3,
       "name": "Write 05A/05B/05C execution plans",
-      "status": "done"
+      "status": "done",
+      "commit": "a657e28"
+    },
+    {
+      "id": 4,
+      "name": "Start 05A with strict TDD",
+      "status": "in_progress",
+      "progress": "Added failing document protocol tests in tests/kairos/test_document_protocol.py and failing model round-trip coverage in tests/kairos/test_models.py; pytest now fails because DocumentReadResult is not implemented yet."
     }
   ],
   "remaining_tasks": [
     {
-      "id": 4,
-      "name": "Execute 05A with strict TDD",
-      "status": "not_started"
-    },
-    {
       "id": 5,
-      "name": "Execute 05B after 05A lands",
+      "name": "Implement 05A document protocol and normalized document read result",
       "status": "not_started"
     },
     {
       "id": 6,
+      "name": "Execute 05B after 05A lands",
+      "status": "not_started"
+    },
+    {
+      "id": 7,
       "name": "Execute 05C and verify Phase 5",
       "status": "not_started"
     }
@@ -52,35 +61,27 @@
   "human_actions_pending": [],
   "decisions": [
     {
-      "decision": "Phase 5 should not use rigid parser-first document modeling as the primary approach.",
-      "rationale": "The user wants Kairos to exploit LLM document reading/writing flexibility rather than replacing hardcoded templates with equally rigid schemas.",
+      "decision": "Phase 5 should use prompt-governed document protocols rather than rigid parser-first schemas.",
+      "rationale": "The user wants Kairos to leverage LLM flexibility for reading and generating work documents instead of replacing hardcoded workflows with equally rigid structures.",
       "phase": "5"
     },
     {
-      "decision": "Phase 5 should use prompt-governed document protocols: documents are the facts, prompts are the protocol, code is a thin guardrail.",
-      "rationale": "This preserves flexibility across code and non-code tasks while keeping enough structure for continuation and auditability.",
+      "decision": "05A execution must start from document protocol anchor tests before implementing helpers.",
+      "rationale": "The first risk is drifting back toward hardcoded workflow modeling; anchor-first tests lock the intended doc-protocol direction.",
       "phase": "5"
     },
     {
-      "decision": "Phase 5 execution should proceed in order 05A -> 05B -> 05C.",
-      "rationale": "Kairos must first learn stable document generation/reading/updating before it can safely absorb user requirements and then autonomously discover spawned work.",
+      "decision": "DocumentReadResult should be introduced as a minimal runtime intermediate shape, not as a rigid markdown schema.",
+      "rationale": "Runtime still needs a stable handoff from LLM reading results, but the document format itself should remain soft-protocol markdown.",
       "phase": "5"
     }
   ],
   "uncommitted_files": [
-    ".planning/PROJECT.md",
-    ".planning/REQUIREMENTS.md",
-    ".planning/ROADMAP.md",
-    ".planning/phases/05-document-driven-continuation/05-CONTEXT.md",
-    ".planning/phases/05-document-driven-continuation/05-RESEARCH.md",
-    ".planning/phases/05-document-driven-continuation/05A-PLAN.md",
-    ".planning/phases/05-document-driven-continuation/05B-PLAN.md",
-    ".planning/phases/05-document-driven-continuation/05C-PLAN.md",
     ".planning/HANDOFF.json",
-    "tests/kairos/live_http_kairos_demo_outputs_regression.py",
-    "tests/kairos/test_live_http_kairos_demo_outputs_regression.py",
+    "tests/kairos/test_models.py",
+    "tests/kairos/test_document_protocol.py",
     "private_key.yaml"
   ],
-  "next_action": "Resume with 05A Task 1: write failing tests for the prompt-governed document protocol anchors before implementing any document protocol helpers.",
-  "context_notes": "Phase 4 is closed. Phase 5 planning is now complete enough to execute. The most important design correction in this session was shifting from parser-first document modeling to an LLM-first document protocol: Kairos should generate, read, and update normalized work docs through prompts, with code only providing directory boundaries, audit, and thin safety checks. Do not jump directly to requirement execution; start with 05A document protocol primitives and tests. Avoid staging private_key.yaml."
+  "next_action": "Resume with 05A Task 2: implement DocumentReadResult in src/adk_agent/kairos/models.py, add document_work_items to KairosState, then create src/adk_agent/kairos/document_protocol.py so the current failing tests can pass before moving on to document_reader.py.",
+  "context_notes": "Phase 5 planning is committed. 05A execution has begun with strict TDD. The first failing tests are now in place and intentionally force the new document-driven model surface into existence. The immediate implementation path is clear: add minimal data structures first, then prompt-governed protocol helpers, then continue with document_reader and continuation integration. Avoid staging private_key.yaml."
 }
