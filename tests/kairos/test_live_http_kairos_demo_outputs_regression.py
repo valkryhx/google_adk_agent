@@ -37,12 +37,13 @@ def test_todo_task_commands_create_demo_directory_before_writing_files():
 
 
 
-def test_live_http_source_asserts_history_timeline_visibility():
+def test_live_http_source_asserts_document_drafted_user_requirements():
     text = MODULE_PATH.read_text(encoding="utf-8")
 
-    assert '/kairos/history' in text
-    assert 'history_payload' in text
-    assert 'follow_up' in text or 'Auto-created follow-up' in text
+    assert 'run_user_requirement_document_flow' in text
+    assert 'root / "requirements" / session_id' in text
+    assert 'doc_dir' in text
+    assert 'supported user requirements should become document-backed pending work' in text
 
 
 def test_live_http_source_asserts_planning_evidence_visibility():
@@ -56,12 +57,14 @@ def test_live_http_source_asserts_planning_evidence_visibility():
     assert 'planning_selected' in text or 'planning_replan' in text or 'planning_sleep' in text
 
 
-def test_live_http_source_documents_user_requirement_boundary_for_kairos():
+def test_live_http_source_documents_user_requirement_drafting_and_visibility():
     text = MODULE_PATH.read_text(encoding="utf-8")
 
-    assert 'run_user_requirement_boundary_check' in text
+    assert 'run_user_requirement_document_flow' in text
     assert '/api/chat' in text
-    assert '无法仅凭自然语言需求直接自动分解并推进' in text
+    assert 'root / "requirements" / session_id' in text
+    assert 'doc_dir' in text
+    assert 'supported user requirements should become document-backed pending work' in text
 
 
 def test_live_http_kairos_demo_outputs_regression_passes_against_running_service():
