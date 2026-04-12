@@ -24,3 +24,11 @@ def test_document_protocol_requires_markdown_not_json_only_output():
     assert "markdown" in text.lower()
     assert "json-only" in text.lower()
     assert "open questions" in text.lower()
+
+
+def test_document_protocol_exposes_spawned_work_append_helper():
+    text = PROTOCOL.read_text(encoding="utf-8")
+
+    assert "append_spawned_work_update" in text
+    assert "Follow-up planned via" in text
+    assert "source_doc=" in text

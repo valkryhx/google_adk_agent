@@ -294,6 +294,8 @@ def run_todo_delivery_pipeline(repo_root: Path | None = None) -> dict[str, Any]:
     }
 
 
+
+
 def run_user_requirement_document_flow(requirement: str, repo_root: Path | None = None) -> dict[str, Any]:
     root = repo_root or REPO_ROOT
     created = _request("POST", "/api/sessions", {"app_name": APP_NAME, "user_id": USER_ID})
@@ -326,6 +328,15 @@ def run_user_requirement_document_flow(requirement: str, repo_root: Path | None 
         "doc_text": doc_text,
         "summary": "supported user requirements should become document-backed pending work instead of text-only replies",
     }
+
+
+
+def assert_spawned_document_work_visible(status: dict[str, Any]) -> None:
+    kairos = status["kairos"]
+    assert kairos["document_work_items"]
+    assert any(item["current_step"] != "requirements" for item in kairos["document_work_items"])
+    assert any("requirements/" in doc for item in kairos["document_work_items"] for doc in item.get("source_docs", []))
+    assert kairos["last_planning_result"]["replan"]["changed"] in {True, False}
 
 
 

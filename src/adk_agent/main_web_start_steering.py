@@ -61,8 +61,8 @@ from src.adk_agent.auto_compact_agent import AutoCompactAgent
 from src.adk_agent.kairos.activity_log import KairosActivityLog
 from src.adk_agent.kairos.api import register_kairos_routes
 from src.adk_agent.kairos.dex_bridge import KairosDexBridge
-from src.adk_agent.kairos.document_protocol import build_requirement_work_item, write_work_document
-from src.adk_agent.kairos.models import dump_kairos_state, load_kairos_state
+from src.adk_agent.kairos.document_protocol import append_spawned_work_update, build_requirement_work_item, write_work_document
+from src.adk_agent.kairos.models import DocumentReadResult, dump_kairos_state, load_kairos_state
 from src.adk_agent.kairos.runtime import KairosRuntime
 from src.adk_agent.kairos.workflows import demo_report_pipeline
 from skills.dex.tools import _normalize_command_args
@@ -483,6 +483,7 @@ class SteeringSession:
         runtime.state.document_work_items.insert(0, work_item)
         runtime._continuation_engine.refresh_unfinished_work(runtime.state)
         await self._save_kairos_state(runtime.state)
+        return work_item, doc_path
 
     async def create_kairos_follow_up_task(self, description: str, trigger_reason: str, payload: dict | None = None):
         runtime = self.get_or_create_kairos_runtime()
@@ -528,6 +529,37 @@ class SteeringSession:
                     stage.task_ids = [task["id"]]
                     stage.status = "running"
                     break
+
+        payload = dict(payload or {})
+        source_doc = payload.get("source_doc")
+        if source_doc:
+            source_doc_path = Path(_PROJECT_ROOT) / source_doc
+            work_item = DocumentReadResult(
+                work_id=payload.get("work_id") or f"work:{self.session_id}:{task['id']}",
+                goal=payload.get("goal") or description,
+                status=payload.get("status", "pending"),
+                current_step=payload.get("current_step") or "follow_up",
+                next_actions=list(payload.get("next_actions", [])) or [description],
+                blockers=list(payload.get("blockers", [])),
+                expected_artifacts=list(payload.get("expected_artifacts", [])) or [source_doc],
+                open_questions=list(payload.get("open_questions", [])),
+                human_input_required=bool(payload.get("human_input_required", False)),
+                source_docs=[source_doc],
+            )
+            append_spawned_work_update(
+                source_doc_path,
+                trigger_reason=trigger_reason,
+                work_item=work_item,
+            )
+            runtime.state.document_work_items = [
+                item for item in runtime.state.document_work_items if item.work_id != work_item.work_id
+            ]
+            runtime.state.document_work_items.insert(0, work_item)
+            runtime._continuation_engine.refresh_unfinished_work(runtime.state)
+            await runtime._record(
+                "brief",
+                f"spawned work persisted work_id={work_item.work_id} workflow_id={payload.get('workflow_id', 'document_requirement')} stage_id={work_item.current_step or 'follow_up'} source_doc={source_doc}",
+            )
         await self._save_kairos_state(runtime.state)
         await runtime._record(
             "brief",
@@ -535,6 +567,7 @@ class SteeringSession:
         )
         return task
 
+    @staticmethod
     def _build_kairos_tick_prompt(
         reason: str,
         workflow_summary: str,

@@ -112,6 +112,55 @@ def write_work_document(base_dir: Path, item: DocumentReadResult) -> Path:
     return path
 
 
+def append_spawned_work_update(
+    doc_path: Path,
+    *,
+    trigger_reason: str,
+    work_item: DocumentReadResult,
+) -> str:
+    text = doc_path.read_text(encoding="utf-8")
+    replan_entry = (
+        f"- Follow-up planned via {trigger_reason}: {work_item.work_id} "
+        f"({work_item.current_step or 'document_work'})"
+    )
+    spawned_entry = (
+        f"- {work_item.work_id}: {work_item.goal} "
+        f"[source_doc={doc_path.as_posix()}]"
+    )
+
+    text = _append_section_entry(text, "Replan Notes", replan_entry, placeholder="- no replans yet")
+    text = _append_section_entry(text, "Spawned Work", spawned_entry, placeholder="- none yet")
+    doc_path.write_text(text, encoding="utf-8")
+    return text
+
+
+def _append_section_entry(text: str, section_name: str, entry: str, *, placeholder: str) -> str:
+    header = f"## {section_name}"
+    next_header = "\n## "
+    start = text.find(header)
+    if start == -1:
+        suffix = "" if text.endswith("\n") else "\n"
+        return f"{text}{suffix}\n{header}\n{entry}\n"
+
+    body_start = start + len(header)
+    next_section = text.find(next_header, body_start)
+    if next_section == -1:
+        section_body = text[body_start:]
+        remainder = ""
+    else:
+        section_body = text[body_start:next_section]
+        remainder = text[next_section:]
+
+    lines = section_body.splitlines()
+    normalized_lines = [line for line in lines if line.strip()]
+    normalized_lines = [line for line in normalized_lines if line.strip() != placeholder]
+    if entry not in normalized_lines:
+        normalized_lines.append(entry)
+
+    rebuilt_body = "\n" + "\n".join(normalized_lines) + "\n"
+    return f"{text[:start]}{header}{rebuilt_body}{remainder}"
+
+
 def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:48]
 

@@ -1279,8 +1279,10 @@ async def test_get_status_includes_phase2_fields():
     assert status["schedules"][0]["schedule_id"] == "morning"
 
 
+
+
 @pytest.mark.asyncio
-async def test_status_exposes_document_work_items_and_pending_requirements():
+async def test_status_exposes_spawned_document_work_without_pending_requirement_projection():
     _, _, _, save_state, emit_event, append_log = _make_callbacks()
 
     async def run_turn(_):
@@ -1290,15 +1292,15 @@ async def test_status_exposes_document_work_items_and_pending_requirements():
         state=KairosState(
             enabled=True,
             running=True,
-            mode=KairosMode.WAITING_INPUT,
+            mode=KairosMode.IDLE,
             document_work_items=[
                 DocumentReadResult(
-                    work_id="work:session-123",
-                    goal="build todo app from user request",
-                    status="blocked",
-                    current_step="requirements",
-                    open_questions=["Should the todo app support due dates?"],
-                    human_input_required=True,
+                    work_id="work:session-123:follow-up",
+                    goal="verify generated todo delivery report",
+                    status="pending",
+                    current_step="verification",
+                    next_actions=["check delivery_report.md"],
+                    expected_artifacts=["requirements/session-123/work.md", "demo_delivery/todo_app/delivery_report.md"],
                     source_docs=["requirements/session-123/work.md"],
                 )
             ],
@@ -1313,11 +1315,10 @@ async def test_status_exposes_document_work_items_and_pending_requirements():
     await runtime.tick_once()
     status = runtime.get_status()
 
-    assert status["document_work_items"][0]["work_id"] == "work:session-123"
-    assert status["document_work_items"][0]["open_questions"] == ["Should the todo app support due dates?"]
-    assert status["pending_requirements"][0]["work_id"] == "work:session-123"
-    assert status["pending_requirements"][0]["ask_user"] is True
-    assert status["pending_requirements"][0]["source_doc"] == "requirements/session-123/work.md"
+    assert status["document_work_items"][0]["work_id"] == "work:session-123:follow-up"
+    assert status["document_work_items"][0]["current_step"] == "verification"
+    assert status["document_work_items"][0]["source_docs"] == ["requirements/session-123/work.md"]
+    assert status["pending_requirements"] == []
 
 
 # === Phase 2: Dex handoff lifecycle tests ===

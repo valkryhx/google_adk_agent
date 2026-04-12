@@ -98,8 +98,8 @@ Plans:
 
 Plans:
 - [x] 05A: 文档协议与阅读/写入底座
-- [ ] 05B: 需求落盘与工作草案生成
-- [ ] 05C: 自主发现新任务与持续编排
+- [x] 05B: 需求落盘与工作草案生成
+- [x] 05C: 自主发现新任务与持续编排
 
 **Execution Order:**
 Phases execute in numeric order: 1 → 2 → 3 → 4A → 4B → 5
@@ -111,7 +111,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4A → 4B → 5
 | 3. Policy Hardening & Verification | 2/2 | Complete | 2026-04-07 |
 | 4A. Explainability, History & Operator UX | 1/1 | Complete | 2026-04-10 |
 | 4B. Goal-Driven Planning Intelligence | 3/3 | Complete | 2026-04-11 |
-| 5. Document-Driven Continuation | 1/3 | In progress | - |
+| 5. Document-Driven Continuation | 3/3 | Complete | 2026-04-12 |
 
 ---
-*Last updated: 2026-04-11 after finalizing the draft for Phase 5 document-driven continuation*
+*Last updated: 2026-04-12 after completing Phase 5C and closing Phase 5*

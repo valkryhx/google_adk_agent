@@ -127,7 +127,7 @@ class KairosActivityLog:
         elif message.startswith("Selected winner:"):
             entry_kind = "planning_selected"
             title = "Planning selected"
-        elif "auto-created dex task" in message:
+        elif "auto-created dex task" in message or message.startswith("spawned work persisted"):
             entry_kind = "follow_up"
             title = "Auto-created follow-up"
         elif " completed:" in message or message.startswith("completed "):
@@ -155,10 +155,14 @@ class KairosActivityLog:
             },
         }
 
+
     def _extract_task_id(self, message: str) -> str | None:
         auto_created = re.search(r"auto-created dex task\s+([^:]+):", message)
         if auto_created:
             return auto_created.group(1).strip()
+        spawned = re.search(r"work_id=([\w:.-]+)", message)
+        if spawned:
+            return spawned.group(1)
         inline_task = re.search(r"task(?:[_ ]id)?[=:]\s*([\w.-]+)", message)
         if inline_task:
             return inline_task.group(1)

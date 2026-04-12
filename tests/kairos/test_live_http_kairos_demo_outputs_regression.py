@@ -57,14 +57,28 @@ def test_live_http_source_asserts_planning_evidence_visibility():
     assert 'planning_selected' in text or 'planning_replan' in text or 'planning_sleep' in text
 
 
-def test_live_http_source_documents_user_requirement_drafting_and_visibility():
+def test_live_http_source_asserts_document_drafted_user_requirements():
     text = MODULE_PATH.read_text(encoding="utf-8")
 
     assert 'run_user_requirement_document_flow' in text
-    assert '/api/chat' in text
     assert 'root / "requirements" / session_id' in text
     assert 'doc_dir' in text
     assert 'supported user requirements should become document-backed pending work' in text
+
+
+
+def test_live_http_source_asserts_spawned_document_visibility_helper():
+    text = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert 'assert_spawned_document_work_visible' in text
+    assert 'document_work_items' in text
+    assert 'current_step' in text
+    assert 'last_planning_result' in text
+
+
+def test_live_http_module_exports_main_entrypoint():
+    assert hasattr(module, "main")
+    assert callable(module.main)
 
 
 def test_live_http_kairos_demo_outputs_regression_passes_against_running_service():

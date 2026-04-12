@@ -80,6 +80,8 @@ def register_kairos_routes(app, session_manager):
             "task_summaries": status.get("task_summaries", []),
             "decision_explanation": status.get("decision_explanation"),
             "condition_tree": status.get("condition_tree"),
+            "document_work_items": status.get("document_work_items", []),
+            "pending_requirements": status.get("pending_requirements", []),
             "unfinished_work_items": status.get("unfinished_work_items", []),
             "proactive_candidates": status.get("proactive_candidates", []),
             "last_proactive_scan": status.get("last_proactive_scan", {}),

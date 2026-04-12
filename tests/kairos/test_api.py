@@ -425,34 +425,24 @@ def test_attach_route_stays_lightweight_without_history_array(monkeypatch):
     assert "last_planning_result" not in payload["attach"]
 
 
-def test_status_route_exposes_todo_delivery_workflow_when_active():
+
+
+def test_status_route_exposes_spawned_work_items():
     app = FastAPI()
     manager = FakeManager()
     session = manager.get_or_create("demo", "alice", "session_1")
-    session.runtime.state["active_workflow"] = {
-        "workflow_id": "todo_delivery_pipeline",
-        "goal": "deliver todo app artifacts",
-        "status": "active",
-        "current_stage": "delivery_report",
-        "stages": [
-            {
-                "stage_id": "delivery_report",
-                "label": "delivery report",
-                "status": "running",
-                "task_ids": ["todo-report-task"],
-                "artifacts": ["demo_delivery/todo_app/delivery_report.md"],
-                "summary": None,
-            }
-        ],
-        "metadata": {},
-    }
-    session.runtime.state["planned_actions"] = [
+    session.runtime.state["document_work_items"] = [
         {
-            "action_id": "todo-report",
-            "kind": "create_dex_task",
-            "reason": "todo_delivery_ready",
-            "payload": {"description": "generate todo delivery report"},
+            "work_id": "work:session-123:follow-up",
+            "goal": "verify generated todo delivery report",
             "status": "pending",
+            "current_step": "verification",
+            "next_actions": ["check delivery_report.md", "write follow-up note"],
+            "blockers": [],
+            "expected_artifacts": ["requirements/session-123/work.md", "demo_delivery/todo_app/delivery_report.md"],
+            "open_questions": [],
+            "human_input_required": False,
+            "source_docs": ["requirements/session-123/work.md"],
         }
     ]
     register_kairos_routes(app, manager)
@@ -465,9 +455,10 @@ def test_status_route_exposes_todo_delivery_workflow_when_active():
 
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["kairos"]["active_workflow"]["workflow_id"] == "todo_delivery_pipeline"
-    assert payload["kairos"]["planned_actions"][0]["payload"]["description"] == "generate todo delivery report"
-    assert payload["active_workflow"]["stages"][0]["artifacts"][0] == "demo_delivery/todo_app/delivery_report.md"
+    assert payload["kairos"]["document_work_items"][0]["work_id"] == "work:session-123:follow-up"
+    assert payload["kairos"]["document_work_items"][0]["current_step"] == "verification"
+    assert payload["kairos"]["document_work_items"][0]["source_docs"] == ["requirements/session-123/work.md"]
+    assert payload["pending_requirements"] == []
 
 
 # === Phase 2 attach/list route tests ===

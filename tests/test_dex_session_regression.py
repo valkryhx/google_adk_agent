@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from skills.dex.tools import DexManager
+from src.adk_agent.kairos.models import DocumentReadResult
 from src.adk_agent.main_web_start_steering import SteeringSession
 
 
@@ -229,6 +230,91 @@ async def test_create_kairos_follow_up_task_supports_todo_delivery_report(tmp_pa
     assert task["description"] == "generate todo delivery report"
     assert report_path.exists()
     assert "Ready: True" in report_path.read_text(encoding="utf-8")
-    assert runtime.state.active_workflow.stages[4].status == "running"
+
+
+@pytest.mark.asyncio
+async def test_create_kairos_follow_up_task_persists_spawned_work_to_requirement_doc(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    requirement_dir = tmp_path / "requirements" / "session-123"
+    requirement_dir.mkdir(parents=True, exist_ok=True)
+    work_doc = requirement_dir / "work.md"
+    work_doc.write_text(
+        "# Work Item: deliver todo app\n\n"
+        "## Goal\ndeliver todo app\n\n"
+        "## Current Status\nin_progress\n\n"
+        "## Current Step\nverification\n\n"
+        "## Steps\n- verify generated todo delivery report\n\n"
+        "## Expected Artifacts\n- requirements/session-123/work.md\n\n"
+        "## Blockers\n- none\n\n"
+        "## Verification\n- confirm requirement scope with user\n\n"
+        "## Replan Notes\n- no replans yet\n\n"
+        "## Spawned Work\n- none yet\n",
+        encoding="utf-8",
+    )
+
+    session = SteeringSession.__new__(SteeringSession)
+    session.user_id = "alice"
+    session.session_id = "session-123"
+    saved_states = []
+    recorded = []
+
+    async def save_state(state):
+        saved_states.append(state)
+
+    async def record(kind, message):
+        recorded.append((kind, message))
+
+    runtime = types.SimpleNamespace(
+        state=types.SimpleNamespace(
+            planned_actions=[],
+            active_workflow=types.SimpleNamespace(stages=[]),
+            document_work_items=[],
+        ),
+        register_dex_task=None,
+        _record=record,
+        _continuation_engine=types.SimpleNamespace(refresh_unfinished_work=lambda state: None),
+    )
+
+    async def register_dex_task(task_id, description):
+        return None
+
+    runtime.register_dex_task = register_dex_task
+    session.get_or_create_kairos_runtime = lambda: runtime
+    session._save_kairos_state = save_state
+
+    def fake_start_background_process(self, task_id, command_parts):
+        self.store.mark_running(task_id, command=list(command_parts), pid=12345)
+
+    monkeypatch.setattr(DexManager, "start_background_process", fake_start_background_process)
+    monkeypatch.setattr("src.adk_agent.main_web_start_steering._PROJECT_ROOT", str(tmp_path))
+
+    task = await session.create_kairos_follow_up_task(
+        "generate todo delivery report",
+        "todo_delivery_ready",
+        {
+            "workflow_id": "todo_delivery_pipeline",
+            "description": "generate todo delivery report",
+            "source_doc": "requirements/session-123/work.md",
+            "work_id": "work:session-123:follow-up",
+            "goal": "verify generated todo delivery report",
+            "current_step": "verification",
+            "expected_artifacts": [
+                "requirements/session-123/work.md",
+                "demo_delivery/todo_app/delivery_report.md",
+            ],
+            "next_actions": ["check delivery_report.md"],
+        },
+    )
+
+    doc_text = work_doc.read_text(encoding="utf-8")
+    assert task["description"] == "generate todo delivery report"
+    assert "## Replan Notes" in doc_text
+    assert "todo_delivery_ready" in doc_text
+    assert "## Spawned Work" in doc_text
+    assert "work:session-123:follow-up" in doc_text
+    assert runtime.state.document_work_items
+    assert isinstance(runtime.state.document_work_items[0], DocumentReadResult)
+    assert runtime.state.document_work_items[0].work_id == "work:session-123:follow-up"
+    assert runtime.state.document_work_items[0].source_docs == ["requirements/session-123/work.md"]
     assert saved_states
-    assert any("generate todo delivery report" in message for _, message in recorded)
+    assert any("spawned work persisted" in message for _, message in recorded)

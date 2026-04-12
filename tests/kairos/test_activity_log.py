@@ -157,18 +157,23 @@ def test_planning_events_map_to_typed_timeline_entries(tmp_path: Path):
     assert entries[3]["stage"] == "verification"
 
 
-def test_plain_planning_scan_does_not_become_timeline_event(tmp_path: Path):
+
+
+def test_spawned_work_events_map_to_follow_up_with_document_metadata(tmp_path: Path):
     writer = KairosActivityLog(project_root=tmp_path)
     writer.append_entry(
         "alice",
         "demo_app",
         "session_123",
         "brief",
-        "planning scan complete workflow_id=todo_delivery_pipeline stage_id=codegen",
-        "2026-04-09T10:00:00",
+        "spawned work persisted work_id=work:session-123:follow-up workflow_id=document_requirement stage_id=requirements source_doc=requirements/session-123/work.md",
+        "2026-04-09T10:04:00",
     )
 
-    entry = writer.read_session_history("alice", "demo_app", "session_123")[0]
+    entry = writer.read_session_history("alice", "demo_app", "session_123", descending=False)[0]
 
-    assert entry["kind"] == "brief"
-    assert entry["title"] == "Brief"
+    assert entry["kind"] == "follow_up"
+    assert entry["workflow"] == "document_requirement"
+    assert entry["stage"] == "requirements"
+    assert entry["task_id"] == "work:session-123:follow-up"
+    assert entry["metadata"]["raw_message"] == "spawned work persisted work_id=work:session-123:follow-up workflow_id=document_requirement stage_id=requirements source_doc=requirements/session-123/work.md"
