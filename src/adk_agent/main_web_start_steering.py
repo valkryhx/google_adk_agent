@@ -17,6 +17,8 @@ import time
 import secrets
 import sqlite3
 import functools
+import re
+import uuid
 from pathlib import Path
 from contextvars import ContextVar
 from typing import Dict, Tuple, Optional, Any, List
@@ -59,15 +61,36 @@ from src.adk_agent.auto_compact_agent import AutoCompactAgent
 from src.adk_agent.kairos.activity_log import KairosActivityLog
 from src.adk_agent.kairos.api import register_kairos_routes
 from src.adk_agent.kairos.dex_bridge import KairosDexBridge
+from src.adk_agent.kairos.document_protocol import build_requirement_work_item, write_work_document
 from src.adk_agent.kairos.models import dump_kairos_state, load_kairos_state
-from src.adk_agent.kairos.workflows import demo_report_pipeline
 from src.adk_agent.kairos.runtime import KairosRuntime
+from src.adk_agent.kairos.workflows import demo_report_pipeline
 from skills.dex.tools import _normalize_command_args
 
 # SessionKey = (app_name, user_id, session_id)
 SessionKey = Tuple[str, str, str]
 
 # 中断异常定义（仍然被 SteeringSession 使用）
+class RequirementDraft:
+    def __init__(self, work_item, doc_path: Path):
+        self.work_item = work_item
+        self.doc_path = doc_path
+
+    def to_chunks(self) -> list[dict[str, Any]]:
+        brief = f"已创建需求工作文档: {self.doc_path.as_posix()}"
+        if self.work_item.open_questions:
+            question_lines = "\n".join(f"- {question}" for question in self.work_item.open_questions)
+            brief += f"\n\n需要你补充的信息:\n{question_lines}"
+        return [{"type": "text", "content": brief}]
+
+
+def _looks_like_supported_requirement(message: str) -> bool:
+    text = message.strip().lower()
+    if not text:
+        return False
+    return any(keyword in text for keyword in ("build", "create", "todo", "app", "requirements"))
+
+
 class UserInterruption(Exception):
     """用户手动触发的中断异常"""
     pass
@@ -449,6 +472,18 @@ class SteeringSession:
             ts=event.ts,
         )
 
+
+    async def draft_user_requirement_work_item(self, requirement: str):
+        runtime = self.get_or_create_kairos_runtime()
+        work_item = build_requirement_work_item(requirement, session_id=self.session_id)
+        doc_path = write_work_document(Path(_PROJECT_ROOT), work_item)
+        runtime.state.document_work_items = [
+            item for item in runtime.state.document_work_items if item.work_id != work_item.work_id
+        ]
+        runtime.state.document_work_items.insert(0, work_item)
+        runtime._continuation_engine.refresh_unfinished_work(runtime.state)
+        await self._save_kairos_state(runtime.state)
+
     async def create_kairos_follow_up_task(self, description: str, trigger_reason: str, payload: dict | None = None):
         runtime = self.get_or_create_kairos_runtime()
         dex = KairosDexBridge(base_dir=_PROJECT_ROOT, user_id=self.user_id).manager
@@ -500,7 +535,6 @@ class SteeringSession:
         )
         return task
 
-    @staticmethod
     def _build_kairos_tick_prompt(
         reason: str,
         workflow_summary: str,
@@ -2788,6 +2822,16 @@ class SessionListResponse(BaseModel):
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest, response: Response):
+    if _looks_like_supported_requirement(request.message):
+        session = session_manager.get_or_create(request.app_name, request.user_id, request.session_id)
+        draft = RequirementDraft(*await session.draft_user_requirement_work_item(request.message))
+
+        async def generate_requirement_chunks():
+            for chunk in draft.to_chunks():
+                yield json.dumps({"chunk": chunk}, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(generate_requirement_chunks(), media_type="application/x-ndjson")
+
     # 1. 检查是否忙碌
     if WORKER_LOCK.locked():
         # === 核心逻辑：智能忙碌响应 ===

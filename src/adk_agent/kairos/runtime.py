@@ -306,6 +306,19 @@ class KairosRuntime:
         self._continuation_engine._path_exists = self._path_exists
         payload["condition_tree"] = self._build_condition_tree()
         payload["decision_explanation"] = self._build_decision_explanation()
+        payload["document_work_items"] = [asdict(item) for item in self.state.document_work_items]
+        payload["pending_requirements"] = [
+            {
+                "work_id": item.work_id,
+                "goal": item.goal,
+                "status": item.status,
+                "ask_user": item.human_input_required,
+                "open_questions": list(item.open_questions),
+                "source_doc": (item.expected_artifacts[0] if item.expected_artifacts else (item.source_docs[0] if item.source_docs else None)),
+            }
+            for item in self.state.document_work_items
+            if item.current_step == "requirements" and item.status not in {"completed", "done", "cancelled"}
+        ]
         payload["unfinished_work_items"] = list(payload.get("unfinished_work_items", []))
         payload["proactive_candidates"] = list(payload.get("proactive_candidates", []))
         payload["last_proactive_scan"] = dict(payload.get("last_proactive_scan", {}))

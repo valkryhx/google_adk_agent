@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from src.adk_agent.kairos.models import (
+    DocumentReadResult,
     KairosMode,
     KairosPlannedAction,
     KairosSchedule,
@@ -1276,6 +1277,47 @@ async def test_get_status_includes_phase2_fields():
     assert "active_trigger" in status
     assert status["last_tick_at"] == "2026-04-02T12:00:00+00:00"
     assert status["schedules"][0]["schedule_id"] == "morning"
+
+
+@pytest.mark.asyncio
+async def test_status_exposes_document_work_items_and_pending_requirements():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.WAITING_INPUT,
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:session-123",
+                    goal="build todo app from user request",
+                    status="blocked",
+                    current_step="requirements",
+                    open_questions=["Should the todo app support due dates?"],
+                    human_input_required=True,
+                    source_docs=["requirements/session-123/work.md"],
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+    )
+
+    await runtime.tick_once()
+    status = runtime.get_status()
+
+    assert status["document_work_items"][0]["work_id"] == "work:session-123"
+    assert status["document_work_items"][0]["open_questions"] == ["Should the todo app support due dates?"]
+    assert status["pending_requirements"][0]["work_id"] == "work:session-123"
+    assert status["pending_requirements"][0]["ask_user"] is True
+    assert status["pending_requirements"][0]["source_doc"] == "requirements/session-123/work.md"
 
 
 # === Phase 2: Dex handoff lifecycle tests ===

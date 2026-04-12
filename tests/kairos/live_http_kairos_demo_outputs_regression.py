@@ -307,12 +307,23 @@ def run_user_requirement_document_flow(requirement: str, repo_root: Path | None 
     )
     chat_chunks = _chat_for_json(requirement, session_id)
     status = _fetch_kairos_status(session_id)
+    doc_path = doc_dir / "work.md"
+
+    assert doc_path.exists()
+    doc_text = doc_path.read_text(encoding="utf-8")
+    assert "## Goal" in doc_text
+    assert "## Current Status" in doc_text
+    assert "## Replan Notes" in doc_text
+    assert status["kairos"]["document_work_items"]
+    assert status["kairos"]["pending_requirements"]
 
     return {
         "session_id": session_id,
         "chat_chunks": chat_chunks,
         "status": status,
         "doc_dir": doc_dir,
+        "doc_path": doc_path,
+        "doc_text": doc_text,
         "summary": "supported user requirements should become document-backed pending work instead of text-only replies",
     }
 
