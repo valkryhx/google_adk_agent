@@ -2,32 +2,32 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: execution_in_progress
-stopped_at: Phase 5A paused after implementation; summary and phase bookkeeping remain
-last_updated: "2026-04-11T16:51:05Z"
-last_activity: 2026-04-11
+status: executing
+stopped_at: Completed 05-02-PLAN.md
+last_updated: "2026-04-12T04:39:05.700Z"
+last_activity: 2026-04-12
 progress:
-  total_phases: 5
+  total_phases: 6
   completed_phases: 4
   total_plans: 12
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # STATE.md
 
 ## Current Position
 
-Phase: 5
-Plan: 05A implementation committed; summary pending
-Status: Phase 5A 的代码工作已完成并提交（`32fed15 feat(kairos): add document-driven work protocol base`）。当前已暂停在 phase-close 边缘：`document_protocol.py`、`document_reader.py`、`DocumentReadResult` / `document_work_items`、以及 document-backed continuation 接线均已落地并通过 focused pytest，下一步是补 `05A-SUMMARY.md` 与更新 phase bookkeeping。
-Last activity: 2026-04-11
+Phase: 05 (document-driven-continuation) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-04-12
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-06)
 
 **Core value:** 把普通的一次一答式 agent 运行时，演进成一个可扩展、可观测、可长期运行、能自主推进工作的现代 Agent Operating System。
-**Current focus:** v1.1 Phase 5A 已完成主要实现并已暂停。下一步不是继续补底层协议代码，而是写 `05A-SUMMARY.md`、更新 phase 状态，并决定是否推进 05B。
+**Current focus:** Phase 05 — document-driven-continuation
 
 ## Accumulated Context
 
@@ -45,18 +45,20 @@ See: .planning/PROJECT.md (updated 2026-04-06)
 ## Session Continuity
 
 ### How to verify / close Phase 5A
+
 - Focused source verification:
   - `PYTHONIOENCODING=utf-8 PYTHONPATH=. pytest tests/kairos/test_document_protocol.py tests/kairos/test_document_reader.py tests/kairos/test_models.py tests/kairos/test_continuation.py -q`
 - Implementation evidence:
   - commit `32fed15 feat(kairos): add document-driven work protocol base`
-- Immediate closure work:
-  - write `.planning/phases/05-document-driven-continuation/05A-SUMMARY.md`
-  - update phase bookkeeping / state so resume and transition reflect 05A code completion
-  - then decide whether to advance into 05B
+- Phase 5A closure evidence:
+  - `.planning/phases/05-document-driven-continuation/05A-SUMMARY.md`
+- Immediate next work:
+  - start 05B from `.planning/phases/05-document-driven-continuation/05B-PLAN.md`
+  - keep requirement drafting document-first and preserve ask_user/open-questions semantics
 
-Last session: 2026-04-11T16:51:05Z
-Stopped at: Phase 5A paused after implementation; summary and bookkeeping remain
-Resume file: .planning/HANDOFF.json
+Last session: 2026-04-12T04:39:05.690Z
+Stopped at: Completed 05-02-PLAN.md
+Resume file: None
 
 ---
-*Last updated: 2026-04-11 after pausing with 05A implementation committed and handoff refreshed*
+*Last updated: 2026-04-12 after resuming, closing 05A summary/bookkeeping, and preparing 05B execution*
