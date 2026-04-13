@@ -61,13 +61,16 @@ See: .planning/PROJECT.md (updated 2026-04-06)
   - `.planning/phases/05-document-driven-continuation/05B-SUMMARY.md`
   - `.planning/phases/05-document-driven-continuation/05C-SUMMARY.md`
 - Immediate next work:
-  - run phase-level verification / closure
-  - preserve document-backed spawned work as fact source
-  - keep additive planning/history/API visibility sparse and explainable
+  - update document-backed orchestration design in code, not just verify visibility
+  - first implementation wave should modify: `src/adk_agent/kairos/continuation.py`, `src/adk_agent/kairos/orchestration.py` (new), `src/adk_agent/main_web_start_steering.py`, `src/adk_agent/kairos/models.py`, `tests/kairos/test_continuation.py`
+  - replace document-backed `continue_workflow_scan` with executable materialization (`run_dex_task` / `ask_user` / `record_blocked` / `sleep_until_signal`)
+  - add minimal progression contract (`WorkProgressSnapshot`, `GateEvaluation`, `ExecutableAction`) and minimal `StepAttempt` persistence for dedupe/audit
+  - keep the design generic for document-backed autonomous task progression; do not optimize around the Flask example
+  - after the first wave, expand runtime/api/dex/live-http regression coverage to prove a new document-backed requirement can produce at least one executable next step
 
-Last session: 2026-04-12T07:30:00Z
-Stopped at: Phase 5 complete; ready for phase-level verification
+Last session: 2026-04-13T08:47:07Z
+Stopped at: Phase 5 research updated; implementation should target document-backed executable progression
 Resume file: .planning/HANDOFF.json
 
 ---
-*Last updated: 2026-04-12 after completing 05C and preparing Phase 5 verification*
+*Last updated: 2026-04-13 after Phase 5 gap research and implementation checklist refinement*
