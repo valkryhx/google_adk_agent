@@ -7,8 +7,19 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from .document_protocol import append_spawned_work_update
 from .continuation import ContinuationEngine
-from .models import KairosEvent, KairosMode, KairosSchedule, KairosState, KairosTrigger, TriggerKind
+from .models import (
+    KairosEvent,
+    KairosMode,
+    KairosPlannedAction,
+    KairosReplanResult,
+    KairosSchedule,
+    KairosState,
+    KairosTrigger,
+    KairosVerificationResult,
+    TriggerKind,
+)
 from .scheduler import KairosScheduler
 from .workflows import demo_report_pipeline, todo_delivery_pipeline
 
@@ -171,6 +182,41 @@ class KairosRuntime:
             previous_planning_snapshot = dict(self.state.last_planning_result)
             await self._poll_dex()
             self._continuation_engine.refresh_unfinished_work(self.state)
+            if self.state.active_workflow is None and self.state.document_work_items:
+                planner = getattr(self, "_llm_planner", None)
+                if planner is not None and not self.state.current_execution_plan.steps:
+                    try:
+                        understanding = await planner.draft_requirement_understanding(self.state.document_work_items[0])
+                        self.state.current_understanding = understanding
+                        self.state.current_execution_plan = await planner.build_execution_plan(
+                            self.state.document_work_items[0],
+                            understanding,
+                            candidate_actions=["update_document", "spawn_dex_task", "ask_user", "sleep"],
+                        )
+                        if self.state.current_execution_plan.steps:
+                            first_step = self.state.current_execution_plan.steps[0]
+                            if first_step.get("action_kind") == "update_document":
+                                self.state.current_action_payload = await planner.build_document_patch_payload(
+                                    work_item=self.state.document_work_items[0],
+                                    step=first_step,
+                                )
+                            elif first_step.get("action_kind") == "spawn_dex_task":
+                                self.state.current_action_payload = await planner.build_design_codegen_payload(
+                                    work_item=self.state.document_work_items[0],
+                                    step=first_step,
+                                )
+                            else:
+                                self.state.current_action_payload = await planner.build_action_payload(
+                                    work_item=self.state.document_work_items[0],
+                                    step=first_step,
+                                )
+                            await self._dispatch_action_payload()
+                    except Exception as exc:
+                        await self._record("brief", f"llm planner fallback active: {type(exc).__name__}: {exc}")
+                decision = self._continuation_engine._decision_from_final_action(
+                    dict(self.state.last_planning_result.get("final_action", {}))
+                )
+                self.state.pending_triggers.extend(self._continuation_engine.apply_decisions(self.state, [decision]))
             await self._record_planning_transition(previous_planning_snapshot)
 
             if not self.state.running:
@@ -188,7 +234,7 @@ class KairosRuntime:
                 await self._persist()
                 return
 
-            if self.state.pending_triggers and not self.state.busy and len(self.state.pending_triggers) == ready_trigger_count:
+            if self.state.pending_triggers and not self.state.busy:
                 trigger = self.state.pending_triggers.pop(0)
                 if trigger.kind is TriggerKind.INTERNAL and self._create_follow_up_task is not None:
                     await self._execute_internal_trigger(trigger)
@@ -276,6 +322,142 @@ class KairosRuntime:
             "missing_requirements": missing_requirements,
         }
 
+    def _build_document_progress_view(self) -> dict[str, Any]:
+        attempts = [asdict(item) for item in self.state.step_attempts]
+        pending_attempt = next((item for item in self.state.step_attempts if item.status in {"pending", "started"}), None)
+        return {
+            "step_attempts": attempts,
+            "active_attempt": asdict(pending_attempt) if pending_attempt else None,
+            "document_work_count": len(self.state.document_work_items),
+        }
+
+    async def _dispatch_action_payload(self) -> None:
+        payload = self.state.current_action_payload
+        if not payload.action_kind:
+            return
+        if payload.action_kind == "ask_user":
+            self.state.blocked_reason = payload.why_blocked or payload.question or "waiting for user input"
+            self.state.mode = KairosMode.WAITING_INPUT
+            return
+        if payload.action_kind == "sleep":
+            self.state.blocked_reason = None
+            return
+        if payload.action_kind == "update_document":
+            if not self.state.document_work_items:
+                return
+            if payload.target_doc:
+                doc_path = Path.cwd() / payload.target_doc
+            elif self.state.document_work_items[0].expected_artifacts:
+                doc_path = Path.cwd() / self.state.document_work_items[0].expected_artifacts[0]
+            else:
+                return
+            if not doc_path.exists():
+                return
+            if payload.section_updates:
+                append_spawned_work_update(
+                    doc_path,
+                    trigger_reason=payload.rationale or "llm_action_payload",
+                    work_item=self.state.document_work_items[0],
+                )
+            return
+        if payload.action_kind == "spawn_dex_task":
+            description = payload.description or "llm generated dex task"
+            command_template_id = payload.command_template_id or "draft_requirements_doc"
+            safe_templates = {
+                "draft_requirements_doc": lambda brief: f'PYTHONIOENCODING=utf-8 python -c "from pathlib import Path; Path(\"demo_outputs\").mkdir(exist_ok=True); Path(\"demo_outputs/requirements_brief.txt\").write_text({brief!r}, encoding=\"utf-8\")"',
+                "generate_todo_app": lambda brief: f'PYTHONIOENCODING=utf-8 python -c "from pathlib import Path; Path(\"demo_delivery/todo_app\").mkdir(parents=True, exist_ok=True); Path(\"demo_delivery/todo_app/design_codegen_brief.txt\").write_text({brief!r}, encoding=\"utf-8\")"',
+                "run_smoke_check": lambda brief: f'PYTHONIOENCODING=utf-8 python -c "from pathlib import Path; Path(\"demo_delivery/todo_app\").mkdir(parents=True, exist_ok=True); Path(\"demo_delivery/todo_app/smoke_check_request.txt\").write_text({brief!r}, encoding=\"utf-8\")"',
+                "summarize_delivery": lambda brief: f'PYTHONIOENCODING=utf-8 python -c "from pathlib import Path; Path(\"demo_delivery\").mkdir(parents=True, exist_ok=True); Path(\"demo_delivery/delivery_summary_brief.txt\").write_text({brief!r}, encoding=\"utf-8\")"',
+            }
+            if command_template_id not in safe_templates:
+                self.state.blocked_reason = f"unsupported command template: {command_template_id}"
+                self.state.mode = KairosMode.WAITING_INPUT
+                return
+            design_codegen_brief = payload.brief or description
+            task = self._dex_bridge.create_task(description, context=design_codegen_brief)
+            self._dex_bridge.start_task(task["id"], safe_templates[command_template_id](design_codegen_brief))
+            self.state.tracked_dex_task_ids.append(task["id"])
+            planned_payload = {
+                "task_id": task["id"],
+                "work_id": self.state.document_work_items[0].work_id if self.state.document_work_items else None,
+                "step_id": self.state.document_work_items[0].current_step if self.state.document_work_items else None,
+                "description": description,
+                "command_template_id": command_template_id,
+                "design_codegen_brief": design_codegen_brief,
+                "expected_artifacts": list(payload.expected_artifacts),
+            }
+            self.state.planned_actions.append(
+                KairosPlannedAction(
+                    action_id=f"planned-{task['id']}",
+                    kind="run_dex_task",
+                    reason=payload.rationale or "llm_action_payload",
+                    payload=planned_payload,
+                    status="pending",
+                    created_at=task.get("created_at"),
+                )
+            )
+            self.state.task_summaries = [
+                {
+                    "task_id": task["id"],
+                    "status": "planned",
+                    "summary_text": command_template_id,
+                    "artifact_status": "unknown",
+                    "log_hint": None,
+                    "result_summary": design_codegen_brief,
+                    "error_summary": None,
+                }
+            ] + self.state.task_summaries[:9]
+            await self._record("brief", f"dex handoff registered: {task['id']} {description}")
+            return
+        if payload.action_kind == "summarize_progress":
+            if payload.brief:
+                await self._record("brief", payload.brief)
+            return
+
+    async def _refresh_verification_state(
+        self,
+        *,
+        task_id: str,
+        task_description: str,
+        task_status: str,
+        summary: str | None,
+        artifacts: list[dict[str, Any]],
+    ) -> None:
+        verifier = getattr(self, "_llm_verifier", None)
+        if verifier is None or not self.state.document_work_items:
+            return
+        try:
+            self.state.last_verification_result = await verifier.verify_attempt(
+                attempt_id=task_id,
+                work_item=self.state.document_work_items[0],
+                attempt_summary={
+                    "description": task_description,
+                    "status": task_status,
+                    "result_summary": summary,
+                },
+                artifacts=artifacts,
+            )
+            if self.state.last_verification_result.should_replan:
+                self.state.last_replan_result = await verifier.replan_from_failure(
+                    work_item=self.state.document_work_items[0],
+                    verification_result=asdict(self.state.last_verification_result),
+                    available_actions=["update_document", "spawn_dex_task", "ask_user", "sleep"],
+                )
+            else:
+                self.state.last_replan_result = KairosReplanResult()
+        except Exception as exc:
+            await self._record("brief", f"llm verifier fallback active: {type(exc).__name__}: {exc}")
+            if not self.state.last_verification_result.verdict:
+                self.state.last_verification_result = KairosVerificationResult(
+                    attempt_id=task_id,
+                    verdict="unknown",
+                )
+            if not self.state.last_replan_result.replan_reason:
+                self.state.last_replan_result = KairosReplanResult(
+                    replan_reason="verifier_unavailable",
+                    root_cause_hypothesis=str(exc),
+                )
+
     def get_status(self) -> dict:
         payload = asdict(self.state)
         payload["mode"] = self.state.mode.value
@@ -307,6 +489,7 @@ class KairosRuntime:
         payload["condition_tree"] = self._build_condition_tree()
         payload["decision_explanation"] = self._build_decision_explanation()
         payload["document_work_items"] = [asdict(item) for item in self.state.document_work_items]
+        payload["document_progress"] = self._build_document_progress_view()
         payload["pending_requirements"] = [
             {
                 "work_id": item.work_id,
@@ -324,6 +507,11 @@ class KairosRuntime:
         payload["last_proactive_scan"] = dict(payload.get("last_proactive_scan", {}))
         payload["last_guardrail_block"] = dict(payload.get("last_guardrail_block", {}))
         payload["last_planning_result"] = dict(payload.get("last_planning_result", {}))
+        payload["current_understanding"] = asdict(self.state.current_understanding)
+        payload["current_execution_plan"] = asdict(self.state.current_execution_plan)
+        payload["current_action_payload"] = asdict(self.state.current_action_payload)
+        payload["last_verification_result"] = asdict(self.state.last_verification_result)
+        payload["last_replan_result"] = asdict(self.state.last_replan_result)
         return payload
 
     async def _record_planning_transition(self, previous_planning_snapshot: dict[str, Any]) -> None:
@@ -338,7 +526,7 @@ class KairosRuntime:
             self.state.last_planning_result["replan"] = {"changed": False}
             return
 
-        special_actions = {"ask_user", "blocked", "sleep"}
+        special_actions = {"ask_user", "record_blocked", "sleep_until_signal"}
         changed = bool(previous_candidate_id and current_candidate_id and previous_candidate_id != current_candidate_id)
         if changed:
             self.state.last_planning_result["replan"] = {
@@ -447,6 +635,20 @@ class KairosRuntime:
                 workflow = self.state.active_workflow
                 if workflow is not None:
                     if workflow.workflow_id == "demo_report_pipeline" and getattr(task, "description", "") == "generate final report" and task.status == "completed":
+                        await self._refresh_verification_state(
+                            task_id=task.task_id,
+                            task_description=task.description,
+                            task_status=task.status,
+                            summary=summary,
+                            artifacts=[
+                                {
+                                    "artifact": "demo_outputs/report.json",
+                                    "exists": self._path_exists("demo_outputs/report.json"),
+                                    "usable": self._path_exists("demo_outputs/report.json"),
+                                    "note": summary,
+                                }
+                            ],
+                        )
                         workflow.status = "completed"
                         workflow.current_stage = "phase2"
                         if len(workflow.stages) > 1:
@@ -462,6 +664,21 @@ class KairosRuntime:
                             alias = alias_map.get(stage.stage_id)
                             if task.task_id == expected_task_id or getattr(task, "description", "") == alias:
                                 if task.status == "completed":
+                                    await self._refresh_verification_state(
+                                        task_id=task.task_id,
+                                        task_description=task.description,
+                                        task_status=task.status,
+                                        summary=summary,
+                                        artifacts=[
+                                            {
+                                                "artifact": path,
+                                                "exists": self._path_exists(path),
+                                                "usable": self._path_exists(path),
+                                                "note": summary,
+                                            }
+                                            for path in stage.artifacts
+                                        ],
+                                    )
                                     stage.status = "completed"
                                     stage.summary = summary
                                     workflow.current_stage = stage.stage_id

@@ -62,7 +62,14 @@ from src.adk_agent.kairos.activity_log import KairosActivityLog
 from src.adk_agent.kairos.api import register_kairos_routes
 from src.adk_agent.kairos.dex_bridge import KairosDexBridge
 from src.adk_agent.kairos.document_protocol import append_spawned_work_update, build_requirement_work_item, write_work_document
-from src.adk_agent.kairos.models import DocumentReadResult, dump_kairos_state, load_kairos_state
+from src.adk_agent.kairos.llm_planner import KairosPlanner
+from src.adk_agent.kairos.llm_verifier import KairosVerifier
+from src.adk_agent.kairos.models import (
+    DocumentReadResult,
+    StepAttempt,
+    dump_kairos_state,
+    load_kairos_state,
+)
 from src.adk_agent.kairos.runtime import KairosRuntime
 from src.adk_agent.kairos.workflows import demo_report_pipeline
 from skills.dex.tools import _normalize_command_args
@@ -481,6 +488,36 @@ class SteeringSession:
             item for item in runtime.state.document_work_items if item.work_id != work_item.work_id
         ]
         runtime.state.document_work_items.insert(0, work_item)
+        planner = getattr(runtime, "_llm_planner", None)
+        if planner is not None:
+            try:
+                understanding = await planner.draft_requirement_understanding(work_item)
+                runtime.state.current_understanding = understanding
+                execution_plan = await planner.build_execution_plan(
+                    work_item,
+                    understanding,
+                    candidate_actions=["update_document", "spawn_dex_task", "ask_user", "sleep"],
+                )
+                runtime.state.current_execution_plan = execution_plan
+                if execution_plan.steps:
+                    first_step = execution_plan.steps[0]
+                    if first_step.get("action_kind") == "update_document":
+                        runtime.state.current_action_payload = await planner.build_document_patch_payload(
+                            work_item=work_item,
+                            step=first_step,
+                        )
+                    elif first_step.get("action_kind") == "spawn_dex_task":
+                        runtime.state.current_action_payload = await planner.build_design_codegen_payload(
+                            work_item=work_item,
+                            step=first_step,
+                        )
+                    else:
+                        runtime.state.current_action_payload = await planner.build_action_payload(
+                            work_item=work_item,
+                            step=first_step,
+                        )
+            except Exception as exc:
+                await runtime._record("brief", f"llm planning fallback active: {type(exc).__name__}: {exc}")
         runtime._continuation_engine.refresh_unfinished_work(runtime.state)
         await self._save_kairos_state(runtime.state)
         return work_item, doc_path
@@ -489,6 +526,7 @@ class SteeringSession:
         runtime = self.get_or_create_kairos_runtime()
         dex = KairosDexBridge(base_dir=_PROJECT_ROOT, user_id=self.user_id).manager
         task = dex.create_task(description, f"kairos follow-up: {trigger_reason}")
+        payload = dict(payload or {})
         if description == "generate final report":
             command = (
                 'python -c "import json,os; data={}; files=[\'sales\',\'traffic\',\'quality\']; '
@@ -517,9 +555,18 @@ class SteeringSession:
             action
             for action in runtime.state.planned_actions
             if not (
-                action.kind == "create_dex_task"
-                and action.payload.get("workflow_id") == (payload or {}).get("workflow_id")
-                and action.payload.get("description") == description
+                action.kind in {"create_dex_task", "run_dex_task"}
+                and (
+                    (
+                        action.payload.get("workflow_id") == payload.get("workflow_id")
+                        and action.payload.get("description") == description
+                    )
+                    or (
+                        action.payload.get("work_id") == payload.get("work_id")
+                        and action.payload.get("step_id") == payload.get("step_id")
+                        and action.payload.get("description") == description
+                    )
+                )
             )
         ]
         if runtime.state.active_workflow:
@@ -530,15 +577,15 @@ class SteeringSession:
                     stage.status = "running"
                     break
 
-        payload = dict(payload or {})
         source_doc = payload.get("source_doc")
         if source_doc:
             source_doc_path = Path(_PROJECT_ROOT) / source_doc
+            current_step = payload.get("step_id") or payload.get("current_step") or "follow_up"
             work_item = DocumentReadResult(
                 work_id=payload.get("work_id") or f"work:{self.session_id}:{task['id']}",
                 goal=payload.get("goal") or description,
-                status=payload.get("status", "pending"),
-                current_step=payload.get("current_step") or "follow_up",
+                status=payload.get("status", "in_progress"),
+                current_step=current_step,
                 next_actions=list(payload.get("next_actions", [])) or [description],
                 blockers=list(payload.get("blockers", [])),
                 expected_artifacts=list(payload.get("expected_artifacts", [])) or [source_doc],
@@ -555,6 +602,32 @@ class SteeringSession:
                 item for item in runtime.state.document_work_items if item.work_id != work_item.work_id
             ]
             runtime.state.document_work_items.insert(0, work_item)
+            if hasattr(runtime.state, "step_attempts"):
+                doc_fingerprint = str(payload.get("doc_fingerprint", ""))
+                for attempt in runtime.state.step_attempts:
+                    if (
+                        attempt.work_id == work_item.work_id
+                        and attempt.step_id == current_step
+                        and attempt.action_kind == "run_dex_task"
+                        and attempt.status == "pending"
+                        and attempt.doc_fingerprint == doc_fingerprint
+                    ):
+                        attempt.status = "started"
+                        attempt.result_summary = f"dex task {task['id']} created"
+                        break
+                else:
+                    runtime.state.step_attempts.append(
+                        StepAttempt(
+                            attempt_id=f"attempt-{work_item.work_id}-{current_step}",
+                            work_id=work_item.work_id,
+                            step_id=current_step,
+                            action_kind="run_dex_task",
+                            status="started",
+                            doc_fingerprint=doc_fingerprint,
+                            created_at=datetime.datetime.now(datetime.UTC).isoformat(),
+                            result_summary=f"dex task {task['id']} created",
+                        )
+                    )
             runtime._continuation_engine.refresh_unfinished_work(runtime.state)
             await runtime._record(
                 "brief",
@@ -656,6 +729,17 @@ class SteeringSession:
                 payload,
             ),
         )
+        planner_config = getattr(self, "config", None)
+        if planner_config is not None:
+            self.kairos_runtime._llm_planner = KairosPlanner(
+                model=planner_config.model,
+                api_key=planner_config.api_key,
+                api_base=planner_config.api_base,
+                extra_body=planner_config.extra_body,
+                timeout_seconds=planner_config.timeout_seconds,
+                max_retries=planner_config.max_retries,
+            )
+            self.kairos_runtime._llm_verifier = KairosVerifier(self.kairos_runtime._llm_planner)
         self.kairos_runtime._path_exists = lambda path: Path(_PROJECT_ROOT, path).exists()
         self.kairos_runtime._continuation_engine._path_exists = self.kairos_runtime._path_exists
         return self.kairos_runtime
@@ -2858,6 +2942,11 @@ async def chat_endpoint(request: ChatRequest, response: Response):
     if _looks_like_supported_requirement(request.message):
         session = session_manager.get_or_create(request.app_name, request.user_id, request.session_id)
         draft = RequirementDraft(*await session.draft_user_requirement_work_item(request.message))
+        runtime = session.get_or_create_kairos_runtime()
+        if runtime.state.running and not runtime.state.busy:
+            await runtime.tick_once()
+        elif runtime.state.running and runtime.state.busy:
+            await runtime.wake("document_requirement_ready")
 
         async def generate_requirement_chunks():
             for chunk in draft.to_chunks():

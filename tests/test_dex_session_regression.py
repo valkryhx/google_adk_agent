@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from skills.dex.tools import DexManager
-from src.adk_agent.kairos.models import DocumentReadResult
+from src.adk_agent.kairos.models import DocumentReadResult, StepAttempt
 from src.adk_agent.main_web_start_steering import SteeringSession
 
 
@@ -166,6 +166,52 @@ def test_get_or_create_kairos_runtime_uses_real_project_root_for_path_checks(tmp
 
 
 @pytest.mark.asyncio
+async def test_draft_user_requirement_work_item_populates_llm_understanding_and_plan(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.adk_agent.main_web_start_steering._PROJECT_ROOT", str(tmp_path))
+
+    session = SteeringSession.__new__(SteeringSession)
+    session.user_id = "alice"
+    session.session_id = "session-llm"
+    session.app_name = "dynamic_expert"
+
+    saved_states = []
+
+    async def save_state(state):
+        saved_states.append(state)
+
+    runtime = types.SimpleNamespace(
+        state=types.SimpleNamespace(document_work_items=[], current_understanding=None, current_execution_plan=None, current_action_payload=None),
+        _continuation_engine=types.SimpleNamespace(refresh_unfinished_work=lambda state: None),
+        _llm_planner=None,
+        _record=None,
+    )
+
+    class FakePlanner:
+        async def draft_requirement_understanding(self, item):
+            from src.adk_agent.kairos.models import KairosUnderstandingResult
+            return KairosUnderstandingResult(goal=item.goal, constraints=["use flask"])
+
+        async def build_execution_plan(self, item, understanding, *, candidate_actions):
+            from src.adk_agent.kairos.models import KairosExecutionPlan
+            return KairosExecutionPlan(plan_id="plan-1", work_id=item.work_id, steps=[{"step_id": item.current_step, "action_kind": "spawn_dex_task"}])
+
+        async def build_design_codegen_payload(self, *, work_item, step):
+            from src.adk_agent.kairos.models import KairosActionPayload
+            return KairosActionPayload(action_kind="spawn_dex_task", description="generate design brief", command_template_id="generate_design_brief")
+
+    runtime._llm_planner = FakePlanner()
+    session.get_or_create_kairos_runtime = lambda: runtime
+    session._save_kairos_state = save_state
+
+    work_item, doc_path = await session.draft_user_requirement_work_item("build a flask sqlite notes app")
+
+    assert doc_path.exists()
+    assert runtime.state.current_understanding.goal == work_item.goal
+    assert runtime.state.current_execution_plan.plan_id == "plan-1"
+    assert saved_states
+
+
+@pytest.mark.asyncio
 async def test_create_kairos_follow_up_task_supports_todo_delivery_report(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     todo_dir = tmp_path / "demo_delivery" / "todo_app"
@@ -316,5 +362,199 @@ async def test_create_kairos_follow_up_task_persists_spawned_work_to_requirement
     assert isinstance(runtime.state.document_work_items[0], DocumentReadResult)
     assert runtime.state.document_work_items[0].work_id == "work:session-123:follow-up"
     assert runtime.state.document_work_items[0].source_docs == ["requirements/session-123/work.md"]
+    assert runtime.state.document_work_items[0].current_step == "verification"
     assert saved_states
     assert any("spawned work persisted" in message for _, message in recorded)
+
+
+@pytest.mark.asyncio
+async def test_requirement_chat_triggers_immediate_tick_when_kairos_running(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.adk_agent.main_web_start_steering._PROJECT_ROOT", str(tmp_path))
+
+    session = SteeringSession.__new__(SteeringSession)
+    session.user_id = "alice"
+    session.session_id = "session-chat"
+    session.app_name = "dynamic_expert"
+
+    tick_calls = []
+    runtime = types.SimpleNamespace(
+        state=types.SimpleNamespace(running=True, busy=False),
+        tick_once=None,
+    )
+
+    async def tick_once():
+        tick_calls.append("tick")
+
+    runtime.tick_once = tick_once
+    session.get_or_create_kairos_runtime = lambda: runtime
+
+    async def draft_user_requirement_work_item(message):
+        work_item = DocumentReadResult(
+            work_id="work:session-chat:req",
+            goal=message,
+            status="pending_requirements",
+            current_step="requirements",
+            next_actions=["draft requirements document"],
+            expected_artifacts=["requirements/session-chat/work.md"],
+            source_docs=["/api/chat:session-chat"],
+        )
+        doc_dir = tmp_path / "requirements" / "session-chat"
+        doc_dir.mkdir(parents=True, exist_ok=True)
+        doc_path = doc_dir / "work.md"
+        doc_path.write_text("# work\n", encoding="utf-8")
+        return work_item, doc_path
+
+    session.draft_user_requirement_work_item = draft_user_requirement_work_item
+
+    fake_manager = types.SimpleNamespace(get_or_create=lambda *args: session)
+    monkeypatch.setattr("src.adk_agent.main_web_start_steering.session_manager", fake_manager)
+
+    from src.adk_agent.main_web_start_steering import ChatRequest, chat_endpoint
+    response = types.SimpleNamespace(status_code=200)
+    result = await chat_endpoint(
+        ChatRequest(message="build a flask sqlite notes app", app_name="dynamic_expert", user_id="alice", session_id="session-chat"),
+        response,
+    )
+
+    assert result.media_type == "application/x-ndjson"
+    assert tick_calls == ["tick"]
+
+
+@pytest.mark.asyncio
+async def test_create_kairos_follow_up_task_updates_step_attempt_for_document_work(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.adk_agent.main_web_start_steering._PROJECT_ROOT", str(tmp_path))
+
+    session = SteeringSession.__new__(SteeringSession)
+    session.user_id = "alice"
+    session.session_id = "session-busy"
+    session.app_name = "dynamic_expert"
+
+    wake_calls = []
+    runtime = types.SimpleNamespace(
+        state=types.SimpleNamespace(running=True, busy=True),
+        tick_once=None,
+        wake=None,
+    )
+
+    async def wake(reason):
+        wake_calls.append(reason)
+
+    runtime.wake = wake
+    runtime.tick_once = lambda: None
+    session.get_or_create_kairos_runtime = lambda: runtime
+
+    async def draft_user_requirement_work_item(message):
+        work_item = DocumentReadResult(
+            work_id="work:session-busy:req",
+            goal=message,
+            status="pending_requirements",
+            current_step="requirements",
+            next_actions=["draft requirements document"],
+            expected_artifacts=["requirements/session-busy/work.md"],
+            source_docs=["/api/chat:session-busy"],
+        )
+        doc_dir = tmp_path / "requirements" / "session-busy"
+        doc_dir.mkdir(parents=True, exist_ok=True)
+        doc_path = doc_dir / "work.md"
+        doc_path.write_text("# work\n", encoding="utf-8")
+        return work_item, doc_path
+
+    session.draft_user_requirement_work_item = draft_user_requirement_work_item
+
+    fake_manager = types.SimpleNamespace(get_or_create=lambda *args: session)
+    monkeypatch.setattr("src.adk_agent.main_web_start_steering.session_manager", fake_manager)
+
+    from src.adk_agent.main_web_start_steering import ChatRequest, chat_endpoint
+    response = types.SimpleNamespace(status_code=200)
+    result = await chat_endpoint(
+        ChatRequest(message="build a flask sqlite notes app", app_name="dynamic_expert", user_id="alice", session_id="session-busy"),
+        response,
+    )
+
+    assert result.media_type == "application/x-ndjson"
+    assert wake_calls == ["document_requirement_ready"]
+
+
+@pytest.mark.asyncio
+async def test_create_kairos_follow_up_task_updates_step_attempt_for_document_work(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    requirement_dir = tmp_path / "requirements" / "session-456"
+    requirement_dir.mkdir(parents=True, exist_ok=True)
+    work_doc = requirement_dir / "work.md"
+    work_doc.write_text(
+        "# Work Item: build cli\n\n"
+        "## Goal\nbuild cli\n\n"
+        "## Current Status\nin_progress\n\n"
+        "## Current Step\ndesign\n\n"
+        "## Steps\n- write cli outline\n\n"
+        "## Expected Artifacts\n- requirements/session-456/work.md\n\n"
+        "## Blockers\n- none\n\n"
+        "## Verification\n- none\n\n"
+        "## Replan Notes\n- no replans yet\n\n"
+        "## Spawned Work\n- none yet\n",
+        encoding="utf-8",
+    )
+
+    session = SteeringSession.__new__(SteeringSession)
+    session.user_id = "alice"
+    session.session_id = "session-456"
+
+    async def save_state(state):
+        return None
+
+    async def record(kind, message):
+        return None
+
+    runtime = types.SimpleNamespace(
+        state=types.SimpleNamespace(
+            planned_actions=[],
+            active_workflow=types.SimpleNamespace(stages=[]),
+            document_work_items=[],
+            step_attempts=[
+                StepAttempt(
+                    attempt_id="attempt-work:session-456:design",
+                    work_id="work:session-456",
+                    step_id="design",
+                    action_kind="run_dex_task",
+                    status="pending",
+                    doc_fingerprint="fp-456",
+                    created_at="2026-04-14T00:00:00+00:00",
+                )
+            ],
+        ),
+        register_dex_task=None,
+        _record=record,
+        _continuation_engine=types.SimpleNamespace(refresh_unfinished_work=lambda state: None),
+    )
+
+    async def register_dex_task(task_id, description):
+        return None
+
+    runtime.register_dex_task = register_dex_task
+    session.get_or_create_kairos_runtime = lambda: runtime
+    session._save_kairos_state = save_state
+
+    def fake_start_background_process(self, task_id, command_parts):
+        self.store.mark_running(task_id, command=list(command_parts), pid=12345)
+
+    monkeypatch.setattr(DexManager, "start_background_process", fake_start_background_process)
+    monkeypatch.setattr("src.adk_agent.main_web_start_steering._PROJECT_ROOT", str(tmp_path))
+
+    await session.create_kairos_follow_up_task(
+        "write cli outline",
+        "document_work_ready",
+        {
+            "work_id": "work:session-456",
+            "step_id": "design",
+            "description": "write cli outline",
+            "source_doc": "requirements/session-456/work.md",
+            "goal": "build cli",
+            "current_step": "design",
+            "next_actions": ["write cli outline"],
+            "expected_artifacts": ["requirements/session-456/work.md"],
+            "doc_fingerprint": "fp-456",
+        },
+    )
+
+    assert runtime.state.step_attempts[0].status == "started"
+    assert runtime.state.step_attempts[0].result_summary is not None

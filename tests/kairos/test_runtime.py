@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -10,8 +11,10 @@ from src.adk_agent.kairos.models import (
     KairosSchedule,
     KairosState,
     KairosTrigger,
+    StepAttempt,
     TriggerKind,
 )
+from src.adk_agent.kairos.llm_planner import KairosPlanner
 from src.adk_agent.kairos.runtime import KairosRuntime
 from src.adk_agent.kairos.workflows import demo_report_pipeline
 
@@ -19,9 +22,21 @@ from src.adk_agent.kairos.workflows import demo_report_pipeline
 class FakeDexBridge:
     def __init__(self):
         self.tasks = {}
+        self.created = []
+        self.started = []
 
     def get_tasks(self, task_ids):
         return [self.tasks[task_id] for task_id in task_ids if task_id in self.tasks]
+
+    def create_task(self, description, context=""):
+        task_id = f"task-{len(self.created) + 1}"
+        task = {"id": task_id, "description": description, "context": context, "created_at": "2026-04-14T00:00:00+00:00"}
+        self.created.append(task)
+        return task
+
+    def start_task(self, task_id, command):
+        self.started.append({"task_id": task_id, "command": command})
+        return {"id": task_id, "status": "running"}
 
 
 class FakeDex:
@@ -119,6 +134,55 @@ def test_run_kairos_turn_prompt_includes_assistant_mode_context():
 
 
 # === Phase 1 existing tests ===
+
+
+@pytest.mark.asyncio
+async def test_tick_once_populates_llm_understanding_and_execution_plan(monkeypatch):
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    class FakePlanner:
+        async def draft_requirement_understanding(self, item):
+            from src.adk_agent.kairos.models import KairosUnderstandingResult
+            return KairosUnderstandingResult(goal=item.goal, constraints=["use flask"])
+
+        async def build_execution_plan(self, item, understanding, *, candidate_actions):
+            from src.adk_agent.kairos.models import KairosExecutionPlan
+            return KairosExecutionPlan(plan_id="plan-1", work_id=item.work_id, steps=[{"step_id": item.current_step, "action_kind": "spawn_dex_task"}])
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.IDLE,
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:python-cli",
+                    goal="build python cli",
+                    status="pending_requirements",
+                    current_step="requirements",
+                    next_actions=["draft requirements document"],
+                    expected_artifacts=["requirements/session-1/work.md"],
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+    runtime._llm_planner = FakePlanner()
+
+    await runtime.tick_once()
+
+    assert runtime.state.current_understanding.goal == "build python cli"
+    assert runtime.state.current_execution_plan.plan_id == "plan-1"
+    assert runtime.state.current_execution_plan.steps[0]["action_kind"] == "spawn_dex_task"
 
 
 @pytest.mark.asyncio
@@ -474,13 +538,329 @@ async def test_runtime_records_special_planning_state_when_sleep_selected():
     await runtime.tick_once()
 
     assert runtime.state.last_planning_result["selected_candidate"]["action"] == "sleep"
-    assert runtime.state.last_planning_result["final_action"]["kind"] == "sleep"
-    assert any("Selected winner: sleep" in message for _, message in emitted)
-    assert any("sleep" in message for message in logged)
+    assert runtime.state.last_planning_result["final_action"]["kind"] == "sleep_until_signal"
+    assert not any("Selected winner:" in message for _, message in emitted)
+    assert not any("Selected winner:" in message for message in logged)
 
 
 @pytest.mark.asyncio
-async def test_wake_triggers_prompt_execution_without_waiting_full_interval():
+async def test_tick_once_builds_design_codegen_payload_for_spawn_step():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    class FakePlanner:
+        async def draft_requirement_understanding(self, item):
+            from src.adk_agent.kairos.models import KairosUnderstandingResult
+            return KairosUnderstandingResult(goal=item.goal, constraints=["use flask"])
+
+        async def build_execution_plan(self, item, understanding, *, candidate_actions):
+            from src.adk_agent.kairos.models import KairosExecutionPlan
+            return KairosExecutionPlan(plan_id="plan-1", work_id=item.work_id, steps=[{"step_id": item.current_step, "action_kind": "spawn_dex_task"}])
+
+        async def build_design_codegen_payload(self, *, work_item, step):
+            from src.adk_agent.kairos.models import KairosActionPayload
+            return KairosActionPayload(
+                action_kind="spawn_dex_task",
+                description="generate design brief",
+                command_template_id="draft_requirements_doc",
+                brief="generate design brief",
+                args={"goal": work_item.goal},
+                expected_artifacts=["requirements/session-1/design.md"],
+                rationale="llm generated design brief",
+            )
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.IDLE,
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:python-cli",
+                    goal="build python cli",
+                    status="pending_requirements",
+                    current_step="requirements",
+                    next_actions=["draft requirements document"],
+                    expected_artifacts=["requirements/session-1/work.md"],
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+    runtime._llm_planner = FakePlanner()
+
+    await runtime.tick_once()
+
+    assert runtime.state.current_action_payload.command_template_id == "draft_requirements_doc"
+    assert runtime.state.planned_actions[0].payload["command_template_id"] == "draft_requirements_doc"
+    assert runtime.state.planned_actions[0].payload["expected_artifacts"] == ["requirements/session-1/design.md"]
+    assert runtime.state.planned_actions[0].payload["design_codegen_brief"] == "generate design brief"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_action_payload_updates_document_when_patch_present(tmp_path):
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    doc_dir = tmp_path / "requirements" / "session-1"
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    doc_path = doc_dir / "work.md"
+    doc_path.write_text(
+        "# Work Item: build python cli\n\n"
+        "## Goal\nbuild python cli\n\n"
+        "## Current Status\nin_progress\n\n"
+        "## Current Step\nrequirements\n\n"
+        "## Steps\n- draft requirements document\n\n"
+        "## Expected Artifacts\n- requirements/session-1/work.md\n\n"
+        "## Blockers\n- none\n\n"
+        "## Verification\n- confirm scope\n\n"
+        "## Replan Notes\n- no replans yet\n\n"
+        "## Spawned Work\n- none yet\n",
+        encoding="utf-8",
+    )
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:python-cli",
+                    goal="build python cli",
+                    status="in_progress",
+                    current_step="requirements",
+                    next_actions=["draft requirements document"],
+                    expected_artifacts=["requirements/session-1/work.md"],
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ]
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+    from src.adk_agent.kairos.models import KairosActionPayload
+    runtime.state.current_action_payload = KairosActionPayload(
+        action_kind="update_document",
+        target_doc="requirements/session-1/work.md",
+        section_updates=[{"section": "Replan Notes", "text": "LLM refined requirement scope"}],
+        rationale="llm generated requirement patch",
+    )
+
+    old_cwd = Path.cwd()
+    try:
+        import os
+        os.chdir(tmp_path)
+        await runtime._dispatch_action_payload()
+    finally:
+        os.chdir(old_cwd)
+
+    assert "Follow-up planned via llm generated requirement patch" in doc_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_action_payload_records_spawn_dex_task_as_planned_action():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:python-cli",
+                    goal="build python cli",
+                    status="in_progress",
+                    current_step="design",
+                    next_actions=["write cli outline"],
+                    expected_artifacts=["requirements/session-1/work.md"],
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ]
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+    from src.adk_agent.kairos.models import KairosActionPayload
+    runtime.state.current_action_payload = KairosActionPayload(
+        action_kind="spawn_dex_task",
+        description="write cli outline",
+        rationale="llm generated codegen step",
+        command_template_id="draft_requirements_doc",
+    )
+
+    await runtime._dispatch_action_payload()
+
+    assert runtime.state.planned_actions
+    assert runtime.state.planned_actions[0].kind == "run_dex_task"
+    assert runtime.state.planned_actions[0].payload["description"] == "write cli outline"
+    assert runtime.state.planned_actions[0].payload["command_template_id"] == "draft_requirements_doc"
+    assert runtime.state.planned_actions[0].payload["design_codegen_brief"] == "write cli outline"
+    assert runtime.state.tracked_dex_task_ids == ["task-1"]
+    assert runtime._dex_bridge.created[0]["context"] == "write cli outline"
+    assert "requirements_brief.txt" in runtime._dex_bridge.started[0]["command"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_exposes_current_action_payload():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return None
+
+    from src.adk_agent.kairos.models import KairosActionPayload
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            current_action_payload=KairosActionPayload(
+                action_kind="spawn_dex_task",
+                description="write cli outline",
+                rationale="llm generated codegen step",
+                command_template_id="draft_requirements_doc",
+            )
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+
+    status = runtime.get_status()
+
+    assert status["current_action_payload"]["action_kind"] == "spawn_dex_task"
+    assert status["current_action_payload"]["command_template_id"] == "draft_requirements_doc"
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_exposes_document_progress_view():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return None
+
+    state = KairosState(
+        document_work_items=[
+            DocumentReadResult(
+                work_id="work:python-cli",
+                goal="build python cli",
+                status="in_progress",
+                current_step="design",
+                next_actions=["write cli outline"],
+                expected_artifacts=["requirements/session-1/work.md"],
+                source_docs=["requirements/session-1/work.md"],
+            )
+        ],
+        step_attempts=[
+            StepAttempt(
+                attempt_id="attempt-1",
+                work_id="work:python-cli",
+                step_id="design",
+                action_kind="run_dex_task",
+                status="started",
+                doc_fingerprint="abc123",
+                created_at="2026-04-14T00:00:00+00:00",
+                result_summary="dex task created",
+            )
+        ],
+    )
+
+    runtime = KairosRuntime(
+        state=state,
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+
+    status = runtime.get_status()
+
+
+
+@pytest.mark.asyncio
+async def test_tick_once_executes_document_backed_internal_trigger_created_during_poll():
+    bridge = FakeDexBridge()
+    calls = []
+    _, emitted, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    async def create_follow_up_task(reason, payload):
+        calls.append((reason, payload))
+        bridge.tasks["doc-task"] = type(
+            "Snap",
+            (),
+            {
+                "task_id": "doc-task",
+                "status": "running",
+                "description": payload["description"],
+                "result": "",
+                "result_summary": None,
+                "error_summary": None,
+                "created_at": None,
+                "completed_at": None,
+                "log_path": ".dex/logs/alice/doc-task.log",
+            },
+        )()
+        return {"id": "doc-task"}
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.IDLE,
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:python-cli",
+                    goal="build python cli",
+                    status="in_progress",
+                    current_step="design",
+                    next_actions=["write cli outline"],
+                    expected_artifacts=[],
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=bridge,
+        path_exists=lambda _: True,
+        create_follow_up_task=create_follow_up_task,
+    )
+
+    await runtime.tick_once()
+
+    assert calls
+    assert calls[0][0] == "document_work_ready"
+    assert calls[0][1]["description"] == "write cli outline"
+    assert runtime.state.tracked_dex_task_ids == ["doc-task"]
+    assert runtime.state.mode is KairosMode.HANDOFF
+    assert runtime.state.step_attempts[0].status in {"pending", "started"}
+    assert any("internal action started" in msg for _, msg in emitted)
+
+
     ticks = asyncio.Event()
     _, _, _, save_state, emit_event, append_log = _make_callbacks()
 
@@ -1677,9 +2057,9 @@ async def test_multi_stage_dex_workflow_keeps_parallel_tasks_then_converges_to_r
     await runtime.tick_once()
 
     assert runtime.state.tracked_dex_task_ids == []
-    assert runtime.state.pending_triggers
-    assert runtime.state.pending_triggers[0].kind is TriggerKind.INTERNAL
-    assert runtime.state.pending_triggers[0].reason == "phase1_converged"
+    assert runtime.state.mode in {KairosMode.HANDOFF, KairosMode.SLEEPING}
+    assert runtime.state.planned_actions[0].kind == "create_dex_task"
+    assert runtime.state.planned_actions[0].reason == "phase1_converged"
     assert runtime.state.planned_actions[0].kind == "create_dex_task"
     assert runtime.state.active_workflow.current_stage == "phase2"
     assert any("sales ready" in msg for _, msg in emitted)

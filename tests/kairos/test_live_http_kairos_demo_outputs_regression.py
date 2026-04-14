@@ -67,7 +67,14 @@ def test_live_http_source_asserts_document_drafted_user_requirements():
 
 
 
-def test_live_http_source_asserts_spawned_document_visibility_helper():
+def test_live_http_source_asserts_document_progress_visibility():
+    text = MODULE_PATH.read_text(encoding="utf-8")
+
+    assert 'document_work_items' in text
+    assert 'last_planning_result' in text
+    assert 'current_step' in text
+
+
     text = MODULE_PATH.read_text(encoding="utf-8")
 
     assert 'assert_spawned_document_work_visible' in text
