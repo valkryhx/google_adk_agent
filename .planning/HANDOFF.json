@@ -2,7 +2,7 @@
   "version": "1.0",
   "timestamp": "2026-04-14T08:34:43.006Z",
   "phase": "6",
-  "phase_name": "Markdown-First Skill-Using Autonomy",
+  "phase_name": "Markdown-First Skill-Using Autonomy (exploratory planning)",
   "phase_dir": ".planning/phases/06-markdown-first-skill-using-autonomy",
   "plan": 0,
   "task": 0,
@@ -23,7 +23,7 @@
     },
     {
       "id": 3,
-      "name": "Created Phase 6 implementation plan document under .planning/phases/06-markdown-first-skill-using-autonomy/",
+      "name": "Created exploratory Phase 6 planning artifact under .planning/phases/06-markdown-first-skill-using-autonomy/",
       "status": "done",
       "commit": "uncommitted"
     },
@@ -43,7 +43,7 @@
   "remaining_tasks": [
     {
       "id": 6,
-      "name": "Treat current LLM planner/verifier JSON-first code as transitional; real Phase 6 should shift to markdown-first outputs and skill bridge",
+      "name": "Formalize Phase 6 as an official phase in planning docs; current official STATE/ROADMAP still reflect Phase 5 closure context",
       "status": "not_started"
     },
     {
@@ -92,8 +92,8 @@
   "human_actions_pending": [],
   "decisions": [
     {
-      "decision": "Kairos must use LLM as core intelligence; rules should not remain the semantic planner.",
-      "rationale": "User clarified Kairos is meant to become a smart entity that can replace human task pushing, so execution-stage content generation and self-correction need LLM involvement.",
+      "decision": "Phase 6 is currently an exploratory planning direction, not yet fully reconciled into the official STATE/ROADMAP narrative.",
+      "rationale": "Current work focus and new plan artifacts are Phase 6, but formal planning state files still describe Phase 5 as the active completed phase awaiting closure.",
       "phase": "6"
     },
     {
@@ -133,6 +133,6 @@
     "src/adk_agent/kairos/orchestration.py",
     "tests/kairos/test_llm_planner.py"
   ],
-  "next_action": "Resume by reading .planning/phases/06-markdown-first-skill-using-autonomy/06-IMPLEMENTATION-PLAN.md, then decide whether to keep/refactor the transitional JSON-first llm_planner code into markdown-first skill-using architecture. Do not continue optimizing strict JSON schema before this decision.",
+  "next_action": "Resume by reading .planning/phases/06-markdown-first-skill-using-autonomy/06-IMPLEMENTATION-PLAN.md, then decide whether to officially open Phase 6 in STATE/ROADMAP or keep it as exploratory planning. Audit the current uncommitted code for JSON-first transitional pieces before doing more live tests.",
   "context_notes": "The important mental model: Kairos is not another chat agent and not a rules engine. SteeringSession is the interactive host; Kairos is the long-running autonomy layer over markdown work docs and existing skills. The current code changes include useful scaffolding but are transitional and partially misaligned with the final Phase 6 direction because they still lean JSON-first. User explicitly corrected that markdown-first and autonomous skill use are the target."
 }
