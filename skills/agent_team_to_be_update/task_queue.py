@@ -401,11 +401,12 @@ class TaskQueue:
 
         return True
 
-    def fail_task(self, task_id: str) -> bool:
+    def fail_task(self, task_id: str, error_message: str = None) -> bool:
         """标记任务失败
         
         Args:
             task_id: 要失败的任务ID
+            error_message: 失败原因
             
         Returns:
             True 如果成功，False 如果任务不存在
@@ -415,6 +416,8 @@ class TaskQueue:
             return False
 
         task.status = "failed"
+        if error_message:
+            task.error = error_message
         self._save_task(task)
 
         # 清理锁文件
@@ -427,7 +430,7 @@ class TaskQueue:
 
         return True
 
-    def handle_task_error(self, task_id: str) -> bool:
+    def handle_task_error(self, task_id: str, error_message: str = None) -> bool:
         """处理任务执行异常或验证失败时的退避熔断。
         
         基于 task 的当前重试次数，决定是继续重试（返还回 pending 供后续可用节点抢占），
@@ -435,6 +438,7 @@ class TaskQueue:
         
         Args:
             task_id: 发生异常的任务 ID
+            error_message: 失败原因
             
         Returns:
             True 表示重置为 pending 可继续被抢占执行，False 表示超过最大次数彻底失败。
@@ -447,13 +451,15 @@ class TaskQueue:
         if task.retries >= getattr(task, 'max_retries', 3):
             # 彻底熔断
             print(f"[TaskQueue] 🚨 任务 {task_id} 已连续重试 {task.retries} 次，达到上限，彻底失败！")
-            self.fail_task(task_id)
+            self.fail_task(task_id, error_message)
             return False
             
         # 重置回待执行状态
         print(f"[TaskQueue] ⚠️ 任务 {task_id} 当前重试 {task.retries}/{getattr(task, 'max_retries', 3)} 次，重置为 pending")
         task.status = "pending"
         task.owner = None
+        if error_message:
+            task.error = error_message
         self._save_task(task)
 
         # 清除旧的抢占锁，以便其他节点接单

@@ -134,7 +134,7 @@ class AgentConfig:
     extra_body: dict = field(default_factory=lambda: {"enable_thinking": False})
     
     max_retries: int = 3
-    timeout_seconds: int = 300
+    timeout_seconds: int = 600000
     max_tool_calls_per_turn: int = 10
     verbose: bool = True
     log_tool_calls: bool = True

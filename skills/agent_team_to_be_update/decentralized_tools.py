@@ -932,12 +932,6 @@ async def dag_create(
 
     Returns:
         创建结果报告，包含所有 task_id
-
-    Example:
-        dag_create(team_id="my_proj", tasks=[
-            {"name": "task1", "description": "调研市场"},
-            {"name": "task2", "description": "写代码", "blocked_by": ["task1"]},
-        ])
     """
     coord_dir = _get_coordination_dir(team_id)
     base_dir = coord_dir
@@ -948,7 +942,8 @@ async def dag_create(
     config = TeamConfig(team_id=team_id, base_dir=base_dir)
 
     # 第一遍：创建所有任务，建立 name -> id 映射
-    name_to_id = {}
+    # 必须预加载已有任务，才能处理跨多轮下发的 DAG 节点之间的依赖。 
+    name_to_id = {t.name: t.id for t in queue.list_tasks()}
     created_tasks = []
 
     for task_def in tasks:
@@ -1006,7 +1001,18 @@ async def dag_create(
         deps = ", ".join(task.blocked_by) if task.blocked_by else "none"
         lines.append(f"  {task.name}: {task.id} (blocked_by: {deps})")
 
-    return "\n".join(lines)
+    create_result_str = "\n".join(lines)
+
+    warning_msg = (
+        "\n\n======================================================\n"
+        "  ⚠️ 【系统强制指令：物理集群已在后台截获任务！】\n"
+        "  为了让用户界面看到实时卡片流推、并为你呈现最终验收战报：\n"
+        "  接下来，你必须、没有任何借口地立刻发起新的工具调用：\n"
+        "  `dag_execute(max_polls=100)` ！\n"
+        "  否则前台将显示无限假死，用户也将对小弟进展一无所知！\n"
+        "======================================================\n"
+    )
+    return create_result_str + warning_msg
 
 
 # ==========================================
@@ -1017,7 +1023,7 @@ async def dag_execute(
     team_id: str,
     max_polls: int = 100,
     _status_reporter=None,
-    task_timeout: float = 180.0,
+    task_timeout: float = 600.0,
 ) -> str:
     """
     【Leader 专用】等待 DAG 任务队列全部由 Worker 执行完成。
@@ -1049,6 +1055,7 @@ async def dag_execute(
             "session_id": task.id,
             "task_preview": f"{task.name}: {task.description[:60]}..."
                             if len(task.description) > 60 else f"{task.name}: {task.description}",
+            "error": getattr(task, "error", None) or "Unknown error"
         })
 
     coord_dir = _get_coordination_dir(team_id)
@@ -1071,6 +1078,8 @@ async def dag_execute(
         for t in all_tasks:
             if t.status == "in_progress" and t.claimed_at and (now - t.claimed_at) > task_timeout:
                 print(f"[dag_execute] ⏰ 任务 {t.name} ({t.id}) 超时 ({task_timeout}s)，回收为 pending")
+                # 注入具有确切信息量的报错文本（仅为本地内存注入，供后面 UI 推送使用）
+                t.error = f"执行超时保护触发：该 Worker 的执行已被强制切断（上限 {task_timeout}s）。可能因为发生死锁或由于模型生成逻辑极其缓慢而长时无响应。系统已将任务回收回公网重新等待接管。"
                 queue.reset_task(t.id)
                 if _status_reporter:
                     _report("fail", t)

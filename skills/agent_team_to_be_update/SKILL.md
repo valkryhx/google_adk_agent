@@ -5,7 +5,7 @@ description: 赋予 Agent 作为集群指挥官（Leader）的能力，通过去
 
 # Agent Team Skill（去中心化拉模型）
 
-> 版本 3.2
+> 版本 3.3
 
 ## 1. 简介
 
@@ -27,13 +27,13 @@ description: 赋予 Agent 作为集群指挥官（Leader）的能力，通过去
 
 向用户一次性列出以下问题，等待回复后再继续：
 
-| 维度 | 问题 |
-|------|------|
-| **目标** | 核心目的是什么？成功的标志是什么？ |
-| **产物** | 最终交付什么文件/功能？存放路径？ |
-| **约束** | 技术栈、框架、路径有限制吗？需要兼容哪些现有代码？ |
-| **验收** | 如何判断做对了？有没有现成测试命令？ |
-| **优先级** | 如果范围需要取舍，哪部分最重要？ |
+| 维度       | 问题                                               |
+| ---------- | -------------------------------------------------- |
+| **目标**   | 核心目的是什么？成功的标志是什么？                 |
+| **产物**   | 最终交付什么文件/功能？存放路径？                  |
+| **约束**   | 技术栈、框架、路径有限制吗？需要兼容哪些现有代码？ |
+| **验收**   | 如何判断做对了？有没有现成测试命令？               |
+| **优先级** | 如果范围需要取舍，哪部分最重要？                   |
 
 用户回复后，Leader **用一段话复述自己的理解**，结尾明确询问：
 
@@ -55,6 +55,7 @@ await dag_create(
         {
             "name": "设计数据库 Schema",
             "description": "设计用户表字段结构，产出 docs/schema.md",
+            "blocked_by": [],  # ⚠️必须遵守：即使无依赖也必须显式写出空数组
         },
         {
             "name": "实现后端 API",
@@ -75,43 +76,29 @@ await dag_create(
 )
 ```
 
-**依赖规则：**
-- `blocked_by` 填任务名列表，系统自动解析为 task_id
-- 无 `blocked_by` 的任务为第一波并发执行
-- 依赖全部完成后自动解锁下一波
+**⚠️ 依赖强制规则（BLOCKED_BY 必须仔细设置）：**
+- **因果关系不可违背：严禁为了追求“最大化并行”而删空 `blocked_by` 造成群集雪崩并发！** 任务越细，逻辑关系越需严谨。必须保证先有根基（建表、建框架），再有枝叶（分层API、前后台界面），最后有果实（联调与回归验收）。
+- **谁读谁，谁依赖谁**：本任务如果要在 `read_only_files` 里引用某文件，则产出该文件的上游任务 **必须** 被填进本任务的 `blocked_by` 数组项中！
+- 只有绝对孤立、无交互的底层初始化任务才允许空出此项作为第一波并发。
 
 **任务字段说明：**
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `name` | str | 任务名（必填，用于 blocked_by 引用）|
-| `description` | str | 任务描述，**越详细越好**，Worker 靠这个理解任务 |
-| `blocked_by` | list[str] | 依赖的任务名列表 |
-| `expected_artifacts` | list[str] | 预期产物文件路径 |
+| 字段                    | 类型      | 说明                                                                                            |
+| ----------------------- | --------- | ----------------------------------------------------------------------------------------------- |
+| `name`                  | str       | 任务名（必填，用于 blocked_by 引用）                                                            |
+| `description`           | str       | 任务描述，**越详细越好**，Worker 靠这个理解任务                                                 |
+| `blocked_by`            | list[str] | 依赖的任务名列表                                                                                |
+| `expected_artifacts`    | list[str] | 预期产物文件路径                                                                                |
 | `verification_commands` | list[str] | **验收命令**，Worker 完成后框架自动运行，全部通过才能 complete；失败则任务重置 pending 等待重试 |
-| `writable_files` | list[str] | Worker 可写的文件路径 |
-| `read_only_files` | list[str] | Worker 只读的参考文件 |
+| `writable_files`        | list[str] | Worker 可写的文件路径                                                                           |
+| `read_only_files`       | list[str] | Worker 只读的参考文件                                                                           |
 
 ### 第二步：触发执行（`dag_execute`）
 
-> **关键：创建完 DAG 后立即调用 `dag_execute`，无需检查 Worker 是否在线。**
-> Worker 节点在后台自主抢占任务，不会向 Leader 注册，`team_list_workers()` 可能返回空但任务仍在执行。
-> **严禁**以 `team_list_workers()` 返回空为由跳过或推迟 `dag_execute`。
-
-```python
-await dag_execute(max_polls=100)
-```
-
-> `max_polls`：最大轮询次数，每次间隔 3 秒，总等待上限 = `max_polls × 3` 秒。
-> 默认 100 次 = 5 分钟。任务链较长时可适当调大（如 `max_polls=200`）。
-> 单任务超时固定为 180 秒，超时自动回收并由其他 Worker 重新认领。
-
-返回示例：
-```
-[DAG EXECUTED]
-Waves: 3
-Tasks: 4/4 完成
-```
+> **关键：目前的 `dag_create` 工作流已经默认分离解耦（`auto_execute=False`）以满足即时展示需求。**
+> 由于创建任务一瞬间底层节点其实已经开跑了，如果在此后没有启动长监听，前台将彻底假死收不到监控气泡并造成你与进展断联！
+> **所以，在调用完 `dag_create` 拿到图谱汇报后，你必须在下一回合中立刻手动补充调用第二步工具：`dag_execute` ！**
+> 当 `dag_execute` 最终返回给你 `[DAG EXECUTED]` 时，代表团队已经把这段死磕周期内的任务全打通。
 
 ### 第三步：监控进度（按需）
 
@@ -127,20 +114,19 @@ await task_status(task_id="task-a3f7c2d1")
 
 ## 3. 工具速查
 
-| 工具 | 用途 |
-|------|------|
-| `dag_create(tasks)` | 批量创建 DAG 任务（推荐）|
-| `dag_execute(max_polls)` | 触发 DAG 执行，等待所有任务完成 |
-| `task_list()` | 查看所有任务状态 |
-| `task_status(task_id)` | 查看单个任务详情 |
-| `task_create(name, description, ...)` | 单独创建一个任务（低级 API）|
-| `mailbox_send(to_agent, content)` | 向指定 Worker 发消息 |
-| `mailbox_broadcast(content)` | 广播消息给所有 Worker |
-| `mailbox_read()` | 读取收件箱 |
-| `team_status()` | 查看团队整体状态 |
-| `team_list_workers()` | 列出所有 Worker 节点 |
-| `hold_meeting(topic)` | 发起多轮讨论会议 |
-| `deep_think(task_instruction)` | 多路径深度思考 |
+| 工具                              | 用途                            |
+| --------------------------------- | ------------------------------- |
+| `dag_create(tasks)`               | 批量创建 DAG 任务（推荐）       |
+| `dag_execute(max_polls)`          | 触发 DAG 执行，等待所有任务完成 |
+| `task_list()`                     | 查看所有任务状态                |
+| `task_status(task_id)`            | 查看单个任务详情                |
+| `mailbox_send(to_agent, content)` | 向指定 Worker 发消息            |
+| `mailbox_broadcast(content)`      | 广播消息给所有 Worker           |
+| `mailbox_read()`                  | 读取收件箱                      |
+| `team_status()`                   | 查看团队整体状态                |
+| `team_list_workers()`             | 列出所有 Worker 节点            |
+| `hold_meeting(topic)`             | 发起多轮讨论会议                |
+| `deep_think(task_instruction)`    | 多路径深度思考                  |
 
 > 所有工具无需传 `team_id`，系统自动注入。
 
@@ -201,15 +187,28 @@ await dag_create(
 > ```
 > 否则任何包含中文或 emoji 的 `print()` 会触发 `UnicodeEncodeError` 崩溃。
 
-**`verification_commands` 中运行 Python 的命令必须加 `PYTHONIOENCODING=utf-8` 前缀：**
+**`verification_commands` 中运行 Python 的命令在 Windows 中必须使用 `cmd` 合法写法，不允许直接照抄 Unix 风格前缀：**
 
 ```
-# 正确
+# Windows 正确
+verification_commands: ["set PYTHONIOENCODING=utf-8 && python -m pytest tests\\test_foo.py -v"]
+
+# Unix-like 正确
+verification_commands: ["PYTHONIOENCODING=utf-8 python -m pytest tests/test_foo.py -v"]
+
+# Windows 错误：这是 Unix 风格前缀，不是 cmd.exe 合法写法
 verification_commands: ["PYTHONIOENCODING=utf-8 pytest tests/test_foo.py -v"]
 
 # 错误（中文输出会乱码或崩溃）
 verification_commands: ["pytest tests/test_foo.py -v"]
 ```
+
+**Windows 批处理 (`.bat`) 验收脚本的额外硬规则：**
+- 第一行必须是 `@echo off`
+- 如需切换到脚本所在目录，必须使用 `cd /d %~dp0`
+- **禁止**在自动验收脚本中出现 `pause`
+- `pip` 命令优先写成 `python -m pip ...`
+- `pytest` 命令优先写成 `python -m pytest ...`
 
 ---
 
@@ -222,15 +221,69 @@ verification_commands: ["pytest tests/test_foo.py -v"]
 
 Worker 节点框架会在代码执行完毕后**自动运行** `verification_commands`。全部通过才允许上报 `completed`；任意一条失败则任务重置为 `pending`，等待重新认领修复。
 
+### 测试验收时的安全关停服务规则（防崩溃封印）
+
+> 🚨 **高危警告：** 
+> 严禁在任何测试命令或验收脚本中使用基于进程名全局查杀的方法（如 `taskkill /F /IM python.exe` 或 `pkill -f python`）来结束自己拉起的测试后台服务！这会导致宿主机上的 Swarm 集群主控与其余 Agent 同归于尽，使系统发生毁灭性崩溃及无声断联。
+
+**如果在此步骤你需要启停后台 Web 测试服务（如跑 `run.py` 后再验证接口）**：
+1. **避让核心端口**：你的测试服务必须跑到保留端口 (8000~8010) 之外，例如选用 5000 端口。
+2. **跨平台优雅控制**：Windows Shell `cmd` 并无法像 Linux 那样获取 `$!` 实现异步杀进程，若使用这种命令必将失败。强烈建议单独编写一个验收用的 Python 脚本，并使用 `process = subprocess.Popen(...)` 拉起服务，在 `requests` 断言请求结束后跟上 `process.terminate()` 来安全释放。
+3. **精准放行**：即便非要在 Bash 中强杀，底层系统也只能接受指名道姓的具体 PID 参数查杀 (如 `taskkill /PID 1234 /F`)。
+
+**再加三条硬禁令（都是 Windows 高危坑）：**
+4. **禁止**在 Windows 集成测试 teardown 中使用 `proc.send_signal(signal.CTRL_C_EVENT)`。这类控制台信号可能误伤宿主机上同控制台/同进程组的 ADK 或 Swarm 节点。
+5. **禁止**长时间运行的后台 Web 测试服务默认使用 `stdout=subprocess.PIPE` 和 `stderr=subprocess.PIPE` 却不消费输出。优先使用 `subprocess.DEVNULL`，否则容易造成卡死、未关闭 transport 和 event loop 噪声。
+6. **禁止**使用 shell 技巧（含 `start /b`、`&`、`$!`、`jobs`）管理验收服务生命周期。必须由 Python `subprocess.Popen` 持有进程句柄，并用 `terminate()` / `kill()` 定点回收。
+
+**Windows 集成测试 / 验收脚本最小安全模板（优先照抄）：**
+
+```python
+proc = subprocess.Popen(
+    [sys.executable, run_script],
+    cwd=BACKEND_DIR,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+)
+
+try:
+    # healthcheck / requests assertions
+    ...
+finally:
+    proc.terminate()
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=3)
+```
+
+**Windows `run_tests.bat` 最小模板（优先照抄）：**
+
+```bat
+@echo off
+chcp 65001 >nul
+set PYTHONIOENCODING=utf-8
+set PYTHONUTF8=1
+cd /d %~dp0
+
+python -m pip install -r backend\\requirements.txt || exit /b 1
+python backend\\init_db.py || exit /b 1
+python -m pytest tests\\test_api.py -v || exit /b 1
+python -m pytest tests\\integration_test.py -v || exit /b 1
+exit /b 0
+```
+
 ### DAG 强制结构（禁止省略）
 
 每个功能模块的 DAG 必须包含以下三类任务，缺一不可：
 
-| 任务类型 | 说明 | 依赖 |
-|----------|------|------|
-| **实现任务** | 写业务代码 | 无（或依赖设计任务）|
-| **测试任务** | 写测试文件（`tests/test_xxx.py`）| 依赖实现任务 |
-| **自测任务** | 运行测试并验证全部通过 | 依赖测试任务 |
+| 任务类型     | 说明                              | 依赖                 |
+| ------------ | --------------------------------- | -------------------- |
+| **实现任务** | 写业务代码                        | 无（或依赖设计任务） |
+| **测试任务** | 写测试文件（`tests/test_xxx.py`） | 依赖实现任务         |
+| **自测任务** | 运行测试并验证全部通过            | 依赖测试任务         |
 
 > ❌ **禁止**把「写测试」和「写实现」合并成一个任务描述里的文字要求——Worker 会忽略测试部分只写实现代码。
 > ✅ **必须**把测试单独拆成一个任务，`blocked_by` 实现任务，`verification_commands` 填运行测试的命令。
@@ -296,7 +349,7 @@ await dag_create(
 【实现】: 启动 Flask 服务并运行全部测试，确保测试全部通过
 
 【验收标准】:
-- PYTHONIOENCODING=utf-8 pytest D:\\myproject\\tests\\test_api.py -v
+- set PYTHONIOENCODING=utf-8 && python -m pytest D:\\myproject\\tests\\test_api.py -v
 - 所有用例 PASSED，无 FAILED
 
 【产物】: 无（验证任务）
@@ -306,7 +359,7 @@ await dag_create(
                 "D:\\\\myproject\\\\tests\\\\test_api.py",
             ],
             "verification_commands": [
-                "PYTHONIOENCODING=utf-8 pytest D:\\\\myproject\\\\tests\\\\test_api.py -v"
+                "set PYTHONIOENCODING=utf-8 && python -m pytest D:\\\\myproject\\\\tests\\\\test_api.py -v"
             ],
             "blocked_by": ["编写测试用例"],
         },
@@ -314,7 +367,7 @@ await dag_create(
 )
 ```
 
-> **注意**：`verification_commands` 中的命令需要在 Worker 的工作环境中可直接执行。优先使用 `pytest <path>` 或 `python -m pytest <path>`。
+> **注意**：`verification_commands` 中的命令需要在 Worker 的工作环境中可直接执行。Windows 优先使用 `set PYTHONIOENCODING=utf-8 && python -m pytest <path>`；其他环境优先使用 `PYTHONIOENCODING=utf-8 python -m pytest <path>`。
 
 ---
 
@@ -334,9 +387,8 @@ await dag_create(
         },
     ]
 )
-await dag_execute(max_polls=50)
 ```
 
 ---
 
-*Agent Team Skill v3.1*
+*Agent Team Skill v3.3*

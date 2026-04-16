@@ -38,6 +38,10 @@ from src.adk_agent.core.executor import execute_python_code
 from src.adk_agent.core.logger import AgentLogger, logger
 from src.adk_agent.core.simple_file_logger import default_logger as file_logger
 from src.adk_agent.config import AgentConfig, build_system_prompt, yaml_config
+from src.adk_agent.stream_dedup import (
+    dedupe_textual_event_chunks,
+    strip_leaked_think_from_text,
+)
 import litellm
 from litellm import ContextWindowExceededError
 from google.genai import types
@@ -1170,7 +1174,7 @@ class SteeringSession:
                 pending_cancel_get = asyncio.create_task(self.queue.get()) if self.queue else None
                 
                 # [Deduplication State]
-                processed_part_history = []
+                accumulated_text_by_type = {"text": "", "thought": ""}
                 
                 while True:
                     # 等待任意一个队列有消息
@@ -1225,41 +1229,10 @@ class SteeringSession:
                             events_snapshot.append(result)
                             # ==========================================
                             
-                            # [Deduplication Logic]
-                            # Identify new parts by comparing with processed history
-                            evt_parts = []
-                            if hasattr(result, 'content') and result.content and hasattr(result.content, 'parts'):
-                                evt_parts = result.content.parts
-                                
-                            # Check for prefix match
-                            match_count = 0
-                            if processed_part_history and evt_parts:
-                                # Optimization: Only check if first part matches (Full Event scenario)
-                                if evt_parts[0] == processed_part_history[0]:
-                                    # Full event accumulation detected
-                                    for i in range(min(len(evt_parts), len(processed_part_history))):
-                                        if evt_parts[i] == processed_part_history[i]:
-                                            match_count += 1
-                                        else:
-                                            break
-                            
-                            # Filter new parts
-                            new_parts = evt_parts[match_count:]
-                            
-                            if new_parts:
-                                processed_part_history.extend(new_parts)
-                                chunks = _process_event_stream(result, parts_override=new_parts)
-                                for chunk in chunks:
-                                    yield chunk
-                            elif not evt_parts: 
-                                # If event has NO parts (e.g. pure tool call or metadata update), pass it through
-                                # But _process_event_stream checks for parts.
-                                # If it's a non-part event (like just tool_calls in some frameworks?), 
-                                # Google ADK events mainly communicate via parts.
-                                # If `result` has no content parts but is a valid event, _process_event_stream handles it via robust checks.
-                                chunks = _process_event_stream(result)
-                                for chunk in chunks:
-                                    yield chunk
+                            chunks = list(_process_event_stream(result))
+
+                            for chunk in dedupe_textual_event_chunks(chunks, accumulated_text_by_type):
+                                yield chunk
 
                     # 2. 处理 Side-Channel 消息 (Swarm Log, Progress 等)
                     if pending_stream_get in done:
@@ -1985,21 +1958,30 @@ def _process_event_stream(event, parts_override=None):
                     chunks.append({"type": "thought", "content": part.text})
                     continue
                 
-                text = part.text
+                text, had_think_leak = strip_leaked_think_from_text(part.text)
+                if had_think_leak and not text:
+                    continue
                 logger.thought(text)
                 print(f"[streaming] {text}")
-                chunks.append({"type": "text", "content": part.text})
+                chunks.append({"type": "text", "content": text})
 
             # 如果是工具 -> 正常发
             if hasattr(part, 'function_call') and part.function_call:
                 fc = part.function_call
-                fc_msg = f"{fc.name} 输入参数: {fc.args}"
-                print(f"[streaming_工具调用] {fc_msg}")
+                raw_args_str = str(fc.args)
+                if len(raw_args_str) > 30000:
+                    display_args = raw_args_str[:30000] + f"\n... [参数过长已折叠，共计 {len(raw_args_str)} 字符] ..."
+                else:
+                    display_args = raw_args_str
+
+                fc_msg = f"{fc.name} 输入参数: {display_args}"
+                print(f"[streaming_工具调用] {fc.name} 调用触发 (参数长度 {len(raw_args_str)})")
+                # Use a safe serialization format for tool_args just in case it's a MapComposite to avoid encoder crashes
                 chunks.append({
                     "type": "tool_call", 
                     "content": fc_msg,
                     "tool_name": fc.name,
-                    "tool_args": fc.args
+                    "tool_args": str(fc.args)[:50000] + f"\n... [参数过长已折叠，共计 {len(raw_args_str)} 字符] ..." if len(raw_args_str) > 50000 else str(fc.args)
                 })
 
             # 如果是结果 -> 正常发
@@ -2009,10 +1991,17 @@ def _process_event_stream(event, parts_override=None):
                 if isinstance(result_content, dict) and 'result' in result_content:
                     result_content = result_content['result']
                 
-                fc_tool_response_msg= f"{fr.name} -> {result_content}"
+                # 拦截过长回执，防止超大文本撑爆前端 SSE 和 DOM
+                raw_content_str = str(result_content)
+                if len(raw_content_str) > 30000:
+                    display_content = raw_content_str[:30000] + f"\n... [长内容已折叠，共计 {len(raw_content_str)} 字符] ..."
+                else:
+                    display_content = raw_content_str
+                
+                fc_tool_response_msg = f"{fr.name} -> {display_content}"
                 print(f"[streaming_工具调用结果] {fc_tool_response_msg}")
-                # Send clean string for streaming result too
-                chunks.append({"type": "tool_result", "content": str(result_content)})
+                # 仅在推送给前端的记录里做超长阻断，LLM 底层依然拿到的是全量字典对象不受影响
+                chunks.append({"type": "tool_result", "content": display_content})
 
     # 最终响应
     if is_final:
@@ -2049,11 +2038,20 @@ async def run_agent(task: str, app_name: str, user_id: str, session_id: str, ima
 
     # 委托给会话实例执行任务
     count = 0
-    async for chunk in session.run_task(task, images=images):
-        count += 1
-        yield chunk
-    
-    print(f"[run_agent] ✅ 任务完成，共发送 {count} 个数据块 [Session: {session_id}]")
+    try:
+        async for chunk in session.run_task(task, images=images):
+            count += 1
+            yield chunk
+        print(f"[run_agent] ✅ 任务完成，共发送 {count} 个数据块 [Session: {session_id}]")
+    except Exception as e:
+        import traceback
+        err_msg = traceback.format_exc()
+        print(f"[run_agent] ❌ Agent 运行内部抛错被强制拦截: \n{err_msg}")
+        try:
+            logger.error(f"[run_agent] ❌ 致命错误拦截:\n{err_msg}")
+        except Exception:
+            pass
+        yield {"content": f"\n\n[System Alert] ⚠️ 引擎处理该块遇到网络链接超时或致命连接故障(已主动恢复屏蔽崩解)：`{str(e)}`\n"}
 
 # ==========================================
 # Web 服务接口
@@ -2800,8 +2798,11 @@ async def get_session_history(
                         if getattr(part, 'thought', False):
                             blocks.append({"type": "thought", "content": part.text})
                         else:
-                            blocks.append({"type": "text", "content": part.text})
-                            text_content += part.text
+                            cleaned_text, had_think_leak = strip_leaked_think_from_text(part.text)
+                            if had_think_leak and not cleaned_text:
+                                continue
+                            blocks.append({"type": "text", "content": cleaned_text})
+                            text_content += cleaned_text
                     
                     # [多模态] 检查 inline_data（图片）
                     if hasattr(part, 'inline_data') and part.inline_data:
@@ -3244,8 +3245,14 @@ async def init_decentralized_claim_loop():
                     elif isinstance(chunk, dict) and 'content' in chunk: full_text_response += str(chunk['content'])
                 return {"status": "success", "response": full_text_response}
             except Exception as e:
-                print(f"[SelfClaimDaemon] 执行报错: {e}")
-                raise e
+                import traceback
+                err_msg = traceback.format_exc()
+                print(f"[SelfClaimDaemon] 致命执行报错(已拦截): {err_msg}")
+                try:
+                    file_logger.error(f"[SelfClaimDaemon] 💥 Worker 进程抛错栈: \n{err_msg}")
+                except Exception:
+                    pass
+                return {"status": "error", "response": f"在执行该大任务时Worker内部抛出了严重错误(通常是模型响应超时): {str(e)}"}
             finally:
                 os.chdir(old_cwd)
                 print(f"[SelfClaimDaemon] 🔄 恢复 CWD: {old_cwd}")

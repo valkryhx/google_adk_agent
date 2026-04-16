@@ -445,12 +445,38 @@ document.addEventListener('DOMContentLoaded', () => {
                                 }
                             } else {
                                 if (chunk.type === 'text' || chunk.type === 'thought') {
+                                    let content = chunk.content;
+                                    if (chunk.type === 'text') {
+                                        if (window.StreamDedup) {
+                                            const cleaned = window.StreamDedup.stripLeakedThinkText(content);
+                                            content = cleaned.content;
+                                            if (!content) {
+                                                continue;
+                                            }
+                                        }
+                                        const isFirstTextChunk = !responseBlocks.some(block => block.type === 'text');
+                                        if (isFirstTextChunk && window.StreamDedup) {
+                                            const thoughtContent = responseBlocks
+                                                .filter(block => block.type === 'thought')
+                                                .map(block => block.content || '')
+                                                .join('');
+                                            content = window.StreamDedup.trimTextChunkAfterThoughtOverlap(
+                                                content,
+                                                thoughtContent,
+                                                true
+                                            );
+                                            if (!content) {
+                                                continue;
+                                            }
+                                        }
+                                    }
+
                                     // Merge with previous block of the same type if exists
                                     const lastBlock = responseBlocks[responseBlocks.length - 1];
                                     if (lastBlock && lastBlock.type === chunk.type) {
-                                        lastBlock.content += chunk.content;
+                                        lastBlock.content += content;
                                     } else {
-                                        responseBlocks.push({ type: chunk.type, content: chunk.content });
+                                        responseBlocks.push({ type: chunk.type, content: content });
                                     }
                                 } else {
                                     // [新增] 发现普通 tool_call 时，也提早触发左侧列表刷新

@@ -137,11 +137,37 @@ except Exception as e:
 ### 停止后台服务
 
 ```python
-# 按端口 kill（推荐）
-bash(command='powershell -Command "Get-NetTCPConnection -LocalPort 5000 | Select-Object -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force }"')
-
-# 按 PID kill（已知 PID 时）
+# 按 PID kill（首选，已知 PID 时）
 bash(command='taskkill /PID 12345 /F')
+
+# 仅在确认该端口就是你自己拉起的测试服务时，才按端口定点回收
+bash(command='powershell -Command "Get-NetTCPConnection -LocalPort 5000 | Select-Object -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force }"')
+```
+
+**如果你是为集成测试临时拉起后台服务，优先在 Python 中持有进程句柄并优雅回收：**
+
+```python
+import os
+import subprocess
+import sys
+
+proc = subprocess.Popen(
+    [sys.executable, "app.py"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+)
+
+try:
+    # healthcheck / requests assertions
+    ...
+finally:
+    proc.terminate()
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=3)
 ```
 
 > ❌ **禁止**以下所有前台阻塞写法：
@@ -151,11 +177,22 @@ bash(command='taskkill /PID 12345 /F')
 >
 > **唯一正确方式：方式一的 `subprocess.Popen + DETACHED_PROCESS`**
 
+> ❌ **同样禁止**以下高危关停方式：
+> - `proc.send_signal(signal.CTRL_C_EVENT)` ← 可能误伤同控制台/同进程组里的其他 Python 服务
+> - `Get-Process python | Stop-Process` / `Stop-Process -Name python` ← 会误杀无关 Python 进程
+> - `taskkill /F /IM python.exe` / `pkill -f python` ← 全局误杀
+> - 用 `stdout=PIPE`、`stderr=PIPE` 拉长跑后台进程但完全不消费输出 ← 容易卡死或留下未关闭 transport
+> - 用 `start /b`、`$!`、`jobs` 这类 shell 技巧管理测试服务生命周期 ← 在 Windows 和多壳环境里很不稳
+
 
 ## 安全注意事项
 1. **禁止执行高危命令**（如 `rm -rf`, `mkfs`, `del /f /s /q` 等），工具会自动拦截。
 2. 对于耗时命令，设置合理的超时时间。
 3. 敏感信息（密码、密钥）不要在命令中明文传递。
+4. 需要停后台服务时，**优先持有 PID 或 `Popen` 句柄定点回收**，不要按进程名全杀。
+5. Windows 集成测试里，**不要**使用 `signal.CTRL_C_EVENT` 做 teardown。
+6. 长时间运行的后台服务，输出要么落日志文件，要么走 `subprocess.DEVNULL`；**不要**默认 `PIPE` 后放着不读。
+7. 只有在确认端口归属明确时，才允许按端口 `Stop-Process -Id`；避免误伤宿主机上的编排服务、代理节点或其他开发进程。
 
 ## 示例
 
@@ -183,7 +220,7 @@ Final Answer: 网络连通正常，到 8.8.8.8 的平均延迟约 35ms，无丢�
 # 查看占用某端口的进程
 bash(command='powershell -Command "Get-NetTCPConnection -LocalPort 5000 | Select-Object LocalPort, State, OwningProcess"')
 
-# 按端口强制 kill 进程
+# 按端口强制 kill 进程（仅在确认这是你自己拉起的测试服务时使用）
 bash(command='powershell -Command "Get-NetTCPConnection -LocalPort 5000 | Select-Object -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force }"')
 
 # 查看所有 Python 进程
