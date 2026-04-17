@@ -131,8 +131,9 @@ class AgentConfig:
             print(f"[Config] 🔑 成功从 YAML 顶层获取 {key} (长度: {len(fallback_val)})")
         return fallback_val
     
-    extra_body: dict = field(default_factory=lambda: {"enable_thinking": False})
-    
+    #extra_body: dict = field(default_factory=lambda: {"enable_thinking": False})
+    extra_body: dict = field(default_factory=lambda: {})
+
     max_retries: int = 3
     timeout_seconds: int = 600000
     max_tool_calls_per_turn: int = 10
