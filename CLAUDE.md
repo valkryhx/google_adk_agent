@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 强制执行规则（工具调用）
+
+- 执行任何任务时，**必须调用工具**（如 Read / Edit / Grep / Bash 等）来产生可验证的实际操作。
+- **禁止**只回复“好的”“收到”“我来处理”等无实质执行内容的文本。
+- 若当前步骤确实无法直接执行，也必须先通过工具进行必要检查（如读取文件、检索路径、查看状态）后再反馈。
+
 ## Windows 中文/Emoji 命令执行
 
 在 Windows 上执行任何会输出中文或 emoji 的命令时，必须加环境变量，否则会得到乱码或 UnicodeDecodeError：
