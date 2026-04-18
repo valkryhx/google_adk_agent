@@ -21,13 +21,12 @@ echo [System] Cleaning up old registry for a fresh demo...
 if exist sqlite_db\swarm_registry.db del sqlite_db\swarm_registry.db
 if not exist logs mkdir logs
 
-:: 清理团队成员注册表（config.json 记录上次节点端口，不清会导致 Leader 向死端口广播任务）
-:: 保留 tasks/ 目录，历史任务记录不影响新任务认领
+:: 清理团队成员注册表与遗留的僵尸任务（防止 Worker 开机抢夺残留的无依赖幽灵任务）
 set TEAM_ID=swarm_team
-set COORD_CONFIG=%ADK_COORDINATION_DIR%\%TEAM_ID%\coordination\config.json
-if exist "%COORD_CONFIG%" (
-    del "%COORD_CONFIG%"
-    echo [System] Cleared stale team config: %COORD_CONFIG%
+set COORD_DIR=%ADK_COORDINATION_DIR%\%TEAM_ID%
+if exist "%COORD_DIR%" (
+    rmdir /s /q "%COORD_DIR%"
+    echo [System] Cleared stale coordination data: %COORD_DIR%
 )
 
 echo.

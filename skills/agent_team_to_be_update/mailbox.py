@@ -118,6 +118,7 @@ class Mailbox:
         Returns:
             Absolute path to the inbox JSONL file
         """
+        os.makedirs(self.base_dir, exist_ok=True)
         return os.path.join(self.base_dir, f"{agent_id}_inbox.jsonl")
 
     def _acquire_file_lock(self, file_handle, exclusive: bool = True) -> bool:

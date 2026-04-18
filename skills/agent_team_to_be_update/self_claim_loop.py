@@ -377,9 +377,9 @@ class SelfClaimLoop:
             self._current_task = task
         result = None
         error = None
-        TASK_TIMEOUT_SECONDS = 180  # 3 分钟超时
+        TASK_TIMEOUT_SECONDS = 600  # 10 分钟超时
         try:
-            # [防卡死] 给执行器加 3 分钟超时，防止长期进程阻塞整条依赖链
+            # [防卡死] 给执行器加 10 分钟超时，防止长期进程阻塞整条依赖链（对齐大模型编写深度代码要求）
             if asyncio.iscoroutinefunction(self.task_executor):
                 result = await asyncio.wait_for(
                     self.task_executor(task), timeout=TASK_TIMEOUT_SECONDS
@@ -428,14 +428,14 @@ class SelfClaimLoop:
             if verification_passed:
                 self.task_queue.complete_task(task_id)
             else:
-                retry_allowed = self.task_queue.handle_task_error(task_id)
+                retry_allowed = self.task_queue.handle_task_error(task_id, error_message=error)
                 if not retry_allowed:
                     error = f"{error} (已达最大重试次数，彻底失败)"
 
         except asyncio.TimeoutError:
             error = f"任务执行超时 ({TASK_TIMEOUT_SECONDS}s)"
             print(f"[SelfClaimLoop] ⏰ 任务 {task_id} 超时！")
-            retry_allowed = self.task_queue.handle_task_error(task_id)
+            retry_allowed = self.task_queue.handle_task_error(task_id, error_message=error)
             if not retry_allowed:
                 error = f"{error} (已达最大重试次数，彻底失败)"
             else:
@@ -443,7 +443,7 @@ class SelfClaimLoop:
         except Exception as e:
             error = str(e)
             print(f"[SelfClaimLoop] 任务 {task_id} 执行异常: {error}")
-            retry_allowed = self.task_queue.handle_task_error(task_id)
+            retry_allowed = self.task_queue.handle_task_error(task_id, error_message=error)
             if not retry_allowed:
                 error = f"{error} (已达最大重试次数，彻底失败)"
             else:
