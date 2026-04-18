@@ -430,6 +430,149 @@ async def test_tick_waiting_input_keeps_manual_trigger_queued_and_skips_run_turn
 
 
 @pytest.mark.asyncio
+async def test_tick_waiting_input_timeout_auto_resumes_and_runs_trigger():
+    from src.adk_agent.kairos.models import KairosContinuationPolicy
+
+    reasons = []
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(reason):
+        reasons.append(reason)
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            busy=False,
+            mode=KairosMode.WAITING_INPUT,
+            blocked_reason="waiting for user confirmation",
+            policy=KairosContinuationPolicy(ask_user_timeout_seconds=180),
+            pending_triggers=[
+                KairosTrigger(
+                    trigger_id="manual-1",
+                    kind=TriggerKind.MANUAL,
+                    reason="work_registered:work:test",
+                    created_at="2026-04-18T00:00:00+00:00",
+                )
+            ],
+            attention_items=[
+                KairosAttentionItem(
+                    attention_id="attention-1",
+                    scope_kind="document_work",
+                    work_id="work:test",
+                    stage_id="requirements",
+                    question="Need confirmation",
+                    blocked_reason="waiting for user confirmation",
+                    status="pending",
+                    created_at="2026-04-18T00:00:00+00:00",
+                    updated_at="2026-04-18T00:00:00+00:00",
+                    timeout_seconds=180,
+                    wait_until="2026-04-18T00:03:00+00:00",
+                )
+            ],
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:test",
+                    goal="build test feature",
+                    status="blocked",
+                    current_step="requirements",
+                    next_actions=["draft requirements"],
+                    expected_artifacts=["requirements/session-1/work.md"],
+                    open_questions=["Need confirmation"],
+                    human_input_required=True,
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+    )
+
+    await runtime.tick_once()
+
+    assert reasons
+    assert reasons[0].startswith("ask_user_timeout_auto_resume:")
+    assert runtime.state.attention_items[0].status == "timed_out"
+    assert runtime.state.attention_items[0].auto_resumed_at is not None
+    assert runtime.state.blocked_reason is None
+    assert runtime.state.document_work_items[0].human_input_required is False
+    assert runtime.state.document_work_items[0].status == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_respond_attention_before_timeout_unblocks_and_runs_manual_trigger():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+    reasons = []
+
+    async def run_turn(reason):
+        reasons.append(reason)
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            busy=False,
+            mode=KairosMode.WAITING_INPUT,
+            blocked_reason="waiting for user confirmation",
+            pending_triggers=[
+                KairosTrigger(
+                    trigger_id="manual-1",
+                    kind=TriggerKind.MANUAL,
+                    reason="work_registered:work:test",
+                    created_at="2026-04-18T00:00:00+00:00",
+                )
+            ],
+            attention_items=[
+                KairosAttentionItem(
+                    attention_id="attention-1",
+                    scope_kind="document_work",
+                    work_id="work:test",
+                    stage_id="requirements",
+                    question="Need confirmation",
+                    blocked_reason="waiting for user confirmation",
+                    status="pending",
+                    created_at="2026-04-18T00:00:00+00:00",
+                    updated_at="2026-04-18T00:00:00+00:00",
+                    timeout_seconds=180,
+                    wait_until="2099-01-01T00:03:00+00:00",
+                )
+            ],
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:test",
+                    goal="build test feature",
+                    status="blocked",
+                    current_step="requirements",
+                    next_actions=["draft requirements"],
+                    expected_artifacts=[],
+                    open_questions=["Need confirmation"],
+                    human_input_required=True,
+                    source_docs=[],
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+    )
+
+    await runtime.respond_attention("attention-1", "Proceed with default assumptions.")
+    await runtime.tick_once()
+
+    assert reasons
+    assert reasons[0] == "work_registered:work:test"
+    assert all(not reason.startswith("ask_user_timeout_auto_resume:") for reason in reasons)
+    assert runtime.state.attention_items[0].status == "resolved"
+
+
+@pytest.mark.asyncio
 async def test_start_creates_background_tick_loop_and_stop_cancels_it():
     ticks = asyncio.Event()
     _, _, _, save_state, emit_event, append_log = _make_callbacks()

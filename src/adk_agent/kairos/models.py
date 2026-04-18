@@ -87,6 +87,7 @@ class KairosContinuationPolicy:
     proactive_scan_enabled: bool = True
     cooldown_seconds: int = 60
     llm_only_decision_enabled: bool = False
+    ask_user_timeout_seconds: int = 180
 
 
 def _default_planning_result() -> dict[str, Any]:
@@ -226,6 +227,9 @@ class KairosAttentionItem:
     updated_at: str | None = None
     response: str | None = None
     resolved_at: str | None = None
+    timeout_seconds: int | None = None
+    wait_until: str | None = None
+    auto_resumed_at: str | None = None
 
 
 @dataclass
@@ -377,6 +381,7 @@ def _load_policy(raw: dict[str, Any] | None) -> KairosContinuationPolicy:
         proactive_scan_enabled=raw.get("proactive_scan_enabled", True),
         cooldown_seconds=raw.get("cooldown_seconds", 60),
         llm_only_decision_enabled=raw.get("llm_only_decision_enabled", False),
+        ask_user_timeout_seconds=raw.get("ask_user_timeout_seconds", 180),
     )
 
 

@@ -336,6 +336,7 @@ class KairosRuntime:
                         self.state.pending_triggers.extend(self._continuation_engine.apply_decisions(self.state, [decision]))
             await self._record_planning_transition(previous_planning_snapshot)
             self._sync_attention_from_planning()
+            await self._auto_resume_waiting_input_if_timed_out(now)
 
             if not self.state.running:
                 return
@@ -676,6 +677,7 @@ class KairosRuntime:
             stage_id=stage_id,
             question=reason,
             blocked_reason=reason,
+            refresh_timeout=True,
         )
         await self._record("brief", reason)
 
@@ -699,6 +701,8 @@ class KairosRuntime:
                 stage_id=stage_id,
                 question=message,
                 blocked_reason=message,
+                timeout_seconds=payload.timeout_hint,
+                refresh_timeout=True,
             )
             self.state.mode = KairosMode.WAITING_INPUT
             return
@@ -1015,6 +1019,124 @@ class KairosRuntime:
                     root_cause_hypothesis=str(exc),
                 )
 
+    @staticmethod
+    def _parse_iso_datetime(value: str | None) -> datetime | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+
+    @staticmethod
+    def _coerce_timeout_seconds(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            normalized = int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+        if normalized <= 0:
+            return None
+        return min(normalized, 24 * 60 * 60)
+
+    def _effective_ask_user_timeout_seconds(self, timeout_hint: Any | None = None) -> int | None:
+        if timeout_hint is not None:
+            hinted = self._coerce_timeout_seconds(timeout_hint)
+            if hinted is not None:
+                return hinted
+        return self._coerce_timeout_seconds(self.state.policy.ask_user_timeout_seconds)
+
+    def _apply_attention_timeout(
+        self,
+        item: KairosAttentionItem,
+        *,
+        now: datetime,
+        timeout_hint: Any | None = None,
+        refresh_timeout: bool = False,
+    ) -> None:
+        if not refresh_timeout and item.wait_until:
+            return
+        timeout_seconds = self._effective_ask_user_timeout_seconds(timeout_hint if timeout_hint is not None else item.timeout_seconds)
+        item.timeout_seconds = timeout_seconds
+        item.wait_until = (
+            (now + timedelta(seconds=timeout_seconds)).isoformat()
+            if timeout_seconds is not None
+            else None
+        )
+        if refresh_timeout:
+            item.auto_resumed_at = None
+
+    async def _auto_resume_waiting_input_if_timed_out(self, now: datetime) -> None:
+        if self.state.mode is not KairosMode.WAITING_INPUT:
+            return
+        expired: list[KairosAttentionItem] = []
+        for item in self.state.attention_items:
+            if item.status != "pending" or item.auto_resumed_at:
+                continue
+            if not item.wait_until:
+                self._apply_attention_timeout(item, now=now, refresh_timeout=False)
+            deadline = self._parse_iso_datetime(item.wait_until)
+            if deadline is None:
+                continue
+            if deadline <= now:
+                expired.append(item)
+
+        if not expired:
+            return
+
+        now_iso = now.isoformat()
+        expired_ids: list[str] = []
+        expired_work_ids: set[str] = set()
+        for item in expired:
+            item.status = "timed_out"
+            item.auto_resumed_at = now_iso
+            item.updated_at = now_iso
+            expired_ids.append(item.attention_id)
+            if item.scope_kind == "document_work" and item.work_id:
+                expired_work_ids.add(item.work_id)
+            if (
+                item.scope_kind == "workflow_stage"
+                and self.state.active_workflow is not None
+                and self.state.active_workflow.workflow_id == item.workflow_id
+                and self.state.active_workflow.status == "waiting_input"
+            ):
+                self.state.active_workflow.status = "active"
+
+        for work_item in self.state.document_work_items:
+            if work_item.work_id not in expired_work_ids:
+                continue
+            work_item.human_input_required = False
+            if work_item.status == "blocked":
+                work_item.status = "in_progress"
+
+        self.state.blocked_reason = None
+        self.state.mode = KairosMode.IDLE
+        trigger = KairosTrigger(
+            trigger_id=f"ask-user-timeout-{int(now.timestamp() * 1000)}",
+            kind=TriggerKind.MANUAL,
+            reason=f"ask_user_timeout_auto_resume:{','.join(expired_ids)}",
+            created_at=now_iso,
+            metadata={
+                "attention_ids": expired_ids,
+                "auto_resume": True,
+            },
+        )
+        self.state.pending_triggers.insert(0, trigger)
+        self.state.pending_wake_reason = trigger.reason
+        await self._record(
+            "brief",
+            f"ask_user timeout reached; auto-resume triggered for {', '.join(expired_ids)}",
+        )
+
     def _upsert_attention_item(
         self,
         *,
@@ -1024,8 +1146,11 @@ class KairosRuntime:
         stage_id: str | None,
         question: str | None,
         blocked_reason: str | None,
+        timeout_seconds: Any | None = None,
+        refresh_timeout: bool = False,
     ) -> KairosAttentionItem:
-        now = datetime.now(UTC).isoformat()
+        now_dt = datetime.now(UTC)
+        now = now_dt.isoformat()
         for item in self.state.attention_items:
             if item.status != "pending":
                 continue
@@ -1038,10 +1163,16 @@ class KairosRuntime:
                 item.question = question or item.question
                 item.blocked_reason = blocked_reason or item.blocked_reason
                 item.updated_at = now
+                self._apply_attention_timeout(
+                    item,
+                    now=now_dt,
+                    timeout_hint=timeout_seconds,
+                    refresh_timeout=refresh_timeout,
+                )
                 return item
 
         created = KairosAttentionItem(
-            attention_id=f"attention-{int(datetime.now(UTC).timestamp() * 1000)}",
+            attention_id=f"attention-{int(now_dt.timestamp() * 1000)}",
             scope_kind=scope_kind,
             workflow_id=workflow_id,
             work_id=work_id,
@@ -1051,6 +1182,12 @@ class KairosRuntime:
             status="pending",
             created_at=now,
             updated_at=now,
+        )
+        self._apply_attention_timeout(
+            created,
+            now=now_dt,
+            timeout_hint=timeout_seconds,
+            refresh_timeout=True,
         )
         self.state.attention_items.append(created)
         return created
@@ -1082,6 +1219,8 @@ class KairosRuntime:
             stage_id=stage_id,
             question=message if kind == "ask_user" else None,
             blocked_reason=message,
+            timeout_seconds=payload.get("timeout_seconds") or payload.get("timeout_hint"),
+            refresh_timeout=False,
         )
         if work_id:
             for document_item in self.state.document_work_items:
@@ -1109,6 +1248,7 @@ class KairosRuntime:
         target.response = response
         target.resolved_at = now
         target.updated_at = now
+        target.wait_until = None
 
         if target.scope_kind == "document_work" and target.work_id:
             for item in self.state.document_work_items:

@@ -170,6 +170,7 @@ def test_state_round_trip_preserves_proactive_and_policy_fields():
             proactive_scan_enabled=True,
             cooldown_seconds=60,
             llm_only_decision_enabled=True,
+            ask_user_timeout_seconds=240,
         ),
     )
 
@@ -192,6 +193,7 @@ def test_state_round_trip_preserves_proactive_and_policy_fields():
     assert restored.policy.proactive_scan_enabled is True
     assert restored.policy.cooldown_seconds == 60
     assert restored.policy.llm_only_decision_enabled is True
+    assert restored.policy.ask_user_timeout_seconds == 240
 
 
 def test_policy_defaults_are_stable():
@@ -204,6 +206,7 @@ def test_policy_defaults_are_stable():
     assert policy.proactive_scan_enabled is True
     assert policy.cooldown_seconds == 60
     assert policy.llm_only_decision_enabled is False
+    assert policy.ask_user_timeout_seconds == 180
 
 
 def test_new_kairos_modes_exist():
@@ -222,6 +225,7 @@ def test_load_legacy_state_fills_phase3_defaults():
     assert state.blocked_reason is None
     assert state.policy.max_auto_steps_per_tick == 1
     assert state.policy.require_artifacts_before_follow_up is True
+    assert state.policy.ask_user_timeout_seconds == 180
     assert state.unfinished_work_items == []
     assert state.proactive_candidates == []
     assert state.last_proactive_scan == {}
@@ -252,6 +256,8 @@ def test_state_round_trip_preserves_attention_items():
                 status="pending",
                 created_at="2026-04-18T09:00:00+00:00",
                 updated_at="2026-04-18T09:00:00+00:00",
+                timeout_seconds=180,
+                wait_until="2026-04-18T09:03:00+00:00",
             )
         ]
     )
@@ -264,6 +270,8 @@ def test_state_round_trip_preserves_attention_items():
     assert item.scope_kind == "document_work"
     assert item.work_id == "work:python-cli"
     assert item.status == "pending"
+    assert item.timeout_seconds == 180
+    assert item.wait_until == "2026-04-18T09:03:00+00:00"
 
 
 def test_dump_round_trip_preserves_schedule_and_trigger():
