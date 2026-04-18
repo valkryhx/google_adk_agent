@@ -8,7 +8,7 @@ Leader 创建 DAG 并广播任务，Worker 通过 flock 竞争认领。
 
 工具列表:
 - team_create, team_join, team_leave, team_status, team_list_workers
-- task_create, task_claim, task_complete, task_status, task_list
+- task_claim, task_complete, task_status, task_list
 - mailbox_send, mailbox_read, mailbox_broadcast
 - worker_status, worker_idle_report
 
@@ -333,9 +333,10 @@ async def task_create(
     priority: str = "NORMAL"
 ) -> str:
     """
-    【Leader 专用】创建一个任务并广播通知。
+    【已禁用】单任务创建入口。
 
-    创建任务后，向所有活跃 Worker 广播 mailbox 通知。
+    为避免模型在 DAG 工作流中误用单任务入口，导致计划与执行不一致，
+    强制要求仅通过 dag_create 创建任务图。
 
     Args:
         team_id: 团队唯一标识
@@ -349,58 +350,10 @@ async def task_create(
         priority: 优先级 (LOW/NORMAL/HIGH/URGENT)
 
     Returns:
-        创建结果，包含 task_id
+        禁用提示
     """
-    coord_dir = _get_coordination_dir(team_id)
-    base_dir = coord_dir
-
-    queue = TaskQueue(team_id=team_id, base_dir=coord_dir)
-
-    task = queue.create_task(
-        name=name,
-        description=description,
-        blocked_by=blocked_by or [],
-        expected_artifacts=expected_artifacts or [],
-        writable_files=writable_files or [],
-        read_only_files=read_only_files or [],
-        task_type=task_type
-    )
-
-    # 广播任务通知给所有 Worker
-    mailbox = Mailbox(base_dir=coord_dir)
-    config = TeamConfig(team_id=team_id, base_dir=base_dir)
-
-    workers = config.get_worker_members()
-    broadcast_content = json.dumps({
-        "type": "task_broadcast",
-        "taskId": task.id,
-        "taskName": name,
-        "priority": priority,
-        "blockedBy": blocked_by or [],
-        "description": description[:200] if description else ""
-    })
-
-    notified = 0
-    for w in workers:
-        if w.status == "active":
-            mailbox.send_message(
-                from_agent=_get_current_agent_id(),
-                to_agent=w.agent_id,
-                content=broadcast_content,
-                msg_type="task_broadcast"
-            )
-            notified += 1
-
-    return (
-        f"[TASK CREATED]\n"
-        f"Task ID: {task.id}\n"
-        f"Name: {name}\n"
-        f"Type: {task_type}\n"
-        f"Priority: {priority}\n"
-        f"Blocked By: {blocked_by or 'none'}\n"
-        f"Notified Workers: {notified}/{len(workers)}\n"
-        f"\n"
-        f"Workers 将通过 flock 竞争认领此任务。"
+    raise RuntimeError(
+        "task_create is disabled. Use dag_create(tasks=[...]) to create tasks."
     )
 
 
@@ -1218,7 +1171,6 @@ def get_decentralized_tools(status_reporter=None):
         team_status,
         team_list_workers,
         # Task Management
-        task_create,
         task_claim,
         task_complete,
         task_status,
