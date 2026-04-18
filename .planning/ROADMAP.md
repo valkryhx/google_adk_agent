@@ -128,7 +128,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 06-IMPLEMENTATION: LLM-first autonomous task intelligence（markdown-first skill bridge + replan loop）
+- [ ] 06-IMPLEMENTATION: LLM-first autonomous task intelligence（markdown-first skill bridge + replan loop，wave-1: attention/respond + llm-only follow-up 已落地，见 `06-01-SUMMARY.md`）
 
 **Execution Order:**
 Phases execute in numeric order: 1 → 2 → 3 → 4A → 4B → 5 → 6
@@ -141,7 +141,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4A → 4B → 5 → 6
 | 4A. Explainability, History & Operator UX | 1/1 | Complete | 2026-04-10 |
 | 4B. Goal-Driven Planning Intelligence | 3/3 | Complete | 2026-04-11 |
 | 5. Document-Driven Continuation | 4/4 | Complete | 2026-04-12 |
-| 6. Markdown-First Skill-Using Autonomy | 0/1 | In Progress | — |
+| 6. Markdown-First Skill-Using Autonomy | 0/1 | In Progress (wave-1 delivered) | — |
 
 ---
 *Last updated: 2026-04-18 after formalizing Phase 6 as active phase*
