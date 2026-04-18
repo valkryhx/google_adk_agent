@@ -392,6 +392,44 @@ async def test_tick_skips_run_turn_when_worker_is_busy():
 
 
 @pytest.mark.asyncio
+async def test_tick_waiting_input_keeps_manual_trigger_queued_and_skips_run_turn():
+    called = []
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        called.append(True)
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            busy=False,
+            mode=KairosMode.WAITING_INPUT,
+            pending_triggers=[
+                KairosTrigger(
+                    trigger_id="manual-1",
+                    kind=TriggerKind.MANUAL,
+                    reason="work_registered:work:test",
+                    created_at="2026-04-18T00:00:00+00:00",
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+    )
+
+    await runtime.tick_once()
+
+    assert called == []
+    assert len(runtime.state.pending_triggers) == 1
+    assert runtime.state.pending_triggers[0].trigger_id == "manual-1"
+
+
+@pytest.mark.asyncio
 async def test_start_creates_background_tick_loop_and_stop_cancels_it():
     ticks = asyncio.Event()
     _, _, _, save_state, emit_event, append_log = _make_callbacks()
@@ -641,6 +679,75 @@ async def test_tick_once_builds_design_codegen_payload_for_spawn_step():
 
 
 @pytest.mark.asyncio
+async def test_tick_once_dispatches_agent_execute_from_plan_step_without_payload_llm():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+    run_turn_reasons = []
+
+    async def run_turn(reason):
+        run_turn_reasons.append(reason)
+        return "ok"
+
+    class FakePlanner:
+        async def draft_requirement_understanding(self, item):
+            from src.adk_agent.kairos.models import KairosUnderstandingResult
+
+            return KairosUnderstandingResult(goal=item.goal)
+
+        async def build_execution_plan(self, item, understanding, *, candidate_actions):
+            from src.adk_agent.kairos.models import KairosExecutionPlan
+
+            return KairosExecutionPlan(
+                plan_id="plan-agent-exec",
+                work_id=item.work_id,
+                steps=[
+                    {
+                        "step_id": item.current_step,
+                        "action_kind": "agent_execute",
+                        "reason": "use tools to execute the requirement",
+                        "required_skills": ["bash"],
+                        "execution_prompt": "读取 work.md 并产出 execution-log.md",
+                    }
+                ],
+            )
+
+        async def build_action_payload(self, *, work_item, step):
+            raise AssertionError("build_action_payload should not be called for agent_execute step")
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.IDLE,
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:python-cli",
+                    goal="build python cli",
+                    status="pending_requirements",
+                    current_step="requirements",
+                    next_actions=["draft requirements document"],
+                    expected_artifacts=["requirements/session-1/work.md"],
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+    runtime._llm_planner = FakePlanner()
+
+    await runtime.tick_once()
+
+    assert runtime.state.current_action_payload.action_kind == "agent_execute"
+    assert any(reason.startswith("agent_execute::") for reason in run_turn_reasons)
+    assert runtime.state.planned_actions
+    assert runtime.state.planned_actions[0].kind == "agent_execute"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_action_payload_updates_document_when_patch_present(tmp_path):
     _, _, _, save_state, emit_event, append_log = _make_callbacks()
 
@@ -835,6 +942,436 @@ async def test_dispatch_action_payload_records_spawn_dex_task_as_planned_action(
     assert runtime.state.tracked_dex_task_ids == ["task-1"]
     assert runtime._dex_bridge.created[0]["context"] == "write cli outline"
     assert "requirements_brief.txt" in runtime._dex_bridge.started[0]["command"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_agent_execute_loads_skills_and_runs_turn():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+    load_calls = []
+    turn_reasons = []
+
+    async def run_turn(reason):
+        turn_reasons.append(reason)
+        return "ok"
+
+    async def load_skill(skill_id):
+        load_calls.append(skill_id)
+        return f"[OK] {skill_id}"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+        load_skill=load_skill,
+        allowed_skills={"bash", "file_editor"},
+    )
+    from src.adk_agent.kairos.models import KairosActionPayload
+    runtime.state.current_action_payload = KairosActionPayload(
+        action_kind="agent_execute",
+        rationale="llm execute with skill",
+        args={
+            "required_skills": ["bash"],
+            "execution_prompt": "读取任务文档并推进下一步",
+        },
+    )
+
+    await runtime._dispatch_action_payload()
+
+    assert load_calls == ["bash"]
+    assert runtime.state.pending_triggers
+    assert runtime.state.pending_triggers[0].reason.startswith("agent_execute::")
+    assert runtime.state.planned_actions[0].kind == "agent_execute"
+
+    await runtime.tick_once()
+
+    assert turn_reasons
+    assert turn_reasons[0].startswith("agent_execute::")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_agent_execute_includes_ripgrep_skill_catalog_in_prompt():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+        list_available_skill_catalog=lambda: [
+            {"id": "bash", "name": "Bash Tool", "description": "Run shell commands"},
+            {"id": "file_editor", "name": "File Editor", "description": "Read and write files"},
+        ],
+    )
+    from src.adk_agent.kairos.models import KairosActionPayload
+    runtime.state.current_action_payload = KairosActionPayload(
+        action_kind="agent_execute",
+        args={
+            "execution_prompt": "读取 work.md 并生成 execution-log.md",
+        },
+    )
+
+    await runtime._dispatch_action_payload()
+
+    assert runtime.state.pending_triggers
+    reason = runtime.state.pending_triggers[0].reason
+    assert reason.startswith("agent_execute::")
+    assert "[KAIROS_AVAILABLE_SKILLS]" in reason
+    assert "- bash (Bash Tool): Run shell commands" in reason
+    assert "- file_editor (File Editor): Read and write files" in reason
+
+
+@pytest.mark.asyncio
+async def test_dispatch_agent_execute_skips_unknown_skill_hints_without_blocking():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+    load_calls = []
+
+    async def run_turn(_):
+        return "ok"
+
+    async def load_skill(skill_id):
+        load_calls.append(skill_id)
+        return f"[OK] {skill_id}"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+        load_skill=load_skill,
+        allowed_skills={"bash"},
+    )
+    from src.adk_agent.kairos.models import KairosActionPayload
+    runtime.state.current_action_payload = KairosActionPayload(
+        action_kind="agent_execute",
+        args={
+            "required_skills": ["web-search"],
+            "execution_prompt": "执行联网调研",
+        },
+    )
+
+    await runtime._dispatch_action_payload()
+
+    assert load_calls == []
+    assert runtime.state.pending_triggers
+    assert runtime.state.pending_triggers[0].reason.startswith("agent_execute::")
+    assert runtime.state.mode is not KairosMode.WAITING_INPUT
+    assert runtime.state.blocked_reason is None
+    assert runtime.state.planned_actions
+    assert runtime.state.planned_actions[0].payload["skipped_skill_hints"] == ["web-search"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_agent_execute_skips_loading_when_loader_missing():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+        load_skill=None,
+        allowed_skills={"bash"},
+    )
+    from src.adk_agent.kairos.models import KairosActionPayload
+    runtime.state.current_action_payload = KairosActionPayload(
+        action_kind="agent_execute",
+        args={
+            "required_skills": ["bash"],
+            "execution_prompt": "执行本地检查",
+        },
+    )
+
+    await runtime._dispatch_action_payload()
+
+    assert runtime.state.pending_triggers
+    assert runtime.state.pending_triggers[0].reason.startswith("agent_execute::")
+    assert runtime.state.mode is not KairosMode.WAITING_INPUT
+    assert runtime.state.blocked_reason is None
+    assert runtime.state.planned_actions
+    assert runtime.state.planned_actions[0].payload["skipped_skill_hints"] == ["bash"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_agent_execute_records_mixed_skill_hint_load_results_without_blocking():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+    load_calls = []
+
+    async def run_turn(_):
+        return "ok"
+
+    async def load_skill(skill_id):
+        load_calls.append(skill_id)
+        if skill_id == "bash":
+            return "[OK] bash"
+        if skill_id == "file_editor":
+            return "[ERROR] failed to init file_editor"
+        if skill_id == "search_exp":
+            raise RuntimeError("tool bootstrap timeout")
+        return f"[OK] {skill_id}"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+        load_skill=load_skill,
+        allowed_skills={"bash", "file_editor", "search_exp"},
+    )
+    from src.adk_agent.kairos.models import KairosActionPayload
+
+    runtime.state.current_action_payload = KairosActionPayload(
+        action_kind="agent_execute",
+        args={
+            "skill_hints": ["bash", "text_parse", "file_editor", "search_exp"],
+            "execution_prompt": "读取 work.md 并推进下一步",
+        },
+    )
+
+    await runtime._dispatch_action_payload()
+
+    assert load_calls == ["bash", "file_editor", "search_exp"]
+    assert runtime.state.pending_triggers
+    assert runtime.state.pending_triggers[0].reason.startswith("agent_execute::")
+    assert runtime.state.mode is not KairosMode.WAITING_INPUT
+    assert runtime.state.blocked_reason is None
+
+    planned_payload = runtime.state.planned_actions[0].payload
+    assert planned_payload["skipped_skill_hints"] == ["text_parse"]
+    status_by_skill = {
+        item["skill_id"]: item["status"]
+        for item in planned_payload["skill_load_results"]
+    }
+    assert status_by_skill["bash"] == "loaded"
+    assert status_by_skill["text_parse"] == "unknown_hint"
+    assert status_by_skill["file_editor"] == "load_error"
+    assert status_by_skill["search_exp"] == "load_exception"
+
+    trigger_meta = runtime.state.pending_triggers[0].metadata
+    meta_status_by_skill = {
+        item["skill_id"]: item["status"]
+        for item in trigger_meta["skill_load_results"]
+    }
+    assert meta_status_by_skill == status_by_skill
+
+
+@pytest.mark.asyncio
+async def test_dispatch_agent_execute_counts_already_loaded_as_loaded():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+    load_calls = []
+
+    async def run_turn(_):
+        return "ok"
+
+    async def load_skill(skill_id):
+        load_calls.append(skill_id)
+        return f"[OK] 技能 '{skill_id}' 已加载（already loaded）。Instructions:\\n..."
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+        load_skill=load_skill,
+        allowed_skills={"bash"},
+    )
+    from src.adk_agent.kairos.models import KairosActionPayload
+
+    runtime.state.current_action_payload = KairosActionPayload(
+        action_kind="agent_execute",
+        args={
+            "required_skills": ["bash"],
+            "execution_prompt": "执行一次命令检查",
+        },
+    )
+
+    await runtime._dispatch_action_payload()
+
+    assert load_calls == ["bash"]
+    result_entry = runtime.state.planned_actions[0].payload["skill_load_results"][0]
+    assert result_entry["status"] == "already_loaded"
+    assert runtime.state.planned_actions[0].payload["skill_hint_stats"]["loaded"] == 1
+    assert runtime.state.pending_triggers[0].metadata["skill_hint_stats"]["loaded"] == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_agent_execute_maps_text_hint_to_known_skill_id():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+    load_calls = []
+
+    async def run_turn(_):
+        return "ok"
+
+    async def load_skill(skill_id):
+        load_calls.append(skill_id)
+        return f"[OK] {skill_id}"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+        load_skill=load_skill,
+        allowed_skills={"file_editor"},
+    )
+    from src.adk_agent.kairos.models import KairosActionPayload
+
+    runtime.state.current_action_payload = KairosActionPayload(
+        action_kind="agent_execute",
+        args={
+            "required_skills": ["file-editing"],
+            "execution_prompt": "读取并更新本地文档",
+        },
+    )
+
+    await runtime._dispatch_action_payload()
+
+    assert load_calls == ["file_editor"]
+    assert runtime.state.pending_triggers
+    assert runtime.state.mode is not KairosMode.WAITING_INPUT
+    assert runtime.state.blocked_reason is None
+
+    planned_payload = runtime.state.planned_actions[0].payload
+    result_entry = planned_payload["skill_load_results"][0]
+    assert result_entry["skill_id"] == "file-editing"
+    assert result_entry["resolved_skill_id"] == "file_editor"
+    assert result_entry["hint_resolution"] == "text_match"
+    assert result_entry["status"] == "loaded"
+    assert planned_payload["skill_hint_stats"]["mapped"] == 1
+    assert runtime.state.pending_triggers[0].metadata["skill_hint_stats"]["mapped"] == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_agent_execute_semantic_hint_prefers_web_search_skill():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+    load_calls = []
+
+    async def run_turn(_):
+        return "ok"
+
+    async def load_skill(skill_id):
+        load_calls.append(skill_id)
+        return f"[OK] {skill_id}"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+        load_skill=load_skill,
+        list_available_skill_catalog=lambda: [
+            {
+                "id": "search_exp",
+                "name": "search_experience",
+                "description": "检索本地经验库，获取历史 Agent 解决过的报错方案和配置经验。",
+            },
+            {
+                "id": "web-search",
+                "name": "web-search",
+                "description": "Perform web searches and extract content from URLs.",
+            },
+        ],
+    )
+    from src.adk_agent.kairos.models import KairosActionPayload
+
+    runtime.state.current_action_payload = KairosActionPayload(
+        action_kind="agent_execute",
+        args={
+            "required_skills": ["web search"],
+            "execution_prompt": "执行联网调研并输出结论",
+        },
+    )
+
+    await runtime._dispatch_action_payload()
+
+    assert load_calls == ["web-search"]
+    result_entry = runtime.state.planned_actions[0].payload["skill_load_results"][0]
+    assert result_entry["skill_id"] == "web search"
+    assert result_entry["resolved_skill_id"] == "web-search"
+    assert result_entry["hint_resolution"] in {"text_match", "normalized"}
+    assert result_entry["status"] == "loaded"
+    assert result_entry["candidate_matches"][0]["skill_id"] == "web-search"
+    assert "web searches" in result_entry["candidate_matches"][0]["description"].lower()
+
+    reason = runtime.state.pending_triggers[0].reason
+    assert "[KAIROS_SKILL_HINT_CANDIDATES]" in reason
+    assert "hint=web search" in reason
+    assert "web-search" in reason
+
+
+@pytest.mark.asyncio
+async def test_dispatch_agent_execute_does_not_map_web_search_to_search_exp():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+    load_calls = []
+
+    async def run_turn(_):
+        return "ok"
+
+    async def load_skill(skill_id):
+        load_calls.append(skill_id)
+        return f"[OK] {skill_id}"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.IDLE),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+        load_skill=load_skill,
+        allowed_skills={"search_exp"},
+    )
+    from src.adk_agent.kairos.models import KairosActionPayload
+
+    runtime.state.current_action_payload = KairosActionPayload(
+        action_kind="agent_execute",
+        args={
+            "required_skills": ["web-search"],
+            "execution_prompt": "执行联网调研并输出结论",
+        },
+    )
+
+    await runtime._dispatch_action_payload()
+
+    assert load_calls == []
+    assert runtime.state.pending_triggers
+    assert runtime.state.mode is not KairosMode.WAITING_INPUT
+    assert runtime.state.blocked_reason is None
+    result_entry = runtime.state.planned_actions[0].payload["skill_load_results"][0]
+    assert result_entry["skill_id"] == "web-search"
+    assert "resolved_skill_id" not in result_entry
+    assert result_entry["status"] == "unknown_hint"
 
 
 @pytest.mark.asyncio
@@ -1058,6 +1595,46 @@ async def test_register_dex_task_seeds_demo_workflow_for_phase1_inputs():
     assert runtime.state.active_workflow.workflow_id == "demo_report_pipeline"
     assert runtime.state.active_workflow.stages[0].task_ids == ["sales-task"]
     assert runtime.state.mode is KairosMode.HANDOFF
+
+
+@pytest.mark.asyncio
+async def test_register_work_item_writes_work_doc_and_enqueues_manual_trigger(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _, emitted, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(enabled=True, running=True, mode=KairosMode.SLEEPING),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: False,
+    )
+
+    item = await runtime.register_work_item(
+        requirement="Build a todo app with sqlite storage",
+        session_id="session-1",
+        source_label="/api/sessions/session-1/kairos/work/register",
+    )
+
+    work_doc = tmp_path / "requirements" / "session-1" / "work.md"
+    assert work_doc.exists()
+    text = work_doc.read_text(encoding="utf-8")
+    assert "## Goal" in text
+    assert "Build a todo app with sqlite storage" in text
+    assert runtime.state.document_work_items[0].work_id == item.work_id
+    assert runtime.state.document_work_items[0].source_docs == [
+        "/api/sessions/session-1/kairos/work/register:session-1"
+    ]
+    assert runtime.state.pending_triggers
+    assert runtime.state.pending_triggers[0].kind is TriggerKind.MANUAL
+    assert runtime.state.pending_wake_reason == f"work_registered:{item.work_id}"
+    assert runtime.state.mode is KairosMode.IDLE
+    assert any("work registered" in msg for _, msg in emitted)
 
 
 @pytest.mark.asyncio
@@ -2413,3 +2990,105 @@ async def test_llm_only_decision_blocks_when_planner_unavailable():
     assert runtime.state.planned_actions == []
     assert runtime.state.blocked_reason == "llm planner unavailable in llm-only mode"
     assert runtime.state.last_planning_result["final_action"]["kind"] == "record_blocked"
+
+
+@pytest.mark.asyncio
+async def test_document_llm_only_blocks_when_planner_unavailable():
+    from src.adk_agent.kairos.models import KairosContinuationPolicy
+
+    _, emitted, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.IDLE,
+            policy=KairosContinuationPolicy(llm_only_decision_enabled=True),
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:session-1:todo",
+                    goal="build todo app",
+                    status="pending_requirements",
+                    current_step="requirements",
+                    next_actions=["draft requirements document"],
+                    expected_artifacts=["requirements/session-1/work.md"],
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+
+    await runtime.tick_once()
+
+    assert runtime.state.planned_actions == []
+    assert runtime.state.blocked_reason.startswith("llm planner failed for document work")
+    assert runtime.state.mode is KairosMode.WAITING_INPUT
+    assert runtime.state.last_planning_result["final_action"]["kind"] == "record_blocked"
+    assert runtime.state.last_planning_result["workflow_id"] == "document_requirement"
+    assert any("llm planner fallback active" in msg for _, msg in emitted) is False
+
+
+@pytest.mark.asyncio
+async def test_document_llm_only_blocks_on_empty_execution_plan():
+    from src.adk_agent.kairos.models import (
+        KairosContinuationPolicy,
+        KairosExecutionPlan,
+        KairosUnderstandingResult,
+    )
+
+    _, emitted, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.IDLE,
+            policy=KairosContinuationPolicy(llm_only_decision_enabled=True),
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:session-1:todo",
+                    goal="build todo app",
+                    status="pending_requirements",
+                    current_step="requirements",
+                    next_actions=["draft requirements document"],
+                    expected_artifacts=["requirements/session-1/work.md"],
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+
+    class EmptyPlanPlanner:
+        async def draft_requirement_understanding(self, item):
+            return KairosUnderstandingResult(goal=item.goal)
+
+        async def build_execution_plan(self, item, understanding, *, candidate_actions):
+            return KairosExecutionPlan(plan_id="plan-empty", work_id=item.work_id, steps=[])
+
+    runtime._llm_planner = EmptyPlanPlanner()
+
+    await runtime.tick_once()
+
+    assert runtime.state.planned_actions == []
+    assert runtime.state.blocked_reason.startswith("llm planner failed for document work")
+    assert runtime.state.mode is KairosMode.WAITING_INPUT
+    assert runtime.state.last_planning_result["final_action"]["kind"] == "record_blocked"
+    assert any("llm planner fallback active" in msg for _, msg in emitted)

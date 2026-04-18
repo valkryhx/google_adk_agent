@@ -2,6 +2,8 @@ import types
 
 import pytest
 
+from src.adk_agent.config import AgentConfig
+from src.adk_agent.core.manager import SkillManager
 from src.adk_agent.main_web_start_steering import SteeringSession
 
 
@@ -66,6 +68,33 @@ async def test_skill_load_keeps_ok_semantics_for_already_loaded_skill(tmp_path):
 
     assert result.startswith("[OK]")
     assert "dex" in result
+
+
+@pytest.mark.asyncio
+async def test_skill_load_returns_ok_when_only_duplicate_tools_are_detected(tmp_path):
+    session = make_session(
+        tmp_path,
+        skills=["dex"],
+        loaded_skills=[],
+        load_result=[],
+        with_tools_py=True,
+    )
+
+    def _fake_load(skill_id):
+        session._last_skill_load_diagnostics = {
+            skill_id: {
+                "status": "already_loaded",
+                "skipped_duplicate_tool_names": ["dex_list_tasks"],
+            }
+        }
+        return []
+
+    session._load_skill_tools = _fake_load
+
+    result = await session.skill_load("dex")
+
+    assert result.startswith("[OK]")
+    assert "already loaded" in result
 
 
 @pytest.mark.asyncio
@@ -147,3 +176,51 @@ async def test_skill_reload_warns_with_diagnostic_details_when_force_reload_impo
     assert "boom during force reload" in result
     assert "force_reload: True" in result
     assert str(dex_dir / "tools.py") in result
+
+
+@pytest.mark.asyncio
+async def test_skill_load_compactor_warns_when_session_context_missing():
+    session = SteeringSession.__new__(SteeringSession)
+    session.key = ("dynamic_expert", "user_001", "session_test")
+    session.app_name = "dynamic_expert"
+    session.user_id = "user_001"
+    session.session_id = "session_test"
+    session.config = AgentConfig()
+    session.skill_manager = SkillManager(base_path=session.config.skills_path)
+    session._loaded_skills = []
+    session.session_service = None
+    session.queue = None
+    session.report_swarm_event = lambda *args, **kwargs: None
+    session.agent = types.SimpleNamespace(tools=[])
+
+    result = await session.skill_load("compactor")
+    diag = session._last_skill_load_diagnostics.get("compactor", {})
+
+    assert result.startswith("[WARN]")
+    assert "未成功加载" in result
+    assert diag.get("status") == "empty"
+    assert diag.get("loaded_tool_names") == []
+
+
+@pytest.mark.asyncio
+async def test_skill_load_compactor_loads_when_session_context_present():
+    session = SteeringSession.__new__(SteeringSession)
+    session.key = ("dynamic_expert", "user_001", "session_test")
+    session.app_name = "dynamic_expert"
+    session.user_id = "user_001"
+    session.session_id = "session_test"
+    session.config = AgentConfig()
+    session.skill_manager = SkillManager(base_path=session.config.skills_path)
+    session._loaded_skills = []
+    session.session_service = object()
+    session.queue = None
+    session.report_swarm_event = lambda *args, **kwargs: None
+    session.agent = types.SimpleNamespace(tools=[])
+
+    result = await session.skill_load("compactor")
+    diag = session._last_skill_load_diagnostics.get("compactor", {})
+
+    assert result.startswith("[OK]")
+    assert diag.get("status") == "loaded"
+    loaded_names = set(diag.get("loaded_tool_names") or [])
+    assert {"smart_compact", "get_compression_status"}.issubset(loaded_names)

@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Iterable
 
-from .document_protocol import append_spawned_work_update, append_user_guidance_update
+from .document_protocol import (
+    append_spawned_work_update,
+    append_user_guidance_update,
+    build_requirement_work_item,
+    write_work_document,
+)
 from .continuation import ContinuationDecision, ContinuationEngine
 from .models import (
+    KairosActionPayload,
     KairosAttentionItem,
     KairosEvent,
     KairosMode,
@@ -23,6 +31,9 @@ from .models import (
 )
 from .scheduler import KairosScheduler
 from .workflows import demo_report_pipeline, todo_delivery_pipeline
+
+SKILL_MATCH_MIN_SCORE = 0.62
+SKILL_MATCH_MIN_MARGIN = 0.08
 
 
 class KairosRuntime:
@@ -41,6 +52,10 @@ class KairosRuntime:
         continuation_engine: ContinuationEngine | None = None,
         create_follow_up_task: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = None,
         path_exists: Callable[[str], bool] | None = None,
+        load_skill: Callable[[str], Awaitable[str]] | None = None,
+        allowed_skills: Iterable[str] | None = None,
+        list_available_skills: Callable[[], Iterable[str]] | None = None,
+        list_available_skill_catalog: Callable[[], Iterable[dict[str, str]]] | None = None,
     ):
         self.state = state
         self._save_state = save_state
@@ -54,6 +69,14 @@ class KairosRuntime:
         self._continuation_engine = continuation_engine or ContinuationEngine()
         self._create_follow_up_task = create_follow_up_task
         self._path_exists = path_exists or (lambda path: False)
+        self._load_skill = load_skill
+        self._allowed_skills = (
+            {str(skill_id).strip() for skill_id in allowed_skills if str(skill_id).strip()}
+            if allowed_skills is not None
+            else None
+        )
+        self._list_available_skills = list_available_skills
+        self._list_available_skill_catalog = list_available_skill_catalog
         self._continuation_engine._path_exists = self._path_exists
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
@@ -171,6 +194,39 @@ class KairosRuntime:
         await self._persist()
         await self._record("brief", f"dex handoff registered: {task_id} {description}")
 
+    async def register_work_item(
+        self,
+        *,
+        requirement: str,
+        session_id: str,
+        source_label: str,
+    ) -> DocumentReadResult:
+        item = build_requirement_work_item(
+            requirement,
+            session_id=session_id,
+            source_label=source_label,
+        )
+        write_work_document(Path.cwd(), item)
+
+        self.state.document_work_items = [
+            existing for existing in self.state.document_work_items if existing.work_id != item.work_id
+        ]
+        self.state.document_work_items.insert(0, item)
+        self._continuation_engine._path_exists = self._path_exists
+        self._continuation_engine.refresh_unfinished_work(self.state)
+        await self._persist()
+        await self._record("brief", f"kairos work registered: {item.work_id} source={source_label}")
+        await self.enqueue_trigger(
+            KairosTrigger(
+                trigger_id=f"work-register-{int(datetime.now(UTC).timestamp())}",
+                kind=TriggerKind.MANUAL,
+                reason=f"work_registered:{item.work_id}",
+                created_at=datetime.now(UTC).isoformat(),
+                metadata={"work_id": item.work_id, "source": source_label},
+            )
+        )
+        return item
+
     async def tick_once(self) -> None:
         async with self._lock:
             now = datetime.now(UTC)
@@ -186,6 +242,9 @@ class KairosRuntime:
                 self._continuation_engine.refresh_unfinished_work(self.state)
             if self.state.active_workflow is None and self.state.document_work_items:
                 planner = getattr(self, "_llm_planner", None)
+                planner_failure: Exception | None = None
+                if planner is None and self.state.policy.llm_only_decision_enabled:
+                    planner_failure = RuntimeError("llm planner unavailable")
                 if planner is not None and not self.state.current_execution_plan.steps:
                     try:
                         understanding = await planner.draft_requirement_understanding(self.state.document_work_items[0])
@@ -193,7 +252,13 @@ class KairosRuntime:
                         self.state.current_execution_plan = await planner.build_execution_plan(
                             self.state.document_work_items[0],
                             understanding,
-                            candidate_actions=["update_document", "spawn_dex_task", "ask_user", "sleep"],
+                            candidate_actions=[
+                                "update_document",
+                                "spawn_dex_task",
+                                "agent_execute",
+                                "ask_user",
+                                "sleep",
+                            ],
                         )
                         if self.state.current_execution_plan.steps:
                             first_step = self.state.current_execution_plan.steps[0]
@@ -207,18 +272,68 @@ class KairosRuntime:
                                     work_item=self.state.document_work_items[0],
                                     step=first_step,
                                 )
+                            elif first_step.get("action_kind") == "agent_execute":
+                                self.state.current_action_payload = KairosActionPayload(
+                                    action_kind="agent_execute",
+                                    rationale=str(first_step.get("reason") or ""),
+                                    args={
+                                        "required_skills": self._coerce_skill_list(first_step.get("required_skills")),
+                                        "execution_prompt": str(
+                                            first_step.get("execution_prompt")
+                                            or first_step.get("reason")
+                                            or ""
+                                        ).strip(),
+                                    },
+                                )
                             else:
                                 self.state.current_action_payload = await planner.build_action_payload(
                                     work_item=self.state.document_work_items[0],
                                     step=first_step,
                                 )
                             await self._dispatch_action_payload()
+                        else:
+                            raise ValueError("llm planner produced empty execution plan")
                     except Exception as exc:
+                        planner_failure = exc
                         await self._record("brief", f"llm planner fallback active: {type(exc).__name__}: {exc}")
-                decision = self._continuation_engine._decision_from_final_action(
-                    dict(self.state.last_planning_result.get("final_action", {}))
-                )
-                self.state.pending_triggers.extend(self._continuation_engine.apply_decisions(self.state, [decision]))
+                if planner_failure is not None and self.state.policy.llm_only_decision_enabled:
+                    item = self.state.document_work_items[0]
+                    detail = str(planner_failure).strip() or type(planner_failure).__name__
+                    message = f"llm planner failed for document work: {detail}"
+                    self.state.blocked_reason = message
+                    self.state.mode = KairosMode.WAITING_INPUT
+                    self.state.last_planning_result = {
+                        "ts": datetime.now(UTC).isoformat(),
+                        "goal": item.goal,
+                        "workflow_id": "document_requirement",
+                        "stage_id": item.current_step,
+                        "candidates_considered": [],
+                        "selected_candidate": {
+                            "candidate_id": f"{item.work_id}:{item.current_step or 'document_work'}:blocked",
+                            "action": "blocked",
+                            "tier": "high",
+                            "priority": 100,
+                            "selected": True,
+                            "reason": message,
+                        },
+                        "rejected_candidates": [],
+                        "final_action": {
+                            "kind": "record_blocked",
+                            "reason": "llm_document_plan_unavailable",
+                            "payload": {
+                                "work_id": item.work_id,
+                                "step_id": item.current_step or "document_work",
+                                "message": message,
+                            },
+                        },
+                        "policy_note": "llm-only mode blocks document workflow when planner is unavailable or invalid",
+                    }
+                    await self._persist()
+                else:
+                    final_action = dict(self.state.last_planning_result.get("final_action", {}))
+                    if final_action.get("kind"):
+                        decision = self._continuation_engine._decision_from_final_action(final_action)
+                        self.state.pending_triggers.extend(self._continuation_engine.apply_decisions(self.state, [decision]))
             await self._record_planning_transition(previous_planning_snapshot)
             self._sync_attention_from_planning()
 
@@ -239,6 +354,11 @@ class KairosRuntime:
 
             if self.state.pending_triggers and not self.state.busy:
                 trigger = self.state.pending_triggers.pop(0)
+                if self.state.mode is KairosMode.WAITING_INPUT and trigger.kind is not TriggerKind.INTERNAL:
+                    # Keep task paused while waiting for user guidance.
+                    self.state.pending_triggers.insert(0, trigger)
+                    await self._persist()
+                    return
                 if trigger.kind is TriggerKind.INTERNAL and self._create_follow_up_task is not None:
                     await self._execute_internal_trigger(trigger)
                 else:
@@ -334,6 +454,231 @@ class KairosRuntime:
             "document_work_count": len(self.state.document_work_items),
         }
 
+    @staticmethod
+    def _coerce_skill_list(raw_value: Any) -> list[str]:
+        if raw_value is None:
+            return []
+        if isinstance(raw_value, str):
+            normalized = raw_value.strip()
+            return [normalized] if normalized else []
+        if isinstance(raw_value, (list, tuple, set)):
+            result: list[str] = []
+            for item in raw_value:
+                normalized = str(item).strip()
+                if normalized:
+                    result.append(normalized)
+            return result
+        normalized = str(raw_value).strip()
+        return [normalized] if normalized else []
+
+    @staticmethod
+    def _normalize_skill_hint(value: str) -> str:
+        return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+    @staticmethod
+    def _tokenize_skill_text(value: str) -> set[str]:
+        text = str(value or "").lower()
+        tokens = set(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", text))
+        normalized = "".join(ch for ch in text if ch.isalnum())
+        if normalized:
+            tokens.add(normalized)
+        return {token for token in tokens if token}
+
+    def _resolve_available_skill_catalog(self) -> list[dict[str, str]]:
+        catalog: list[dict[str, str]] = []
+        if self._list_available_skill_catalog is not None:
+            try:
+                for item in list(self._list_available_skill_catalog()):
+                    if not isinstance(item, dict):
+                        continue
+                    skill_id = str(item.get("id", "")).strip()
+                    if not skill_id:
+                        continue
+                    catalog.append(
+                        {
+                            "id": skill_id,
+                            "name": str(item.get("name", "")).strip() or skill_id,
+                            "description": str(item.get("description", "")).strip(),
+                        }
+                    )
+            except Exception:
+                catalog = []
+
+        if not catalog and self._list_available_skills is not None:
+            try:
+                ids = self._coerce_skill_list(list(self._list_available_skills()))
+            except Exception:
+                ids = []
+            for skill_id in ids:
+                catalog.append({"id": skill_id, "name": skill_id, "description": ""})
+
+        if not catalog and self._allowed_skills is not None:
+            for skill_id in sorted(self._allowed_skills):
+                catalog.append({"id": skill_id, "name": skill_id, "description": ""})
+
+        deduped: dict[str, dict[str, str]] = {}
+        for item in catalog:
+            skill_id = str(item.get("id", "")).strip()
+            if not skill_id:
+                continue
+            if self._allowed_skills is not None and skill_id not in self._allowed_skills:
+                continue
+            if skill_id in deduped:
+                if not deduped[skill_id].get("description") and item.get("description"):
+                    deduped[skill_id]["description"] = item.get("description", "")
+                if deduped[skill_id].get("name", skill_id) == skill_id and item.get("name"):
+                    deduped[skill_id]["name"] = item.get("name", skill_id)
+                continue
+            deduped[skill_id] = {
+                "id": skill_id,
+                "name": str(item.get("name", "")).strip() or skill_id,
+                "description": str(item.get("description", "")).strip(),
+            }
+        return [deduped[skill_id] for skill_id in sorted(deduped)]
+
+    def _score_skill_match(
+        self,
+        *,
+        hint: str,
+        hint_tokens: set[str],
+        entry: dict[str, str],
+    ) -> float:
+        skill_id = str(entry.get("id", "")).strip()
+        if not skill_id:
+            return 0.0
+        name = str(entry.get("name", "")).strip()
+        description = str(entry.get("description", "")).strip()
+        normalized_hint = self._normalize_skill_hint(hint)
+        normalized_id = self._normalize_skill_hint(skill_id)
+        normalized_name = self._normalize_skill_hint(name)
+
+        if normalized_hint and normalized_hint == normalized_id:
+            return 1.0
+        if normalized_hint and normalized_hint == normalized_name:
+            return 0.98
+
+        core_tokens = self._tokenize_skill_text(skill_id) | self._tokenize_skill_text(name)
+        all_tokens = set(core_tokens) | self._tokenize_skill_text(description)
+
+        core_overlap = 0.0
+        all_overlap = 0.0
+        if hint_tokens:
+            if core_tokens:
+                core_overlap = len(hint_tokens & core_tokens) / len(hint_tokens)
+            if all_tokens:
+                all_overlap = len(hint_tokens & all_tokens) / len(hint_tokens)
+
+        id_ratio = SequenceMatcher(None, normalized_hint, normalized_id).ratio() if normalized_hint and normalized_id else 0.0
+        name_ratio = SequenceMatcher(None, normalized_hint, normalized_name).ratio() if normalized_hint and normalized_name else 0.0
+
+        score = max(id_ratio, name_ratio, core_overlap * 0.92, all_overlap * 0.78)
+        if normalized_hint and normalized_id and normalized_hint in normalized_id and len(normalized_hint) >= 4:
+            score = max(score, 0.9)
+        if hint_tokens and hint_tokens.issubset(core_tokens):
+            score = max(score, 0.94)
+        return min(score, 1.0)
+
+    def _resolve_skill_hint(
+        self,
+        *,
+        hint: str,
+        available_skill_catalog: list[dict[str, str]],
+        allowed_skill_ids: set[str],
+        normalized_allowed_skill_ids: dict[str, str],
+    ) -> tuple[str | None, dict[str, Any]]:
+        resolution: dict[str, Any] = {}
+        if not allowed_skill_ids:
+            resolution["hint_resolution"] = "catalog_unavailable"
+            return None, resolution
+        forced_match_skill_id: str | None = None
+        forced_resolution: str | None = None
+        if hint in allowed_skill_ids:
+            forced_match_skill_id = hint
+            forced_resolution = "exact"
+        normalized_hint = self._normalize_skill_hint(hint)
+        if normalized_hint and forced_match_skill_id is None:
+            normalized_match = normalized_allowed_skill_ids.get(normalized_hint)
+            if normalized_match:
+                forced_match_skill_id = normalized_match
+                forced_resolution = "normalized"
+        hint_tokens = self._tokenize_skill_text(hint)
+        ranked: list[tuple[float, float, dict[str, str]]] = []
+        for entry in available_skill_catalog:
+            skill_id = str(entry.get("id", "")).strip()
+            if not skill_id or skill_id not in allowed_skill_ids:
+                continue
+            score = self._score_skill_match(hint=hint, hint_tokens=hint_tokens, entry=entry)
+            if score <= 0:
+                continue
+            core_tokens = self._tokenize_skill_text(skill_id) | self._tokenize_skill_text(entry.get("name", ""))
+            token_coverage = 0.0
+            if hint_tokens and core_tokens:
+                token_coverage = len(hint_tokens & core_tokens) / len(hint_tokens)
+            ranked.append((score, token_coverage, entry))
+        if not ranked:
+            if forced_match_skill_id is not None:
+                resolution["hint_resolution"] = forced_resolution or "normalized"
+                return forced_match_skill_id, resolution
+            return None, resolution
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        best_score, best_token_coverage, best_entry = ranked[0]
+        second_score = ranked[1][0] if len(ranked) > 1 else 0.0
+        candidate_matches: list[dict[str, Any]] = []
+        for score, _, entry in ranked[:3]:
+            description = str(entry.get("description", "")).strip().replace("\r", " ").replace("\n", " ")
+            if len(description) > 160:
+                description = f"{description[:157]}..."
+            candidate_matches.append(
+                {
+                    "skill_id": str(entry.get("id", "")).strip(),
+                    "name": str(entry.get("name", "")).strip(),
+                    "description": description,
+                    "score": round(score, 3),
+                }
+            )
+        resolution["candidate_matches"] = candidate_matches
+        if forced_match_skill_id is not None:
+            resolution["hint_resolution"] = forced_resolution or "normalized"
+            return forced_match_skill_id, resolution
+        resolution["match_score"] = round(best_score, 3)
+        resolution["token_coverage"] = round(best_token_coverage, 3)
+        resolution["candidate_skill_id"] = best_entry.get("id")
+        if best_score < SKILL_MATCH_MIN_SCORE:
+            resolution["hint_resolution"] = "low_confidence_match"
+            return None, resolution
+        if hint_tokens and best_token_coverage < 0.5 and best_score < 0.72:
+            resolution["hint_resolution"] = "low_token_coverage"
+            return None, resolution
+        if (
+            second_score >= SKILL_MATCH_MIN_SCORE - 0.03
+            and (best_score - second_score) < SKILL_MATCH_MIN_MARGIN
+        ):
+            resolution["hint_resolution"] = "ambiguous_match"
+            resolution["second_match_score"] = round(second_score, 3)
+            resolution["second_candidate_skill_id"] = ranked[1][2].get("id")
+            return None, resolution
+        resolution["hint_resolution"] = "text_match"
+        return str(best_entry.get("id", "")).strip() or None, resolution
+
+    def _resolve_available_skill_ids(self) -> list[str]:
+        return [item["id"] for item in self._resolve_available_skill_catalog()]
+
+    async def _block_agent_execute(self, reason: str) -> None:
+        self.state.blocked_reason = reason
+        self.state.mode = KairosMode.WAITING_INPUT
+        work_id = self.state.document_work_items[0].work_id if self.state.document_work_items else None
+        stage_id = self.state.document_work_items[0].current_step if self.state.document_work_items else None
+        workflow_id = self.state.active_workflow.workflow_id if self.state.active_workflow else None
+        self._upsert_attention_item(
+            scope_kind="document_work" if work_id else "workflow_stage",
+            workflow_id=workflow_id,
+            work_id=work_id,
+            stage_id=stage_id,
+            question=reason,
+            blocked_reason=reason,
+        )
+        await self._record("brief", reason)
+
     async def _dispatch_action_payload(self) -> None:
         payload = self.state.current_action_payload
         if not payload.action_kind:
@@ -427,6 +772,194 @@ class KairosRuntime:
             ] + self.state.task_summaries[:9]
             await self._record("brief", f"dex handoff registered: {task['id']} {description}")
             return
+        if payload.action_kind == "agent_execute":
+            args = payload.args if isinstance(payload.args, dict) else {}
+            skill_hints = self._coerce_skill_list(args.get("required_skills"))
+            if not skill_hints:
+                skill_hints = self._coerce_skill_list(args.get("skill_hints"))
+            skipped_skill_hints: list[str] = []
+            skill_load_results: list[dict[str, Any]] = []
+            available_skill_catalog = self._resolve_available_skill_catalog()
+            available_skill_ids = [item["id"] for item in available_skill_catalog]
+            allowed_skill_ids = set(available_skill_ids) if available_skill_ids else (
+                set(self._allowed_skills) if self._allowed_skills is not None else set()
+            )
+            normalized_allowed_skill_ids: dict[str, str] = {}
+            for candidate in sorted(allowed_skill_ids):
+                normalized_candidate = self._normalize_skill_hint(candidate)
+                if normalized_candidate and normalized_candidate not in normalized_allowed_skill_ids:
+                    normalized_allowed_skill_ids[normalized_candidate] = candidate
+            execution_prompt = str(
+                args.get("execution_prompt")
+                or payload.brief
+                or payload.description
+                or ""
+            ).strip()
+            if not execution_prompt:
+                await self._block_agent_execute("agent_execute missing execution_prompt")
+                return
+            for skill_id in skill_hints:
+                result_entry: dict[str, Any] = {"skill_id": skill_id}
+                resolved_skill_id, resolution_info = self._resolve_skill_hint(
+                    hint=skill_id,
+                    available_skill_catalog=available_skill_catalog,
+                    allowed_skill_ids=allowed_skill_ids,
+                    normalized_allowed_skill_ids=normalized_allowed_skill_ids,
+                )
+                if resolution_info:
+                    result_entry.update(resolution_info)
+                if resolved_skill_id and resolved_skill_id != skill_id:
+                    result_entry["resolved_skill_id"] = resolved_skill_id
+                if resolved_skill_id is None:
+                    # LLM may emit tool names in required_skills; skip unknown hints
+                    # instead of blocking the whole autonomous execution.
+                    skipped_skill_hints.append(skill_id)
+                    result_entry["status"] = "unknown_hint"
+                    skill_load_results.append(result_entry)
+                    continue
+                load_target_skill_id = resolved_skill_id or skill_id
+                if self._load_skill is None:
+                    skipped_skill_hints.append(skill_id)
+                    result_entry["status"] = "loader_unavailable"
+                    skill_load_results.append(result_entry)
+                    continue
+                try:
+                    load_result = await self._load_skill(load_target_skill_id)
+                except Exception as exc:
+                    result_entry["status"] = "load_exception"
+                    result_entry["error"] = f"{type(exc).__name__}: {exc}"
+                    skill_load_results.append(result_entry)
+                    continue
+                normalized_result = str(load_result).strip()
+                result_entry["result"] = normalized_result
+                normalized_result_lc = normalized_result.lower()
+                if normalized_result.startswith("[ERROR]"):
+                    result_entry["status"] = "load_error"
+                elif normalized_result.startswith("[WARN]"):
+                    result_entry["status"] = "load_warn"
+                elif normalized_result.startswith("[OK]") and "already loaded" in normalized_result_lc:
+                    result_entry["status"] = "already_loaded"
+                else:
+                    result_entry["status"] = "loaded"
+                skill_load_results.append(result_entry)
+            skill_hint_stats = {
+                "total": len(skill_hints),
+                "mapped": sum(
+                    1
+                    for item in skill_load_results
+                    if str(item.get("resolved_skill_id", "")).strip()
+                    and str(item.get("resolved_skill_id")) != str(item.get("skill_id"))
+                ),
+                "unknown": sum(1 for item in skill_load_results if item.get("status") == "unknown_hint"),
+                "loaded": sum(
+                    1
+                    for item in skill_load_results
+                    if item.get("status") in {"loaded", "already_loaded"}
+                ),
+                "errors": sum(
+                    1
+                    for item in skill_load_results
+                    if item.get("status") in {"load_error", "load_exception", "loader_unavailable"}
+                ),
+            }
+
+            if available_skill_catalog:
+                listed_lines: list[str] = []
+                for item in available_skill_catalog[:80]:
+                    skill_id = item["id"]
+                    name = str(item.get("name", "")).strip()
+                    description = str(item.get("description", "")).strip().replace("\r", " ").replace("\n", " ")
+                    if len(description) > 160:
+                        description = f"{description[:157]}..."
+                    label = f"{skill_id} ({name})" if name and name != skill_id else skill_id
+                    listed_lines.append(f"- {label}: {description}" if description else f"- {label}")
+                if len(available_skill_catalog) > 80:
+                    listed_lines.append(f"- ... (+{len(available_skill_catalog) - 80} more)")
+                listed = "\n".join(listed_lines)
+                execution_prompt = (
+                    f"{execution_prompt}\n\n"
+                    f"[KAIROS_AVAILABLE_SKILLS]\n"
+                    f"{listed}\n"
+                    "Use skill_load('<skill_id>') with ids from this catalog when you need extra tools. "
+                    "Do not invent new skill ids."
+                )
+            candidate_lines: list[str] = []
+            for item in skill_load_results:
+                candidates = item.get("candidate_matches")
+                if not isinstance(candidates, list) or not candidates:
+                    continue
+                hint_value = str(item.get("skill_id", "")).strip() or "unknown_hint"
+                candidate_lines.append(f"- hint={hint_value}")
+                for idx, candidate in enumerate(candidates[:3], start=1):
+                    candidate_skill_id = str(candidate.get("skill_id", "")).strip()
+                    candidate_name = str(candidate.get("name", "")).strip()
+                    candidate_score = candidate.get("score")
+                    candidate_desc = str(candidate.get("description", "")).strip()
+                    label = (
+                        f"{candidate_skill_id} ({candidate_name})"
+                        if candidate_name and candidate_name != candidate_skill_id
+                        else candidate_skill_id
+                    )
+                    suffix = f" score={candidate_score}" if candidate_score is not None else ""
+                    candidate_lines.append(
+                        f"  {idx}. {label}{suffix}{' - ' + candidate_desc if candidate_desc else ''}"
+                    )
+            if candidate_lines:
+                execution_prompt = (
+                    f"{execution_prompt}\n\n"
+                    f"[KAIROS_SKILL_HINT_CANDIDATES]\n"
+                    f"{chr(10).join(candidate_lines)}\n"
+                    "When a hint is not loaded yet, choose from these candidates and call skill_load('<skill_id>'). "
+                    "Prefer higher-score candidates that match the current subtask."
+                )
+            trigger_reason = f"agent_execute::{execution_prompt}"
+            trigger = KairosTrigger(
+                trigger_id=f"agent-exec-{int(datetime.now(UTC).timestamp() * 1000)}",
+                kind=TriggerKind.MANUAL,
+                reason=trigger_reason,
+                created_at=datetime.now(UTC).isoformat(),
+                metadata={
+                    "required_skills": skill_hints,
+                    "skill_hints": skill_hints,
+                    "skill_load_results": skill_load_results[:200],
+                    "skill_hint_stats": skill_hint_stats,
+                    "available_skill_ids": available_skill_ids[:200],
+                    "work_id": self.state.document_work_items[0].work_id if self.state.document_work_items else None,
+                },
+            )
+            self.state.pending_triggers.append(trigger)
+            self.state.pending_wake_reason = trigger_reason
+            self.state.blocked_reason = None
+            self.state.planned_actions.append(
+                KairosPlannedAction(
+                    action_id=f"planned-{trigger.trigger_id}",
+                    kind="agent_execute",
+                    reason=payload.rationale or "llm_action_payload",
+                    payload={
+                        "required_skills": skill_hints,
+                        "skill_hints": skill_hints,
+                        "skipped_skill_hints": skipped_skill_hints,
+                        "skill_load_results": skill_load_results[:200],
+                        "skill_hint_stats": skill_hint_stats,
+                        "available_skill_ids": available_skill_ids[:200],
+                        "execution_prompt": execution_prompt,
+                        "work_id": self.state.document_work_items[0].work_id if self.state.document_work_items else None,
+                        "step_id": self.state.document_work_items[0].current_step if self.state.document_work_items else None,
+                    },
+                    status="pending",
+                    created_at=trigger.created_at,
+                )
+            )
+            await self._record(
+                "brief",
+                f"agent execute queued with {len(skill_hints)} skill hints"
+                + (f", skipped hints: {', '.join(skipped_skill_hints)}" if skipped_skill_hints else "")
+                + (f", mapped={skill_hint_stats['mapped']}" if skill_hint_stats["mapped"] else "")
+                + (f", loaded={skill_hint_stats['loaded']}" if skill_load_results else "")
+                + (f", errors={skill_hint_stats['errors']}" if skill_load_results else "")
+                + (f", available skills: {len(available_skill_ids)}" if available_skill_ids else ""),
+            )
+            return
         if payload.action_kind == "summarize_progress":
             if payload.brief:
                 await self._record("brief", payload.brief)
@@ -459,7 +992,13 @@ class KairosRuntime:
                 self.state.last_replan_result = await verifier.replan_from_failure(
                     work_item=self.state.document_work_items[0],
                     verification_result=asdict(self.state.last_verification_result),
-                    available_actions=["update_document", "spawn_dex_task", "ask_user", "sleep"],
+                    available_actions=[
+                        "update_document",
+                        "spawn_dex_task",
+                        "agent_execute",
+                        "ask_user",
+                        "sleep",
+                    ],
                 )
             else:
                 self.state.last_replan_result = KairosReplanResult()

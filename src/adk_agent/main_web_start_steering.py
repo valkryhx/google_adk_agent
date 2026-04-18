@@ -14,6 +14,8 @@ import os
 import sys
 import json
 import time
+import subprocess
+import shutil
 import secrets
 import sqlite3
 import functools
@@ -68,6 +70,7 @@ from src.adk_agent.kairos.dex_bridge import KairosDexBridge
 from src.adk_agent.kairos.document_protocol import append_spawned_work_update
 from src.adk_agent.kairos.llm_planner import KairosPlanner
 from src.adk_agent.kairos.llm_verifier import KairosVerifier
+from src.adk_agent.kairos.kairos_config import DEFAULT_KAIROS_PROMPT_CONFIG
 from src.adk_agent.kairos.models import (
     DocumentReadResult,
     StepAttempt,
@@ -589,19 +592,11 @@ class SteeringSession:
         unfinished_work_summary: str,
         policy_summary: str,
     ) -> str:
-        return (
-            "[KAIROS_TICK]\n"
-            f"reason={reason}\n"
-            "You are in assistant runtime mode for long-running autonomous work.\n"
-            f"workflow={workflow_summary}\n"
-            f"unfinished work={unfinished_work_summary}\n"
-            f"policy={policy_summary}\n"
-            "Check unfinished work first.\n"
-            "If there is a high-value next action within policy, continue it.\n"
-            "If user input is required, produce a concise ask-user brief.\n"
-            "If there is useful progress to surface, produce a concise proactive brief.\n"
-            "If there is no high-value work right now, sleep immediately.\n"
-            "Never emit empty status narration.\n"
+        return DEFAULT_KAIROS_PROMPT_CONFIG.render_runtime_tick_prompt(
+            reason=reason,
+            workflow_summary=workflow_summary,
+            unfinished_work_summary=unfinished_work_summary,
+            policy_summary=policy_summary,
         )
 
     async def run_kairos_turn(self, reason: str):
@@ -645,6 +640,85 @@ class SteeringSession:
 
         return "ok"
 
+    def _discover_skill_ids_via_ripgrep(self) -> list[str]:
+        config_obj = getattr(self, "config", None)
+        skills_path = str(getattr(config_obj, "skills_path", Path(_PROJECT_ROOT, "skills")))
+        skills_root = Path(skills_path)
+        if not skills_root.exists():
+            return []
+
+        indexed_skills = _enumerate_skills_for_autocomplete(skills_path)
+        indexed_ids = {str(item.get("id", "")).strip() for item in indexed_skills if str(item.get("id", "")).strip()}
+
+        raw_paths: list[str] = []
+        rg_exe = shutil.which("rg")
+        if rg_exe:
+            try:
+                proc = subprocess.run(
+                    [rg_exe, "--files", str(skills_root)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10,
+                )
+                raw_paths = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+            except Exception:
+                raw_paths = []
+        if not raw_paths:
+            raw_paths = [str(path) for path in skills_root.rglob("SKILL.md")]
+
+        rg_skill_ids: set[str] = set()
+        root_resolved = skills_root.resolve()
+        for raw in raw_paths:
+            entry = Path(raw.strip())
+            if not entry.name:
+                continue
+            if not entry.is_absolute():
+                entry = (Path.cwd() / entry).resolve()
+            else:
+                entry = entry.resolve()
+            try:
+                rel = entry.relative_to(root_resolved)
+            except Exception:
+                continue
+            if len(rel.parts) >= 2 and rel.parts[-1].lower() == "skill.md":
+                skill_id = rel.parts[0].strip()
+                if skill_id and skill_id != "__pycache__":
+                    rg_skill_ids.add(skill_id)
+
+        if rg_skill_ids:
+            if indexed_ids:
+                return sorted(rg_skill_ids & indexed_ids)
+            return sorted(rg_skill_ids)
+        return sorted(indexed_ids)
+
+    def _discover_skill_catalog_via_ripgrep(self) -> list[dict[str, str]]:
+        config_obj = getattr(self, "config", None)
+        skills_path = str(getattr(config_obj, "skills_path", Path(_PROJECT_ROOT, "skills")))
+        indexed_skills = _enumerate_skills_for_autocomplete(skills_path)
+        indexed_map: dict[str, dict[str, str]] = {}
+        for item in indexed_skills:
+            skill_id = str(item.get("id", "")).strip()
+            if not skill_id:
+                continue
+            indexed_map[skill_id] = {
+                "id": skill_id,
+                "name": str(item.get("name", "")).strip() or skill_id,
+                "description": str(item.get("description", "")).strip(),
+            }
+        discovered_ids = self._discover_skill_ids_via_ripgrep()
+        if not discovered_ids:
+            return []
+        catalog: list[dict[str, str]] = []
+        for skill_id in discovered_ids:
+            catalog.append(
+                indexed_map.get(
+                    skill_id,
+                    {"id": skill_id, "name": skill_id, "description": ""},
+                )
+            )
+        return catalog
+
     def get_or_create_kairos_runtime(self):
         if self.kairos_runtime is not None:
             return self.kairos_runtime
@@ -654,6 +728,17 @@ class SteeringSession:
             raw = self._current_session.state.get("kairos", {})
 
         from src.adk_agent.kairos.scheduler import KairosScheduler
+
+        allowed_skills: set[str] | None = None
+        ripgrep_skills = set(self._discover_skill_ids_via_ripgrep())
+        if ripgrep_skills:
+            allowed_skills = ripgrep_skills
+        skill_manager = getattr(self, "skill_manager", None)
+        if skill_manager is not None and not allowed_skills:
+            try:
+                allowed_skills = set(skill_manager.list_skills())
+            except Exception:
+                allowed_skills = None
 
         self.kairos_runtime = KairosRuntime(
             state=load_kairos_state(raw),
@@ -670,6 +755,10 @@ class SteeringSession:
                 reason,
                 payload,
             ),
+            load_skill=getattr(self, "skill_load", None),
+            allowed_skills=allowed_skills,
+            list_available_skills=self._discover_skill_ids_via_ripgrep,
+            list_available_skill_catalog=self._discover_skill_catalog_via_ripgrep,
         )
         planner_config = getattr(self, "config", None)
         if planner_config is not None:
@@ -680,6 +769,7 @@ class SteeringSession:
                 extra_body=planner_config.extra_body,
                 timeout_seconds=planner_config.timeout_seconds,
                 max_retries=planner_config.max_retries,
+                list_available_skill_catalog=self._discover_skill_catalog_via_ripgrep,
             )
             self.kairos_runtime._llm_verifier = KairosVerifier(self.kairos_runtime._llm_planner)
             self.kairos_runtime.state.policy.llm_only_decision_enabled = True
@@ -784,6 +874,14 @@ class SteeringSession:
         skill_has_tools_file = skill_tools_file.exists()
         already_loaded = hasattr(self, '_loaded_skills') and skill_id in getattr(self, '_loaded_skills', [])
         load_diag = getattr(self, '_last_skill_load_diagnostics', {}).get(skill_id)
+        diag_status = str((load_diag or {}).get("status") or "").strip().lower()
+        if diag_status == "already_loaded":
+            duplicate_names = (load_diag or {}).get("skipped_duplicate_tool_names") or []
+            duplicate_hint = f"（duplicate tools: {duplicate_names}）" if duplicate_names else ""
+            return (
+                f"[OK] 技能 '{skill_id}' 已加载（already loaded）{duplicate_hint}。Instructions:\n"
+                f"{self.skill_manager.load_full_sop(skill_id)}"
+            )
 
         if skill_has_tools_file and not tools and not already_loaded:
             diagnostic_block = ""
@@ -852,6 +950,8 @@ class SteeringSession:
             "error": None,
             "existing_names": [],
             "loaded_tool_names": [],
+            "candidate_tool_names": [],
+            "skipped_duplicate_tool_names": [],
         }
 
         # [HotReload] 若强制重载，先移除该 skill 之前注册的工具
@@ -894,18 +994,17 @@ class SteeringSession:
                         # 尝试注入 app_info 和 reporter
                         # get_tools(agent, session_service, app_info, status_reporter)
                         # 我们通过检查参数数量或直接传递 kwargs 来兼容
-                        
                         common_args = (self.agent, self.session_service, {
                             "app_name": self.app_name,
                             "user_id": self.user_id,
                             "session_id": self.session_id
                         })
-                        
+
                         try:
                             # 尝试传入 status_reporter 和 interruption_queue
                             # [Fix] 注入 interruption_queue 以支持工具级中断 (如 bash)
                             tools = module.get_tools(
-                                *common_args, 
+                                *common_args,
                                 status_reporter=self.report_swarm_event,
                                 interruption_queue=self.queue
                             )
@@ -916,10 +1015,18 @@ class SteeringSession:
                             except TypeError:
                                 # 还不行，回退到旧调用
                                 tools = module.get_tools(*common_args)
-                            
+                        candidate_tool_names = [
+                            getattr(tool, '__name__', str(tool)) for tool in tools or []
+                        ]
+                        self._last_skill_load_diagnostics[skill_id]["candidate_tool_names"] = sorted(
+                            set(self._last_skill_load_diagnostics[skill_id].get("candidate_tool_names", []))
+                            | set(candidate_tool_names)
+                        )
+
                         if tools:
                             # 绑定 interruption_guard
                             wrapped_tools = []
+                            skipped_duplicate_tool_names = []
                             for tool in tools:
                                 # 确保是异步函数才能被 agent 正确执行 (agent 内部会检查 iscoroutinefunction)
                                 # 这里 agent 框架会自动处理，我们只需要 extend
@@ -927,10 +1034,16 @@ class SteeringSession:
                                 # [FIX] 检查是否重复加载
                                 if hasattr(tool, '__name__') and tool.__name__ in existing_names:
                                     print(f"[{self.key}] ⚠️ 跳过重复工具: {tool.__name__} (from {skill_id})")
+                                    skipped_duplicate_tool_names.append(tool.__name__)
                                     continue
 
                                 wrapped_tools.append(tool)
                                 
+                            if skipped_duplicate_tool_names:
+                                self._last_skill_load_diagnostics[skill_id]["skipped_duplicate_tool_names"] = sorted(
+                                    set(self._last_skill_load_diagnostics[skill_id].get("skipped_duplicate_tool_names", []))
+                                    | set(skipped_duplicate_tool_names)
+                                )
                             if wrapped_tools:
                                 self.agent.tools.extend(wrapped_tools)
                                 loaded_tools.extend(wrapped_tools)
@@ -978,7 +1091,12 @@ class SteeringSession:
 
         self._last_skill_load_diagnostics[skill_id].update({
             "status": "loaded" if loaded_tools else (
+                "already_loaded" if (
+                    self._last_skill_load_diagnostics[skill_id].get("skipped_duplicate_tool_names")
+                    and self._last_skill_load_diagnostics[skill_id].get("status") != "error"
+                ) else (
                 "error" if self._last_skill_load_diagnostics[skill_id].get("status") == "error" else "empty"
+                )
             ),
             "existing_names": sorted(existing_names),
             "loaded_tool_names": [getattr(t, '__name__', str(t)) for t in loaded_tools],
@@ -2697,14 +2815,14 @@ async def get_settings_endpoint():
         print(f"[Settings] Fetch settings error: {e}")
         return {"error": str(e)}
 
-@app.get("/api/skills")
-async def list_skills_endpoint():
-    """返回所有可用技能的 id/name/description 列表，供前端 / 补全使用"""
-    skills = []
-    if not os.path.exists(config.skills_path):
-        return {"skills": []}
-    for skill_id in sorted(os.listdir(config.skills_path)):
-        skill_dir = os.path.join(config.skills_path, skill_id)
+
+def _enumerate_skills_for_autocomplete(skills_path: str) -> list[dict[str, str]]:
+    """Shared skill catalog for UI slash completion and Kairos discovery."""
+    skills: list[dict[str, str]] = []
+    if not os.path.exists(skills_path):
+        return skills
+    for skill_id in sorted(os.listdir(skills_path)):
+        skill_dir = os.path.join(skills_path, skill_id)
         skill_md = os.path.join(skill_dir, "SKILL.md")
         if not os.path.isdir(skill_dir) or not os.path.exists(skill_md):
             continue
@@ -2714,15 +2832,26 @@ async def list_skills_endpoint():
             parts = content.split("---", 2)
             if len(parts) >= 3:
                 import yaml as _yaml
+
                 meta = _yaml.safe_load(parts[1]) or {}
-                skills.append({
-                    "id": skill_id,
-                    "name": meta.get("name", skill_id),
-                    "description": meta.get("description", ""),
-                })
+                skills.append(
+                    {
+                        "id": skill_id,
+                        "name": str(meta.get("name", skill_id)),
+                        "description": str(meta.get("description", "")),
+                    }
+                )
+                continue
         except Exception:
-            skills.append({"id": skill_id, "name": skill_id, "description": ""})
-    return {"skills": skills}
+            pass
+        skills.append({"id": skill_id, "name": skill_id, "description": ""})
+    return skills
+
+
+@app.get("/api/skills")
+async def list_skills_endpoint():
+    """返回所有可用技能的 id/name/description 列表，供前端 / 补全使用"""
+    return {"skills": _enumerate_skills_for_autocomplete(config.skills_path)}
 
 
 @app.post("/api/settings")

@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from typing import Any
+from typing import Any, Callable, Iterable
 
 import litellm
 
+from .kairos_config import DEFAULT_KAIROS_PROMPT_CONFIG, KairosPromptConfig
 from .models import (
     DocumentReadResult,
     KairosActionPayload,
@@ -20,11 +21,31 @@ from .models import (
 ALLOWED_ACTION_KINDS = {
     "update_document",
     "spawn_dex_task",
+    "agent_execute",
     "wait_for_artifact",
     "summarize_progress",
     "ask_user",
     "sleep",
 }
+
+SAFE_COMMAND_TEMPLATES = (
+    "draft_requirements_doc",
+    "generate_todo_app",
+    "run_smoke_check",
+    "summarize_delivery",
+)
+
+DOC_SECTIONS = (
+    "Goal",
+    "Current Status",
+    "Current Step",
+    "Steps",
+    "Expected Artifacts",
+    "Blockers",
+    "Verification",
+    "Replan Notes",
+    "Spawned Work",
+)
 
 
 class KairosPlanner:
@@ -36,21 +57,102 @@ class KairosPlanner:
         api_base: str,
         extra_body: dict[str, Any] | None = None,
         timeout_seconds: int = 60,
-        max_retries: int = 1,
+        max_retries: int = 3,
+        prompt_config: KairosPromptConfig | None = None,
+        list_available_skill_catalog: Callable[[], Iterable[dict[str, Any]] | Iterable[str]] | None = None,
     ):
         self._model = model
         self._api_key = api_key
         self._api_base = api_base
         self._extra_body = extra_body or {}
-        self._timeout_seconds = timeout_seconds
-        self._max_retries = max_retries
+        self._timeout_seconds = self._normalize_timeout_seconds(timeout_seconds)
+        self._max_retries = self._normalize_max_retries(max_retries)
+        self._prompt_config = prompt_config or DEFAULT_KAIROS_PROMPT_CONFIG
+        self._list_available_skill_catalog = list_available_skill_catalog
+
+    @staticmethod
+    def _normalize_timeout_seconds(timeout_seconds: int | float | None) -> int:
+        if timeout_seconds is None:
+            return 120
+        try:
+            normalized = int(timeout_seconds)
+        except (TypeError, ValueError):
+            return 120
+        if normalized <= 0:
+            return 120
+        # Some runtimes store timeout in milliseconds (e.g., 600000).
+        if normalized > 3600:
+            normalized = max(1, normalized // 1000)
+        # Keep a sane lower/upper bound while preserving configured intent.
+        return max(15, min(normalized, 600))
+
+    @staticmethod
+    def _normalize_max_retries(max_retries: int | float | None) -> int:
+        if max_retries is None:
+            return 3
+        try:
+            normalized = int(max_retries)
+        except (TypeError, ValueError):
+            return 3
+        if normalized < 0:
+            return 3
+        return normalized
+
+    def _resolve_available_skill_catalog(self) -> list[dict[str, str]]:
+        provider = self._list_available_skill_catalog
+        if provider is None:
+            return []
+        try:
+            raw_items = list(provider())
+        except Exception:
+            return []
+        deduped: dict[str, dict[str, str]] = {}
+        for raw in raw_items:
+            if isinstance(raw, str):
+                skill_id = raw.strip()
+                if not skill_id:
+                    continue
+                deduped[skill_id] = {"id": skill_id, "name": skill_id, "description": ""}
+                continue
+            if not isinstance(raw, dict):
+                continue
+            skill_id = str(raw.get("id", "")).strip()
+            if not skill_id:
+                continue
+            name = str(raw.get("name", "")).strip() or skill_id
+            description = str(raw.get("description", "")).strip().replace("\r", " ").replace("\n", " ")
+            if len(description) > 220:
+                description = f"{description[:217]}..."
+            if skill_id in deduped:
+                if not deduped[skill_id].get("description") and description:
+                    deduped[skill_id]["description"] = description
+                if deduped[skill_id].get("name", skill_id) == skill_id and name:
+                    deduped[skill_id]["name"] = name
+                continue
+            deduped[skill_id] = {"id": skill_id, "name": name, "description": description}
+        return [deduped[skill_id] for skill_id in sorted(deduped)]
+
+    def _build_skill_context(self) -> dict[str, Any]:
+        catalog = self._resolve_available_skill_catalog()
+        skill_ids = [item["id"] for item in catalog]
+        hints: list[dict[str, str]] = []
+
+        def _add_hint(intent: str, preferred_skill_id: str) -> None:
+            if preferred_skill_id in skill_ids:
+                hints.append({"intent": intent, "preferred_skill_id": preferred_skill_id})
+
+        _add_hint("网络搜索/网页信息获取", "web-search")
+        _add_hint("代码搜索/仓库定位", "codebase_search")
+        _add_hint("命令执行/环境检查", "bash")
+
+        return {
+            "available_skills": catalog[:120],
+            "available_skill_ids": skill_ids[:200],
+            "skill_selection_hints": hints,
+        }
 
     async def draft_requirement_understanding(self, item: DocumentReadResult) -> KairosUnderstandingResult:
-        system_prompt = (
-            "你是 Kairos 的 requirement understanding planner。"
-            "请把用户需求转成结构化理解结果，必须输出 JSON，且字段只允许："
-            "goal,constraints,assumptions,missing_info,success_criteria,current_artifacts,risk_flags,recommended_mode。"
-        )
+        system_prompt = self._prompt_config.requirement_understanding_system
         user_prompt = json.dumps(
             {
                 "work_id": item.work_id,
@@ -65,6 +167,8 @@ class KairosPlanner:
             ensure_ascii=False,
         )
         raw = await self._complete_json(system_prompt, user_prompt)
+        if not str(raw.get("goal") or "").strip():
+            raw["goal"] = item.goal
         return KairosUnderstandingResult(**raw)
 
     async def build_execution_plan(
@@ -74,12 +178,9 @@ class KairosPlanner:
         *,
         candidate_actions: list[str],
     ) -> KairosExecutionPlan:
-        system_prompt = (
-            "你是 Kairos 的 execution planner。"
-            "请基于任务理解结果，输出结构化执行计划 JSON。"
-            "steps[].action_kind 只能来自这个集合："
-            f"{sorted(ALLOWED_ACTION_KINDS)}。"
-        )
+        last_raw: dict[str, Any] = {}
+        system_prompt = self._prompt_config.render_execution_plan_system(ALLOWED_ACTION_KINDS)
+        skill_context = self._build_skill_context()
         user_prompt = json.dumps(
             {
                 "work_id": item.work_id,
@@ -87,13 +188,39 @@ class KairosPlanner:
                 "current_step": item.current_step,
                 "understanding": understanding.__dict__,
                 "candidate_actions": candidate_actions,
+                **skill_context,
             },
             ensure_ascii=False,
         )
         raw = await self._complete_json(system_prompt, user_prompt)
+        last_raw = dict(raw)
         raw.setdefault("plan_id", f"plan-{uuid.uuid4().hex[:8]}")
         raw.setdefault("work_id", item.work_id)
         self._sanitize_plan(raw)
+        if not raw["steps"]:
+            retry_system_prompt = self._prompt_config.render_execution_plan_retry_system(ALLOWED_ACTION_KINDS)
+            retry_user_prompt = json.dumps(
+                {
+                    "work_id": item.work_id,
+                    "goal": item.goal,
+                    "current_step": item.current_step,
+                    "understanding": understanding.__dict__,
+                    "candidate_actions": candidate_actions,
+                    **skill_context,
+                    "previous_output": raw,
+                    "failure_reason": "empty_steps",
+                },
+                ensure_ascii=False,
+            )
+            raw = await self._complete_json(retry_system_prompt, retry_user_prompt)
+            last_raw = dict(raw)
+            raw.setdefault("plan_id", f"plan-{uuid.uuid4().hex[:8]}")
+            raw.setdefault("work_id", item.work_id)
+            self._sanitize_plan(raw)
+        if not raw["steps"]:
+            raise ValueError(
+                f"llm execution plan contains no steps; raw_keys={sorted(last_raw.keys())}"
+            )
         return KairosExecutionPlan(**raw)
 
     async def build_action_payload(
@@ -102,17 +229,17 @@ class KairosPlanner:
         work_item: DocumentReadResult,
         step: dict[str, Any],
     ) -> KairosActionPayload:
-        system_prompt = (
-            "你是 Kairos 的 action payload generator。"
-            "请为给定 step 输出受限 JSON payload。"
-            "只能生成与 action_kind 对应的字段，禁止输出任意 shell 命令。"
-            "如果是 spawn_dex_task，只允许 command_template_id 使用安全模板标识，例如 draft_requirements_doc、generate_todo_app、run_smoke_check、summarize_delivery。"
+        system_prompt = self._prompt_config.render_action_payload_system(
+            allowed_action_kinds=ALLOWED_ACTION_KINDS,
+            safe_templates=SAFE_COMMAND_TEMPLATES,
         )
+        skill_context = self._build_skill_context()
         user_prompt = json.dumps(
             {
                 "work_item": work_item.__dict__,
                 "step": step,
                 "allowed_action_kinds": sorted(ALLOWED_ACTION_KINDS),
+                **skill_context,
             },
             ensure_ascii=False,
         )
@@ -126,11 +253,7 @@ class KairosPlanner:
         work_item: DocumentReadResult,
         step: dict[str, Any],
     ) -> KairosActionPayload:
-        system_prompt = (
-            "你是 Kairos 的 document patch generator。"
-            "请输出 section-level JSON patch，只能更新已知工作文档 section。"
-            "section_updates[].section 只能来自 Goal, Current Status, Current Step, Steps, Expected Artifacts, Blockers, Verification, Replan Notes, Spawned Work。"
-        )
+        system_prompt = self._prompt_config.render_document_patch_system(DOC_SECTIONS)
         user_prompt = json.dumps(
             {
                 "work_item": work_item.__dict__,
@@ -148,23 +271,12 @@ class KairosPlanner:
         work_item: DocumentReadResult,
         step: dict[str, Any],
     ) -> KairosActionPayload:
-        system_prompt = (
-            "你是 Kairos 的 design/codegen brief generator。"
-            "请输出结构化 JSON brief，用于受控 dex/codegen 执行。"
-            "不要输出自由 shell 命令。"
-            "如果 action_kind=spawn_dex_task，需要提供 description、command_template_id、args、expected_artifacts。"
-        )
+        system_prompt = self._prompt_config.render_design_codegen_system(SAFE_COMMAND_TEMPLATES)
         user_prompt = json.dumps(
             {
                 "work_item": work_item.__dict__,
                 "step": step,
-                "allowed_templates": [
-                    "draft_requirements_doc",
-                    "generate_design_brief",
-                    "generate_codegen_brief",
-                    "run_smoke_check",
-                    "summarize_delivery",
-                ],
+                "allowed_templates": list(SAFE_COMMAND_TEMPLATES),
             },
             ensure_ascii=False,
         )
@@ -180,11 +292,7 @@ class KairosPlanner:
         attempt_summary: dict[str, Any],
         artifacts: list[dict[str, Any]],
     ) -> KairosVerificationResult:
-        system_prompt = (
-            "你是 Kairos 的 verification engine。"
-            "请输出结构化 verification JSON，字段只允许："
-            "attempt_id,verdict,evidence,artifact_check,goal_progress,remaining_gaps,next_best_action,should_replan,should_ask_user。"
-        )
+        system_prompt = self._prompt_config.verification_system
         user_prompt = json.dumps(
             {
                 "attempt_id": attempt_id,
@@ -205,16 +313,14 @@ class KairosPlanner:
         verification: KairosVerificationResult,
         understanding: KairosUnderstandingResult,
     ) -> KairosReplanResult:
-        system_prompt = (
-            "你是 Kairos 的 replanner。"
-            "请基于 verification 失败结果生成结构化 replan JSON，字段只允许："
-            "replan_reason,root_cause_hypothesis,invalidated_assumptions,revised_steps,retryable,retry_budget_cost,escalate_to_user,user_question。"
-        )
+        system_prompt = self._prompt_config.replan_system
+        skill_context = self._build_skill_context()
         user_prompt = json.dumps(
             {
                 "work_item": work_item.__dict__,
                 "understanding": understanding.__dict__,
                 "verification": verification.__dict__,
+                **skill_context,
             },
             ensure_ascii=False,
         )
@@ -234,14 +340,7 @@ class KairosPlanner:
         tracked_tasks: list[dict[str, Any]],
         default_follow_up_description: str,
     ) -> dict[str, Any]:
-        system_prompt = (
-            "你是 Kairos 的后台自治 follow-up 决策器。"
-            "你必须只在三个动作中选择一个：create_follow_up, ask_user, sleep。"
-            "输出 JSON 字段仅允许：action,reason,description,message。"
-            "当 action=create_follow_up 时，description 必须是简短可执行的任务描述。"
-            "当 action=ask_user 时，message 必须说明阻塞原因。"
-            "禁止输出 shell 命令。"
-        )
+        system_prompt = self._prompt_config.follow_up_system
         user_prompt = json.dumps(
             {
                 "workflow_id": workflow_id,
@@ -273,7 +372,7 @@ class KairosPlanner:
                 model=self._model,
                 api_key=self._api_key,
                 api_base=self._api_base,
-                extra_body=self._extra_body or None,
+                extra_body=self._extra_body,
                 temperature=0.1,
                 timeout=self._timeout_seconds,
                 max_retries=self._max_retries,
@@ -283,14 +382,17 @@ class KairosPlanner:
                 ],
                 response_format={"type": "json_object"},
             )
-            text = response.choices[0].message.content or "{}"
-            return json.loads(text)
+            text = self._extract_completion_text(response) or "{}"
+            parsed = json.loads(text)
+            if not isinstance(parsed, dict):
+                raise ValueError("completion JSON must be an object")
+            return parsed
         except Exception:
             response = await litellm.acompletion(
                 model=self._model,
                 api_key=self._api_key,
                 api_base=self._api_base,
-                extra_body=self._extra_body or None,
+                extra_body=self._extra_body,
                 temperature=0.1,
                 timeout=self._timeout_seconds,
                 max_retries=self._max_retries,
@@ -302,8 +404,56 @@ class KairosPlanner:
                     {"role": "user", "content": user_prompt},
                 ],
             )
-            text = response.choices[0].message.content or "{}"
+            text = self._extract_completion_text(response) or "{}"
             return self._extract_json_object(text)
+
+    def _extract_completion_text(self, response: Any) -> str:
+        try:
+            message = response.choices[0].message
+        except Exception:
+            message = None
+
+        if message is not None:
+            for attr in ("content", "reasoning_content"):
+                text = self._normalize_completion_field(getattr(message, attr, None))
+                if text.strip():
+                    return text
+
+        if hasattr(response, "model_dump"):
+            try:
+                dump = response.model_dump()
+                choices = dump.get("choices", []) if isinstance(dump, dict) else []
+                if choices and isinstance(choices[0], dict):
+                    message_obj = choices[0].get("message", {})
+                    if isinstance(message_obj, dict):
+                        for key in ("content", "reasoning_content"):
+                            text = self._normalize_completion_field(message_obj.get(key))
+                            if text.strip():
+                                return text
+            except Exception:
+                pass
+
+        return ""
+
+    def _normalize_completion_field(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            parts: list[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("content")
+                    if isinstance(text, str):
+                        parts.append(text)
+                        continue
+                parts.append(str(item))
+            return "".join(parts)
+        return str(value)
 
     def _extract_json_object(self, text: str) -> dict[str, Any]:
         fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*\})\s*```", text)
@@ -338,6 +488,7 @@ class KairosPlanner:
         }
         if action_kind != "spawn_dex_task":
             payload["command_template_id"] = None
+        if action_kind not in {"spawn_dex_task", "agent_execute"}:
             payload["args"] = {}
         return KairosActionPayload(**payload)
 
