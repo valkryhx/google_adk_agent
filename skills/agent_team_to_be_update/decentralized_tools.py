@@ -941,16 +941,57 @@ async def dag_create(
     mailbox = Mailbox(base_dir=coord_dir)
     config = TeamConfig(team_id=team_id, base_dir=base_dir)
 
+    if not tasks:
+        raise ValueError("tasks cannot be empty")
+
+    # 先全量校验，再创建，避免中途异常导致“半创建”残留任务。
+    existing_name_to_id = {t.name: t.id for t in queue.list_tasks()}
+    known_names = set(existing_name_to_id.keys())
+    validated_tasks: List[Dict[str, Any]] = []
+
+    for idx, task_def in enumerate(tasks, start=1):
+        if not isinstance(task_def, dict):
+            raise ValueError(f"tasks[{idx}] must be an object")
+
+        raw_name = task_def.get("name")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            raise ValueError(f"tasks[{idx}].name is required and must be a non-empty string")
+        name = raw_name.strip()
+
+        if any(t["name"] == name for t in validated_tasks):
+            raise ValueError(f"duplicate task name in request: {name}")
+
+        raw_blocked_by = task_def.get("blocked_by", [])
+        if raw_blocked_by is None:
+            raw_blocked_by = []
+        if not isinstance(raw_blocked_by, list):
+            raise ValueError(f"tasks[{idx}].blocked_by must be a list")
+
+        blocked_by: List[str] = []
+        for dep_name in raw_blocked_by:
+            if not isinstance(dep_name, str) or not dep_name.strip():
+                raise ValueError(f"tasks[{idx}].blocked_by contains invalid dependency name")
+            dep_name = dep_name.strip()
+            # 与当前实现保持一致：依赖必须是“已有任务”或“本次请求中已在前面声明的任务”。
+            if dep_name not in known_names:
+                raise ValueError(
+                    f"tasks[{idx}].blocked_by references unknown or future task name: {dep_name}"
+                )
+            blocked_by.append(dep_name)
+
+        validated_task = dict(task_def)
+        validated_task["name"] = name
+        validated_task["blocked_by"] = blocked_by
+        validated_tasks.append(validated_task)
+        known_names.add(name)
+
     # 第一遍：创建所有任务，建立 name -> id 映射
-    # 必须预加载已有任务，才能处理跨多轮下发的 DAG 节点之间的依赖。 
-    name_to_id = {t.name: t.id for t in queue.list_tasks()}
+    # 必须预加载已有任务，才能处理跨多轮下发的 DAG 节点之间的依赖。
+    name_to_id = dict(existing_name_to_id)
     created_tasks = []
 
-    for task_def in tasks:
-        blocked_by_ids = []
-        for dep_name in task_def.get("blocked_by", []):
-            if dep_name in name_to_id:
-                blocked_by_ids.append(name_to_id[dep_name])
+    for task_def in validated_tasks:
+        blocked_by_ids = [name_to_id[dep_name] for dep_name in task_def["blocked_by"]]
 
         task = queue.create_task(
             name=task_def["name"],

@@ -632,7 +632,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Build header info based on meeting or deep think context
             let workerLabel = data.worker_name || `Worker-${workerPort}`;
             let metaLabel = 'Running';
-            let statusIcon = 'sync';
+            let statusIcon = 'autorenew';
 
             if (round) {
                 if (role === 'secretary') {
