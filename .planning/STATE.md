@@ -61,15 +61,13 @@ See: .planning/PROJECT.md (updated 2026-04-06)
   - `.planning/phases/05-document-driven-continuation/05B-SUMMARY.md`
   - `.planning/phases/05-document-driven-continuation/05C-SUMMARY.md`
 - Immediate next work:
-  - update document-backed orchestration design in code, not just verify visibility
-  - first implementation wave should modify: `src/adk_agent/kairos/continuation.py`, `src/adk_agent/kairos/orchestration.py` (new), `src/adk_agent/main_web_start_steering.py`, `src/adk_agent/kairos/models.py`, `tests/kairos/test_continuation.py`
-  - replace document-backed `continue_workflow_scan` with executable materialization (`run_dex_task` / `ask_user` / `record_blocked` / `sleep_until_signal`)
-  - add minimal progression contract (`WorkProgressSnapshot`, `GateEvaluation`, `ExecutableAction`) and minimal `StepAttempt` persistence for dedupe/audit
-  - keep the design generic for document-backed autonomous task progression; do not optimize around the Flask example
-  - after the first wave, expand runtime/api/dex/live-http regression coverage to prove a new document-backed requirement can produce at least one executable next step
+  - first-wave document-backed executable progression is now implemented in code: `src/adk_agent/kairos/continuation.py`, `src/adk_agent/kairos/orchestration.py`, `src/adk_agent/main_web_start_steering.py`, `src/adk_agent/kairos/models.py`, `tests/kairos/test_continuation.py`
+  - document-backed `continue_workflow` now materializes executable actions (`run_dex_task` / `ask_user` / `record_blocked` / `sleep_until_signal`) instead of defaulting to `continue_workflow_scan`
+  - `StepAttempt` persistence is now present for document-backed run_dex_task progression and host follow-up creation updates pending attempts to started
+  - next recommended wave: expand runtime/API/live HTTP visibility and gate projection for executable document progression, not just targeted continuation coverage
 
-Last session: 2026-04-13T08:47:07Z
-Stopped at: Phase 5 research updated; implementation should target document-backed executable progression
+Last session: 2026-04-14T01:23:52Z
+Stopped at: Phase 5 first-wave executable progression implemented and full verification green
 Resume file: .planning/HANDOFF.json
 
 ---

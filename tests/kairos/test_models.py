@@ -2,11 +2,16 @@ from src.adk_agent.kairos.models import (
     DocumentReadResult,
     KairosContinuationPolicy,
     KairosEvent,
+    KairosExecutionPlan,
     KairosMode,
     KairosPlannedAction,
+    KairosReplanResult,
     KairosState,
+    KairosUnderstandingResult,
+    KairosVerificationResult,
     KairosWorkflow,
     KairosWorkflowStage,
+    StepAttempt,
     dump_kairos_state,
     load_kairos_state,
 )
@@ -528,7 +533,24 @@ def test_document_read_result_round_trip_preserves_open_questions_and_artifacts(
                 human_input_required=True,
                 source_docs=["specs/python-cli/PLAN.md"],
             )
-        ]
+        ],
+        step_attempts=[
+            StepAttempt(
+                attempt_id="attempt-1",
+                work_id="work:python-cli",
+                step_id="requirements",
+                action_kind="run_dex_task",
+                status="started",
+                doc_fingerprint="abc123",
+                created_at="2026-04-14T00:00:00+00:00",
+                completed_at=None,
+                result_summary="dex task task-1 created",
+            )
+        ],
+        current_understanding=KairosUnderstandingResult(goal="build python cli app", constraints=["use flask"]),
+        current_execution_plan=KairosExecutionPlan(plan_id="plan-1", work_id="work:python-cli", steps=[{"step_id": "requirements", "action_kind": "update_document"}]),
+        last_verification_result=KairosVerificationResult(attempt_id="attempt-1", verdict="partial", remaining_gaps=["missing README"]),
+        last_replan_result=KairosReplanResult(replan_reason="verification gap", retryable=True),
     )
 
     restored = load_kairos_state(dump_kairos_state(state))
@@ -538,3 +560,10 @@ def test_document_read_result_round_trip_preserves_open_questions_and_artifacts(
     assert restored.document_work_items[0].expected_artifacts == ["specs/python-cli/PLAN.md"]
     assert restored.document_work_items[0].open_questions == ["Should persistence use sqlite?"]
     assert restored.document_work_items[0].human_input_required is True
+    assert restored.step_attempts[0].attempt_id == "attempt-1"
+    assert restored.step_attempts[0].doc_fingerprint == "abc123"
+    assert restored.step_attempts[0].result_summary == "dex task task-1 created"
+    assert restored.current_understanding.goal == "build python cli app"
+    assert restored.current_execution_plan.plan_id == "plan-1"
+    assert restored.last_verification_result.verdict == "partial"
+    assert restored.last_replan_result.replan_reason == "verification gap"

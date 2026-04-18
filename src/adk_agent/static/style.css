@@ -1447,6 +1447,7 @@ details[open] .tool-header {
     padding: 8px 0;
 }
 
+.skill-dropdown {
     position: fixed;
     background: var(--bg-color);
     border: 1px solid #dadce0;

@@ -129,6 +129,89 @@ class DocumentReadResult:
 
 
 @dataclass
+class StepAttempt:
+    attempt_id: str
+    work_id: str
+    step_id: str
+    action_kind: str
+    status: str
+    doc_fingerprint: str
+    created_at: str
+    completed_at: str | None = None
+    result_summary: str | None = None
+
+
+@dataclass
+class KairosUnderstandingResult:
+    goal: str | None = None
+    constraints: list[str] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
+    missing_info: list[str] = field(default_factory=list)
+    success_criteria: list[str] = field(default_factory=list)
+    current_artifacts: list[str] = field(default_factory=list)
+    risk_flags: list[str] = field(default_factory=list)
+    recommended_mode: str | None = None
+
+
+@dataclass
+class KairosExecutionPlan:
+    plan_id: str | None = None
+    work_id: str | None = None
+    summary: str | None = None
+    stage_id: str | None = None
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    stop_conditions: list[str] = field(default_factory=list)
+    ask_user_if: list[str] = field(default_factory=list)
+    completion_definition: list[str] = field(default_factory=list)
+    priority_reason: str | None = None
+
+
+@dataclass
+class KairosVerificationResult:
+    attempt_id: str | None = None
+    verdict: str | None = None
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    artifact_check: list[dict[str, Any]] = field(default_factory=list)
+    goal_progress: int | None = None
+    remaining_gaps: list[str] = field(default_factory=list)
+    next_best_action: str | None = None
+    should_replan: bool = False
+    should_ask_user: bool = False
+
+
+@dataclass
+class KairosReplanResult:
+    replan_reason: str | None = None
+    root_cause_hypothesis: str | None = None
+    invalidated_assumptions: list[str] = field(default_factory=list)
+    revised_steps: list[dict[str, Any]] = field(default_factory=list)
+    retryable: bool = False
+    retry_budget_cost: int = 0
+    escalate_to_user: bool = False
+    user_question: str | None = None
+
+
+@dataclass
+class KairosActionPayload:
+    action_kind: str | None = None
+    target_doc: str | None = None
+    section_updates: list[dict[str, Any]] = field(default_factory=list)
+    rationale: str | None = None
+    task_type: str | None = None
+    description: str | None = None
+    command_template_id: str | None = None
+    args: dict[str, Any] = field(default_factory=dict)
+    expected_artifacts: list[str] = field(default_factory=list)
+    timeout_hint: int | None = None
+    question: str | None = None
+    why_blocked: str | None = None
+    choices: list[str] = field(default_factory=list)
+    brief: str | None = None
+    artifact_summary: list[dict[str, Any]] = field(default_factory=list)
+    next_recommendation: str | None = None
+
+
+@dataclass
 class KairosState:
     enabled: bool = False
     running: bool = False
@@ -156,10 +239,16 @@ class KairosState:
     condition_tree: dict[str, Any] | None = None
     unfinished_work_items: list[dict[str, Any]] = field(default_factory=list)
     document_work_items: list[DocumentReadResult] = field(default_factory=list)
+    step_attempts: list[StepAttempt] = field(default_factory=list)
     proactive_candidates: list[dict[str, Any]] = field(default_factory=list)
     last_proactive_scan: dict[str, Any] = field(default_factory=dict)
     last_guardrail_block: dict[str, Any] = field(default_factory=dict)
     last_planning_result: dict[str, Any] = field(default_factory=_default_planning_result)
+    current_understanding: KairosUnderstandingResult = field(default_factory=KairosUnderstandingResult)
+    current_execution_plan: KairosExecutionPlan = field(default_factory=KairosExecutionPlan)
+    current_action_payload: KairosActionPayload = field(default_factory=KairosActionPayload)
+    last_verification_result: KairosVerificationResult = field(default_factory=KairosVerificationResult)
+    last_replan_result: KairosReplanResult = field(default_factory=KairosReplanResult)
     recent_events: list[KairosEvent] = field(default_factory=list)
 
     def push_event(self, event: KairosEvent, limit: int = 20) -> None:
@@ -197,10 +286,16 @@ def load_kairos_state(raw: dict[str, Any] | None) -> KairosState:
         condition_tree=raw.get("condition_tree"),
         unfinished_work_items=list(raw.get("unfinished_work_items", [])),
         document_work_items=[DocumentReadResult(**item) for item in raw.get("document_work_items", [])],
+        step_attempts=[StepAttempt(**item) for item in raw.get("step_attempts", [])],
         proactive_candidates=list(raw.get("proactive_candidates", [])),
         last_proactive_scan=dict(raw.get("last_proactive_scan", {})),
         last_guardrail_block=dict(raw.get("last_guardrail_block", {})),
         last_planning_result=_load_planning_result(raw.get("last_planning_result")),
+        current_understanding=KairosUnderstandingResult(**raw.get("current_understanding", {})),
+        current_execution_plan=KairosExecutionPlan(**raw.get("current_execution_plan", {})),
+        current_action_payload=KairosActionPayload(**raw.get("current_action_payload", {})),
+        last_verification_result=KairosVerificationResult(**raw.get("last_verification_result", {})),
+        last_replan_result=KairosReplanResult(**raw.get("last_replan_result", {})),
         recent_events=[KairosEvent(**item) for item in raw.get("recent_events", [])],
     )
 

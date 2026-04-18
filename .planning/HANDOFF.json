@@ -1,99 +1,138 @@
 {
   "version": "1.0",
-  "timestamp": "2026-04-11T16:46:21Z",
-  "phase": "5",
-  "phase_name": "Prompt-Governed Document-Driven Continuation",
-  "phase_dir": ".planning/phases/05-document-driven-continuation",
-  "plan": 1,
-  "task": 3,
-  "total_tasks": 3,
+  "timestamp": "2026-04-14T08:34:43.006Z",
+  "phase": "6",
+  "phase_name": "Markdown-First Skill-Using Autonomy (exploratory planning)",
+  "phase_dir": ".planning/phases/06-markdown-first-skill-using-autonomy",
+  "plan": 0,
+  "task": 0,
+  "total_tasks": 0,
   "status": "paused",
   "completed_tasks": [
     {
       "id": 1,
-      "name": "Define Phase 5 goal and subphase draft",
+      "name": "Clarified Kairos direction: LLM core intelligence, markdown-first work memory, skill-using execution, rules as guardrails",
       "status": "done",
-      "commit": "a657e28"
+      "commit": "uncommitted"
     },
     {
       "id": 2,
-      "name": "Write Phase 5 context and research documents",
+      "name": "Audited current Kairos gaps and reusable skills; confirmed JSON-first overconstraint and skill bridge gap",
       "status": "done",
-      "commit": "a657e28"
+      "commit": "uncommitted"
     },
     {
       "id": 3,
-      "name": "Write 05A/05B/05C execution plans",
+      "name": "Created exploratory Phase 6 planning artifact under .planning/phases/06-markdown-first-skill-using-autonomy/",
       "status": "done",
-      "commit": "a657e28"
+      "commit": "uncommitted"
     },
     {
       "id": 4,
-      "name": "Implement 05A document protocol anchors and normalized document read result",
+      "name": "Implemented transitional LLM planner/verifier/action-payload scaffolding and runtime/API visibility",
       "status": "done",
-      "commit": "32fed15"
+      "commit": "uncommitted"
     },
     {
       "id": 5,
-      "name": "Connect continuation to document-backed unfinished work",
+      "name": "Ran targeted and focused Kairos regression suites during implementation; latest focused suite reached 123 passed before final live diagnostics",
       "status": "done",
-      "commit": "32fed15"
-    },
-    {
-      "id": 6,
-      "name": "Run focused Phase 5A source verification",
-      "status": "done",
-      "commit": "32fed15"
+      "commit": "uncommitted"
     }
   ],
   "remaining_tasks": [
     {
+      "id": 6,
+      "name": "Formalize Phase 6 as an official phase in planning docs; current official STATE/ROADMAP still reflect Phase 5 closure context",
+      "status": "not_started"
+    },
+    {
       "id": 7,
-      "name": "Write 05A summary artifact",
+      "name": "Implement Kairos skill bridge to let runtime call existing skill_load and tools under allowlist/audit",
       "status": "not_started"
     },
     {
       "id": 8,
-      "name": "Execute 05B after 05A summary lands",
+      "name": "Promote requirements/design/codegen/verification markdown artifacts to first-class Kairos work memory",
       "status": "not_started"
     },
     {
       "id": 9,
-      "name": "Execute 05C and verify Phase 5",
+      "name": "Make verification/replan drive real next actions and markdown patches, not just state fields",
+      "status": "not_started"
+    },
+    {
+      "id": 10,
+      "name": "Rerun live Flask+SQLite+HTML task after markdown-first and skill bridge work to prove sustained autonomous progression",
       "status": "not_started"
     }
   ],
   "blockers": [
     {
-      "description": "private_key.yaml is still tracked and locally modified; it contains sensitive config and must stay out of all future commits.",
+      "description": "Current live planner path is unstable with strict response_format JSON; model gateway times out and falls back to rule continuation.",
+      "type": "technical",
+      "workaround": "Phase 6 should avoid strict JSON-first design; use markdown-first LLM outputs with tolerant extraction only where necessary."
+    },
+    {
+      "description": "Kairos still lacks a formal runtime-to-skill bridge; skills exist in SteeringSession but are not first-class autonomous Kairos actions yet.",
+      "type": "technical",
+      "workaround": "Add allowlisted skill bridge around existing SteeringSession.skill_load/_load_skill_tools and tool invocation path."
+    },
+    {
+      "description": "private_key.yaml remains tracked and locally modified; it contains sensitive config and must not be staged or committed.",
       "type": "operational",
-      "workaround": "Stage only explicit Phase 5 files and keep private_key.yaml excluded from every commit."
+      "workaround": "Stage explicit planning/code/test files only; exclude private_key.yaml."
+    },
+    {
+      "description": "requirements/ contains live test artifacts and should be reviewed before any commit.",
+      "type": "operational",
+      "workaround": "Do not blindly add requirements/. Decide whether to keep specific live evidence or clean/exclude it."
     }
   ],
   "human_actions_pending": [],
   "decisions": [
     {
-      "decision": "Phase 5 should use prompt-governed document protocols rather than rigid parser-first schemas.",
-      "rationale": "The user wants Kairos to leverage LLM flexibility for reading and generating work documents instead of replacing hardcoded workflows with equally rigid structures.",
-      "phase": "5"
+      "decision": "Phase 6 is currently an exploratory planning direction, not yet fully reconciled into the official STATE/ROADMAP narrative.",
+      "rationale": "Current work focus and new plan artifacts are Phase 6, but formal planning state files still describe Phase 5 as the active completed phase awaiting closure.",
+      "phase": "6"
     },
     {
-      "decision": "DocumentReadResult should remain a minimal runtime intermediate shape rather than a rigid markdown schema.",
-      "rationale": "Runtime needs a stable handoff from LLM reading results while keeping document semantics soft and markdown-first.",
-      "phase": "5"
+      "decision": "Phase 6 should be markdown-first rather than strict JSON-first.",
+      "rationale": "Strict JSON output overconstrains Kairos and is unstable in live model gateway calls; clear markdown documents are a better work memory and intelligence artifact.",
+      "phase": "6"
     },
     {
-      "decision": "Document-backed continuation should reuse the 4B candidate taxonomy and final_action pipeline incrementally.",
-      "rationale": "This extends Kairos toward document-driven orchestration without deleting or destabilizing the existing todo/demo workflow branches.",
-      "phase": "5"
+      "decision": "Kairos should reuse existing skills instead of hardcoding execution logic.",
+      "rationale": "main_web_start_steering.py already has skill discovery/loading and skills/ contains dex/file_editor/codebase_search/search_exp/playwright; Kairos should become long-running orchestrator over these capabilities.",
+      "phase": "6"
+    },
+    {
+      "decision": "Rules are retained only as guardrails/materializers/audit/idempotency, not as the main brain.",
+      "rationale": "Safety boundaries, retries, cooldown, path allowlists, and state persistence are code responsibilities; semantic understanding/planning/content generation should be LLM-driven.",
+      "phase": "6"
     }
   ],
   "uncommitted_files": [
-    ".planning/HANDOFF.json",
-    ".planning/phases/05-document-driven-continuation/.continue-here.md",
     ".planning/STATE.md",
-    "private_key.yaml"
+    ".planning/phases/06-markdown-first-skill-using-autonomy/06-IMPLEMENTATION-PLAN.md",
+    "src/adk_agent/kairos/api.py",
+    "src/adk_agent/kairos/continuation.py",
+    "src/adk_agent/kairos/dex_bridge.py",
+    "src/adk_agent/kairos/models.py",
+    "src/adk_agent/kairos/runtime.py",
+    "src/adk_agent/main_web_start_steering.py",
+    "tests/kairos/test_api.py",
+    "tests/kairos/test_continuation.py",
+    "tests/kairos/test_document_protocol.py",
+    "tests/kairos/test_live_http_kairos_demo_outputs_regression.py",
+    "tests/kairos/test_models.py",
+    "tests/kairos/test_runtime.py",
+    "tests/test_dex_session_regression.py",
+    "src/adk_agent/kairos/llm_planner.py",
+    "src/adk_agent/kairos/llm_verifier.py",
+    "src/adk_agent/kairos/orchestration.py",
+    "tests/kairos/test_llm_planner.py"
   ],
-  "next_action": "Start by writing .planning/phases/05-document-driven-continuation/05A-SUMMARY.md with the delivered protocol/model/continuation work and the passing pytest evidence, then decide whether to transition Phase 5A to complete or move into 05B.",
-  "context_notes": "05A code and focused tests are now green and committed in 32fed15. The remaining work before leaving 05A is documentation/phase bookkeeping, not more protocol plumbing. Do not reopen parser-style work; preserve the prompt-governed, markdown-first direction. Keep private_key.yaml out of any future commit."
+  "next_action": "Resume by reading .planning/phases/06-markdown-first-skill-using-autonomy/06-IMPLEMENTATION-PLAN.md, then decide whether to officially open Phase 6 in STATE/ROADMAP or keep it as exploratory planning. Audit the current uncommitted code for JSON-first transitional pieces before doing more live tests.",
+  "context_notes": "The important mental model: Kairos is not another chat agent and not a rules engine. SteeringSession is the interactive host; Kairos is the long-running autonomy layer over markdown work docs and existing skills. The current code changes include useful scaffolding but are transitional and partially misaligned with the final Phase 6 direction because they still lean JSON-first. User explicitly corrected that markdown-first and autonomous skill use are the target."
 }

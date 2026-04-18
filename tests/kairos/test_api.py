@@ -55,6 +55,9 @@ class FakeRuntime:
                 "satisfied": [],
                 "missing": [],
             },
+            "document_work_items": [],
+            "document_progress": {},
+            "pending_requirements": [],
         }
 
     async def start(self):
@@ -461,10 +464,121 @@ def test_status_route_exposes_spawned_work_items():
     assert payload["pending_requirements"] == []
 
 
-# === Phase 2 attach/list route tests ===
+def test_status_route_exposes_document_progress_and_attempts():
+    app = FastAPI()
+    manager = FakeManager()
+    session = manager.get_or_create("demo", "alice", "session_1")
+    session.runtime.state["document_work_items"] = [
+        {
+            "work_id": "work:python-cli",
+            "goal": "build python cli",
+            "status": "in_progress",
+            "current_step": "design",
+            "next_actions": ["write cli outline"],
+            "blockers": [],
+            "expected_artifacts": ["requirements/session-1/work.md"],
+            "open_questions": [],
+            "human_input_required": False,
+            "source_docs": ["requirements/session-1/work.md"],
+        }
+    ]
+    session.runtime.state["document_progress"] = {
+        "document_work_count": 1,
+        "active_attempt": {
+            "attempt_id": "attempt-1",
+            "work_id": "work:python-cli",
+            "step_id": "design",
+            "action_kind": "run_dex_task",
+            "status": "started",
+            "doc_fingerprint": "abc123",
+            "created_at": "2026-04-14T00:00:00+00:00",
+            "completed_at": None,
+            "result_summary": "dex task created",
+        },
+        "step_attempts": [
+            {
+                "attempt_id": "attempt-1",
+                "work_id": "work:python-cli",
+                "step_id": "design",
+                "action_kind": "run_dex_task",
+                "status": "started",
+                "doc_fingerprint": "abc123",
+                "created_at": "2026-04-14T00:00:00+00:00",
+                "completed_at": None,
+                "result_summary": "dex task created",
+            }
+        ],
+    }
+    session.runtime.state["step_attempts"] = [
+        {
+            "attempt_id": "attempt-1",
+            "work_id": "work:python-cli",
+            "step_id": "design",
+            "action_kind": "run_dex_task",
+            "status": "started",
+            "doc_fingerprint": "abc123",
+            "created_at": "2026-04-14T00:00:00+00:00",
+            "completed_at": None,
+            "result_summary": "dex task created",
+        }
+    ]
+    session.runtime.state["last_planning_result"] = {
+        "ts": "2026-04-14T00:00:00+00:00",
+        "goal": "build python cli",
+        "workflow_id": None,
+        "stage_id": "design",
+        "candidates_considered": [],
+        "selected_candidate": {"action": "continue_workflow", "candidate_id": "work:python-cli:design:continue_workflow"},
+        "rejected_candidates": [],
+        "final_action": {"kind": "run_dex_task", "payload": {"description": "write cli outline"}},
+        "policy_note": "winner chosen under tiered-action policy",
+        "replan": {"changed": False},
+    }
+    register_kairos_routes(app, manager)
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/sessions/session_1/kairos/status",
+        params={"app_name": "demo", "user_id": "alice"},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["document_progress"]["document_work_count"] == 1
+    assert payload["document_progress"]["document_work_count"] == 1
+    assert payload["document_progress"]["active_attempt"]["attempt_id"] == "attempt-1"
+    assert payload["document_progress"]["step_attempts"][0]["action_kind"] == "run_dex_task"
+    assert payload["last_planning_result"]["final_action"]["kind"] == "run_dex_task"
 
 
-def test_list_kairos_sessions_route_works():
+
+
+def test_status_route_exposes_llm_autonomy_state_fields():
+    app = FastAPI()
+    manager = FakeManager()
+    session = manager.get_or_create("demo", "alice", "session_1")
+    session.runtime.state["current_understanding"] = {"goal": "build python cli", "constraints": ["use flask"]}
+    session.runtime.state["current_execution_plan"] = {"plan_id": "plan-1", "steps": [{"step_id": "requirements", "action_kind": "spawn_dex_task"}]}
+    session.runtime.state["last_verification_result"] = {"attempt_id": "attempt-1", "verdict": "partial"}
+    session.runtime.state["last_replan_result"] = {"replan_reason": "verification gap", "retryable": True}
+    session.runtime.state["current_action_payload"] = {"action_kind": "spawn_dex_task", "command_template_id": "generate_design_brief", "description": "generate design brief"}
+    register_kairos_routes(app, manager)
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/sessions/session_1/kairos/status",
+        params={"app_name": "demo", "user_id": "alice"},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["current_understanding"]["goal"] == "build python cli"
+    assert payload["current_execution_plan"]["plan_id"] == "plan-1"
+    assert payload["last_verification_result"]["verdict"] == "partial"
+    assert payload["last_replan_result"]["replan_reason"] == "verification gap"
+    assert payload["kairos"]["current_action_payload"]["command_template_id"] == "generate_design_brief"
+
+
     app = FastAPI()
     manager = FakeManager()
     # Ensure the session has a runtime

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
 from skills.dex.tools import DexManager
 
@@ -53,3 +53,14 @@ class KairosDexBridge:
             if snap is not None:
                 result.append(snap)
         return result
+
+    def create_task(self, description: str, context: str = "") -> dict[str, Any]:
+        return self.manager.create_task(description, context)
+
+    def start_task(self, task_id: str, command: str) -> dict[str, Any]:
+        args_list = self.manager._normalize_command_args(command) if hasattr(self.manager, "_normalize_command_args") else None
+        if args_list is None:
+            from skills.dex.tools import _normalize_command_args
+            args_list = _normalize_command_args(command)
+        self.manager.start_background_process(task_id, args_list)
+        return self.manager.load_task(task_id)

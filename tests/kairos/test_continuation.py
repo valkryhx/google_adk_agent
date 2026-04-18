@@ -8,6 +8,7 @@ from src.adk_agent.kairos.models import (
     KairosState,
     KairosWorkflow,
     KairosWorkflowStage,
+    TriggerKind,
 )
 
 
@@ -170,7 +171,7 @@ def test_refresh_unfinished_work_respects_cooldown_guardrail():
     assert state.last_proactive_scan["result"] == "cooldown_active"
     assert state.last_proactive_scan["winner"] == "todo_delivery_pipeline:codegen:sleep"
     assert state.last_planning_result["selected_candidate"]["action"] == "sleep"
-    assert state.last_planning_result["final_action"]["kind"] == "sleep"
+    assert state.last_planning_result["final_action"]["kind"] == "sleep_until_signal"
     assert state.last_planning_result["rejected_candidates"][0]["action"] == "continue_workflow"
 
 
@@ -305,7 +306,7 @@ def test_refresh_unfinished_work_uses_document_backed_items_without_workflow_tem
                 current_step="design",
                 next_actions=["write cli outline"],
                 blockers=[],
-                expected_artifacts=["specs/python-cli/DESIGN.md"],
+                expected_artifacts=[],
                 source_docs=["specs/python-cli/PLAN.md"],
             )
         ]
@@ -318,6 +319,8 @@ def test_refresh_unfinished_work_uses_document_backed_items_without_workflow_tem
     assert state.unfinished_work_items[0]["kind"] == "document_work_item"
     assert state.proactive_candidates[0]["action"] == "continue_workflow"
     assert state.last_planning_result["goal"] == "build python cli"
+    assert state.last_planning_result["final_action"]["kind"] == "run_dex_task"
+    assert state.last_planning_result["final_action"]["payload"]["description"] == "write cli outline"
 
 
 def test_refresh_unfinished_work_routes_blocked_document_to_high_tier_candidate():
@@ -341,6 +344,62 @@ def test_refresh_unfinished_work_routes_blocked_document_to_high_tier_candidate(
     assert state.last_planning_result["selected_candidate"]["action"] in {"ask_user", "blocked"}
     assert state.last_planning_result["selected_candidate"]["tier"] == "high"
     assert state.last_proactive_scan["result"] == "waiting_input"
+    assert state.last_planning_result["final_action"]["kind"] == "ask_user"
+
+
+def test_document_backed_blocker_materializes_record_blocked_when_no_question():
+    state = KairosState(
+        document_work_items=[
+            DocumentReadResult(
+                work_id="work:blocked-cli",
+                goal="ship blocked cli",
+                status="in_progress",
+                current_step="verification",
+                next_actions=[],
+                blockers=["Waiting for CI runner"],
+                open_questions=[],
+                human_input_required=False,
+            )
+        ]
+    )
+    engine = ContinuationEngine(path_exists=lambda _: True)
+
+    engine.refresh_unfinished_work(state)
+
+    assert state.last_planning_result["final_action"]["kind"] == "record_blocked"
+    assert state.last_planning_result["final_action"]["payload"]["message"] == "Waiting for CI runner"
+
+
+def test_apply_decisions_creates_internal_trigger_for_run_dex_task():
+    state = KairosState()
+    engine = ContinuationEngine()
+    decision = engine._decision_from_final_action(
+        {
+            "kind": "run_dex_task",
+            "reason": "document_work_ready",
+            "payload": {
+                "work_id": "work:python-cli",
+                "step_id": "design",
+                "description": "write cli outline",
+                "doc_fingerprint": "abc123",
+                "source_doc": "requirements/session-1/work.md",
+            },
+        }
+    )
+
+    triggers = engine.apply_decisions(state, [decision])
+
+    assert state.planned_actions[0].kind == "run_dex_task"
+    assert state.planned_actions[0].payload == {
+        "work_id": "work:python-cli",
+        "step_id": "design",
+        "description": "write cli outline",
+    }
+    assert state.step_attempts[0].work_id == "work:python-cli"
+    assert state.step_attempts[0].step_id == "design"
+    assert state.step_attempts[0].doc_fingerprint == "abc123"
+    assert triggers[0].kind is TriggerKind.INTERNAL
+    assert triggers[0].metadata["description"] == "write cli outline"
 
 
 def _todo_workflow_state(*, completed_task_ids, current_stage="verification"):
@@ -650,4 +709,4 @@ def test_sleep_winner_leaves_explicit_final_action_kind():
     engine.refresh_unfinished_work(state)
 
     assert state.last_planning_result["selected_candidate"]["action"] == "sleep"
-    assert state.last_planning_result["final_action"]["kind"] == "sleep"
+    assert state.last_planning_result["final_action"]["kind"] == "sleep_until_signal"

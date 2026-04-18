@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Callable
 
-from .models import DocumentReadResult, KairosPlannedAction, KairosState, KairosTrigger, TriggerKind
+from .models import DocumentReadResult, KairosPlannedAction, KairosState, KairosTrigger, StepAttempt, TriggerKind
+from .orchestration import build_progress_snapshot, evaluate_document_gates, materialize_document_action
 
 
 @dataclass
@@ -190,8 +191,11 @@ class ContinuationEngine:
                 "goal": item.goal,
                 "status": item.status,
                 "next_actions": list(item.next_actions),
+                "blockers": list(item.blockers),
                 "open_questions": list(item.open_questions),
                 "human_input_required": item.human_input_required,
+                "expected_artifacts": list(item.expected_artifacts),
+                "source_docs": list(item.source_docs),
             }
         return None
 
@@ -209,6 +213,18 @@ class ContinuationEngine:
                 "blocked": waiting_input,
                 "selected": False,
                 "reason": reason,
+                "payload": {
+                    "work_id": work_id,
+                    "stage_id": stage_id,
+                    "goal": work_item.get("goal"),
+                    "status": work_item.get("status"),
+                    "next_actions": list(work_item.get("next_actions", [])),
+                    "blockers": list(work_item.get("blockers", [])),
+                    "open_questions": list(work_item.get("open_questions", [])),
+                    "human_input_required": work_item.get("human_input_required", False),
+                    "expected_artifacts": list(work_item.get("expected_artifacts", [])),
+                    "source_docs": list(work_item.get("source_docs", [])),
+                },
             },
             {
                 "candidate_id": f"{work_id}:{stage_id}:create_follow_up",
@@ -237,6 +253,18 @@ class ContinuationEngine:
                 "blocked": not waiting_input,
                 "selected": False,
                 "reason": reason,
+                "payload": {
+                    "work_id": work_id,
+                    "stage_id": stage_id,
+                    "goal": work_item.get("goal"),
+                    "status": work_item.get("status"),
+                    "next_actions": list(work_item.get("next_actions", [])),
+                    "blockers": list(work_item.get("blockers", [])),
+                    "open_questions": list(work_item.get("open_questions", [])),
+                    "human_input_required": work_item.get("human_input_required", False),
+                    "expected_artifacts": list(work_item.get("expected_artifacts", [])),
+                    "source_docs": list(work_item.get("source_docs", [])),
+                },
             },
             {
                 "candidate_id": f"{work_id}:{stage_id}:sleep",
@@ -255,6 +283,18 @@ class ContinuationEngine:
                 "blocked": not waiting_input,
                 "selected": False,
                 "reason": reason,
+                "payload": {
+                    "work_id": work_id,
+                    "stage_id": stage_id,
+                    "goal": work_item.get("goal"),
+                    "status": work_item.get("status"),
+                    "next_actions": list(work_item.get("next_actions", [])),
+                    "blockers": list(work_item.get("blockers", [])),
+                    "open_questions": list(work_item.get("open_questions", [])),
+                    "human_input_required": work_item.get("human_input_required", False),
+                    "expected_artifacts": list(work_item.get("expected_artifacts", [])),
+                    "source_docs": list(work_item.get("source_docs", [])),
+                },
             },
         ]
 
@@ -449,6 +489,8 @@ class ContinuationEngine:
 
     def _build_final_action(self, candidate: dict[str, Any]) -> dict[str, Any]:
         if candidate["action"] == "continue_workflow":
+            if self._is_document_candidate(candidate):
+                return self._build_document_final_action(candidate)
             return {
                 "kind": "continue_workflow_scan",
                 "reason": "stage_unfinished",
@@ -472,6 +514,8 @@ class ContinuationEngine:
                 },
             }
         if candidate["action"] == "ask_user":
+            if self._is_document_candidate(candidate):
+                return self._build_document_final_action(candidate)
             return {
                 "kind": "ask_user",
                 "reason": "workflow_waiting_input",
@@ -481,8 +525,10 @@ class ContinuationEngine:
                 },
             }
         if candidate["action"] == "blocked":
+            if self._is_document_candidate(candidate):
+                return self._build_document_final_action(candidate)
             return {
-                "kind": "blocked",
+                "kind": "record_blocked",
                 "reason": "workflow_blocked",
                 "payload": {
                     "candidate_id": candidate["candidate_id"],
@@ -490,11 +536,37 @@ class ContinuationEngine:
                 },
             }
         return {
-            "kind": "sleep",
+            "kind": "sleep_until_signal",
             "reason": "cooldown_or_no_action",
             "payload": {
                 "candidate_id": candidate["candidate_id"],
             },
+        }
+
+    def _is_document_candidate(self, candidate: dict[str, Any]) -> bool:
+        return not candidate["candidate_id"].split(":", 1)[0].endswith("_pipeline")
+
+    def _build_document_final_action(self, candidate: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(candidate.get("payload", {}))
+        item = DocumentReadResult(
+            work_id=payload["work_id"],
+            goal=payload.get("goal") or payload["work_id"],
+            status=payload.get("status") or "in_progress",
+            current_step=payload.get("stage_id"),
+            next_actions=list(payload.get("next_actions", [])),
+            blockers=list(payload.get("blockers", [])),
+            expected_artifacts=list(payload.get("expected_artifacts", [])),
+            open_questions=list(payload.get("open_questions", [])),
+            human_input_required=bool(payload.get("human_input_required", False)),
+            source_docs=list(payload.get("source_docs", [])),
+        )
+        snapshot = build_progress_snapshot(item)
+        gates = evaluate_document_gates(snapshot, None, self._path_exists)
+        action = materialize_document_action(snapshot, gates, None)
+        return {
+            "kind": action.kind,
+            "reason": action.reason,
+            "payload": dict(action.payload),
         }
 
     def _decision_from_final_action(self, final_action: dict[str, Any]) -> ContinuationDecision:
@@ -515,14 +587,14 @@ class ContinuationEngine:
         }
         state.last_planning_result["final_action"] = final_action
         selected_candidate = dict(state.last_planning_result.get("selected_candidate", {}))
-        if decision.kind == "create_dex_task":
-            selected_candidate["action"] = "create_follow_up"
+        if decision.kind in {"create_dex_task", "run_dex_task"}:
+            selected_candidate["action"] = "create_follow_up" if decision.kind == "create_dex_task" else "continue_workflow"
             selected_candidate.setdefault(
                 "candidate_id",
-                f"{decision.payload.get('workflow_id', 'workflow')}:delivery_report:create_follow_up",
+                f"{decision.payload.get('workflow_id', decision.payload.get('work_id', 'workflow'))}:delivery_report:create_follow_up",
             )
             selected_candidate.setdefault("tier", "medium")
-            selected_candidate.setdefault("priority", 60)
+            selected_candidate.setdefault("priority", 60 if decision.kind == "create_dex_task" else 50)
             selected_candidate["selected"] = True
             selected_candidate["payload"] = dict(decision.payload)
             state.last_planning_result["selected_candidate"] = selected_candidate
@@ -660,24 +732,49 @@ class ContinuationEngine:
     def apply_decisions(self, state: KairosState, decisions: list[ContinuationDecision]) -> list[KairosTrigger]:
         triggers: list[KairosTrigger] = []
         for decision in decisions:
-            if decision.kind == "create_dex_task":
-                action_id = f"{decision.payload['workflow_id']}-{decision.payload['description'].replace(' ', '-')}"
+            if decision.kind in {"create_dex_task", "run_dex_task"}:
+                workflow_or_work_id = decision.payload.get("workflow_id") or decision.payload.get("work_id") or "work"
+                description = decision.payload["description"]
+                dedupe_payload = dict(decision.payload)
+                if decision.kind == "run_dex_task":
+                    dedupe_payload = {
+                        "work_id": decision.payload.get("work_id"),
+                        "step_id": decision.payload.get("step_id"),
+                        "description": description,
+                    }
+                action_id = f"{workflow_or_work_id}-{description.replace(' ', '-')}"
                 state.planned_actions.append(
                     KairosPlannedAction(
                         action_id=action_id,
                         kind=decision.kind,
                         reason=decision.reason,
-                        payload=decision.payload,
+                        payload=dedupe_payload,
                         status="pending",
                     )
                 )
+                if decision.kind == "run_dex_task":
+                    state.step_attempts.append(
+                        StepAttempt(
+                            attempt_id=f"attempt-{workflow_or_work_id}-{decision.payload.get('step_id', 'step')}",
+                            work_id=decision.payload["work_id"],
+                            step_id=decision.payload.get("step_id") or "document_work",
+                            action_kind=decision.kind,
+                            status="pending",
+                            doc_fingerprint=str(decision.payload.get("doc_fingerprint", "")),
+                            created_at="1970-01-01T00:00:00+00:00",
+                        )
+                    )
                 triggers.append(
                     KairosTrigger(
-                        trigger_id=f"internal-{decision.payload['workflow_id']}-follow-up",
+                        trigger_id=f"internal-{workflow_or_work_id}-follow-up",
                         kind=TriggerKind.INTERNAL,
                         reason=decision.reason,
                         created_at="1970-01-01T00:00:00+00:00",
-                        metadata=decision.payload,
+                        metadata=dict(decision.payload),
                     )
                 )
+            elif decision.kind == "ask_user":
+                state.blocked_reason = decision.payload.get("message") or decision.reason
+            elif decision.kind == "record_blocked":
+                state.blocked_reason = decision.payload.get("message") or decision.reason
         return triggers
