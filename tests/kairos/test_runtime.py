@@ -891,6 +891,272 @@ async def test_tick_once_dispatches_agent_execute_from_plan_step_without_payload
 
 
 @pytest.mark.asyncio
+async def test_document_llm_planner_updates_structured_planning_result_for_agent_execute():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+    run_turn_reasons = []
+
+    async def run_turn(reason):
+        run_turn_reasons.append(reason)
+        return "ok"
+
+    class FakePlanner:
+        async def draft_requirement_understanding(self, item):
+            from src.adk_agent.kairos.models import KairosUnderstandingResult
+
+            return KairosUnderstandingResult(goal=item.goal)
+
+        async def build_execution_plan(self, item, understanding, *, candidate_actions):
+            from src.adk_agent.kairos.models import KairosExecutionPlan
+
+            return KairosExecutionPlan(
+                plan_id="plan-document-observable",
+                work_id=item.work_id,
+                summary="agent execute document workflow",
+                steps=[
+                    {
+                        "step_id": item.current_step,
+                        "action_kind": "agent_execute",
+                        "reason": "execute one autonomous step",
+                        "required_skills": ["bash"],
+                        "execution_prompt": "先读取 work.md 再运行一次最小验证",
+                    }
+                ],
+            )
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.IDLE,
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:python-cli",
+                    goal="build python cli",
+                    status="pending_requirements",
+                    current_step="requirements",
+                    next_actions=["draft requirements document"],
+                    expected_artifacts=["requirements/session-1/work.md"],
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+    runtime._llm_planner = FakePlanner()
+
+    await runtime.tick_once()
+
+    planning = runtime.state.last_planning_result
+    assert planning["workflow_id"] is None
+    assert planning["selected_candidate"]["action"] == "agent_execute"
+    assert planning["selected_candidate"]["candidate_id"].endswith(":agent_execute")
+    assert planning["final_action"]["kind"] == "agent_execute"
+    assert planning["final_action"]["payload"]["work_id"] == "work:python-cli"
+    assert planning["final_action"]["payload"]["step_id"] == "requirements"
+    assert planning.get("replan", {}).get("changed") is False
+    assert any(reason.startswith("agent_execute::") for reason in run_turn_reasons)
+
+
+@pytest.mark.asyncio
+async def test_document_llm_planner_dispatch_skips_stale_last_final_action_when_action_already_dispatched():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+    run_turn_reasons = []
+
+    async def run_turn(reason):
+        run_turn_reasons.append(reason)
+        return "ok"
+
+    class FakePlanner:
+        async def draft_requirement_understanding(self, item):
+            from src.adk_agent.kairos.models import KairosUnderstandingResult
+
+            return KairosUnderstandingResult(goal=item.goal)
+
+        async def build_execution_plan(self, item, understanding, *, candidate_actions):
+            from src.adk_agent.kairos.models import KairosExecutionPlan
+
+            return KairosExecutionPlan(
+                plan_id="plan-stale-final-action",
+                work_id=item.work_id,
+                steps=[
+                    {
+                        "step_id": item.current_step,
+                        "action_kind": "agent_execute",
+                        "reason": "prefer agent execute instead of stale final action",
+                        "execution_prompt": "read work.md and continue one step",
+                    }
+                ],
+            )
+
+    from src.adk_agent.kairos.models import KairosContinuationPolicy
+
+    state = KairosState(
+        enabled=True,
+        running=True,
+        mode=KairosMode.IDLE,
+        policy=KairosContinuationPolicy(llm_only_decision_enabled=True, proactive_scan_enabled=False),
+        document_work_items=[
+            DocumentReadResult(
+                work_id="work:python-cli",
+                goal="build python cli",
+                status="pending_requirements",
+                current_step="requirements",
+                next_actions=["draft requirements document"],
+                expected_artifacts=["requirements/session-1/work.md"],
+                source_docs=["requirements/session-1/work.md"],
+            )
+        ],
+        last_planning_result={
+            "selected_candidate": {
+                "candidate_id": "stale:requirements:create_follow_up",
+                "action": "create_follow_up",
+            },
+            "final_action": {
+                "kind": "create_dex_task",
+                "reason": "stale",
+                "payload": {"workflow_id": "stale", "description": "should_not_run"},
+            },
+        },
+    )
+
+    runtime = KairosRuntime(
+        state=state,
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+    runtime._llm_planner = FakePlanner()
+
+    await runtime.tick_once()
+
+    assert runtime.state.last_planning_result["selected_candidate"]["action"] == "agent_execute"
+    assert all(trigger.kind is not TriggerKind.INTERNAL for trigger in runtime.state.pending_triggers)
+    assert all(action.kind != "create_dex_task" for action in runtime.state.planned_actions)
+    assert any(reason.startswith("agent_execute::") for reason in run_turn_reasons)
+
+
+@pytest.mark.asyncio
+async def test_document_llm_only_replans_with_existing_plan_and_never_falls_back_to_document_run_dex_task():
+    from src.adk_agent.kairos.models import (
+        KairosActionPayload,
+        KairosContinuationPolicy,
+        KairosExecutionPlan,
+        KairosUnderstandingResult,
+    )
+
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+    run_turn_reasons: list[str] = []
+
+    async def run_turn(reason):
+        run_turn_reasons.append(reason)
+        return "ok"
+
+    class FakePlanner:
+        def __init__(self) -> None:
+            self.execution_plan_calls = 0
+
+        async def draft_requirement_understanding(self, item):
+            return KairosUnderstandingResult(goal=item.goal)
+
+        async def build_execution_plan(self, item, understanding, *, candidate_actions):
+            self.execution_plan_calls += 1
+            return KairosExecutionPlan(
+                plan_id=f"plan-replan-{self.execution_plan_calls}",
+                work_id=item.work_id,
+                summary="force agent execute replan",
+                steps=[
+                    {
+                        "step_id": item.current_step,
+                        "action_kind": "agent_execute",
+                        "reason": "llm-only should keep planning each tick for document work",
+                        "required_skills": ["bash"],
+                        "execution_prompt": "read work.md and continue one autonomous step",
+                    }
+                ],
+            )
+
+    state = KairosState(
+        enabled=True,
+        running=True,
+        mode=KairosMode.IDLE,
+        policy=KairosContinuationPolicy(llm_only_decision_enabled=True, proactive_scan_enabled=True),
+        document_work_items=[
+            DocumentReadResult(
+                work_id="work:python-cli",
+                goal="build python cli",
+                status="pending_requirements",
+                current_step="requirements",
+                next_actions=["draft requirements document"],
+                expected_artifacts=["requirements/session-1/work.md"],
+                source_docs=["requirements/session-1/work.md"],
+            )
+        ],
+        current_execution_plan=KairosExecutionPlan(
+            plan_id="stale-document-plan",
+            work_id="work:python-cli",
+            steps=[{"step_id": "requirements", "action_kind": "agent_execute", "execution_prompt": "stale"}],
+        ),
+        current_action_payload=KairosActionPayload(
+            action_kind="agent_execute",
+            rationale="stale action payload",
+            args={"execution_prompt": "stale"},
+        ),
+        last_planning_result={
+            "selected_candidate": {
+                "candidate_id": "work:python-cli:requirements:continue_workflow",
+                "action": "continue_workflow",
+            },
+            "final_action": {
+                "kind": "run_dex_task",
+                "reason": "document_work_ready",
+                "payload": {
+                    "work_id": "work:python-cli",
+                    "step_id": "requirements",
+                    "description": "draft requirements document",
+                },
+            },
+        },
+    )
+
+    runtime = KairosRuntime(
+        state=state,
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+    planner = FakePlanner()
+    runtime._llm_planner = planner
+
+    refresh_called = {"value": False}
+
+    def _mark_refresh_called(_state):
+        refresh_called["value"] = True
+
+    runtime._continuation_engine.refresh_unfinished_work = _mark_refresh_called
+
+    await runtime.tick_once()
+
+    assert refresh_called["value"] is False
+    assert planner.execution_plan_calls == 1
+    assert runtime.state.last_planning_result["selected_candidate"]["action"] == "agent_execute"
+    assert runtime.state.last_planning_result["final_action"]["kind"] == "agent_execute"
+    assert all(trigger.kind is not TriggerKind.INTERNAL for trigger in runtime.state.pending_triggers)
+    assert all(action.kind not in {"create_dex_task", "run_dex_task"} for action in runtime.state.planned_actions)
+    assert any(reason.startswith("agent_execute::") for reason in run_turn_reasons)
+
+
+@pytest.mark.asyncio
 async def test_dispatch_action_payload_updates_document_when_patch_present(tmp_path):
     _, _, _, save_state, emit_event, append_log = _make_callbacks()
 

@@ -17,9 +17,11 @@ from .document_protocol import (
 )
 from .continuation import ContinuationDecision, ContinuationEngine
 from .models import (
+    DocumentReadResult,
     KairosActionPayload,
     KairosAttentionItem,
     KairosEvent,
+    KairosExecutionPlan,
     KairosMode,
     KairosPlannedAction,
     KairosReplanResult,
@@ -237,15 +239,31 @@ class KairosRuntime:
             ready_trigger_count = len(self.state.pending_triggers)
             self._continuation_engine._path_exists = self._path_exists
             previous_planning_snapshot = dict(self.state.last_planning_result)
+            planner = getattr(self, "_llm_planner", None)
+            document_planner_mode = bool(
+                planner is not None
+                and self.state.active_workflow is None
+                and self.state.document_work_items
+            )
             await self._poll_dex()
-            if not (self.state.policy.llm_only_decision_enabled and self.state.active_workflow is not None):
+            if not (
+                self.state.policy.llm_only_decision_enabled
+                and self.state.active_workflow is not None
+            ) and not document_planner_mode:
                 self._continuation_engine.refresh_unfinished_work(self.state)
             if self.state.active_workflow is None and self.state.document_work_items:
-                planner = getattr(self, "_llm_planner", None)
                 planner_failure: Exception | None = None
+                planner_dispatched = False
                 if planner is None and self.state.policy.llm_only_decision_enabled:
                     planner_failure = RuntimeError("llm planner unavailable")
-                if planner is not None and not self.state.current_execution_plan.steps:
+                should_run_document_llm_planner = bool(
+                    planner is not None
+                    and (
+                        not self.state.current_execution_plan.steps
+                        or document_planner_mode
+                    )
+                )
+                if should_run_document_llm_planner:
                     try:
                         understanding = await planner.draft_requirement_understanding(self.state.document_work_items[0])
                         self.state.current_understanding = understanding
@@ -290,7 +308,21 @@ class KairosRuntime:
                                     work_item=self.state.document_work_items[0],
                                     step=first_step,
                                 )
+                            self._set_document_llm_planning_result(
+                                item=self.state.document_work_items[0],
+                                plan=self.state.current_execution_plan,
+                                selected_step=first_step,
+                                action_payload=self.state.current_action_payload,
+                                candidate_actions=[
+                                    "update_document",
+                                    "spawn_dex_task",
+                                    "agent_execute",
+                                    "ask_user",
+                                    "sleep",
+                                ],
+                            )
                             await self._dispatch_action_payload()
+                            planner_dispatched = True
                         else:
                             raise ValueError("llm planner produced empty execution plan")
                     except Exception as exc:
@@ -330,10 +362,11 @@ class KairosRuntime:
                     }
                     await self._persist()
                 else:
-                    final_action = dict(self.state.last_planning_result.get("final_action", {}))
-                    if final_action.get("kind"):
-                        decision = self._continuation_engine._decision_from_final_action(final_action)
-                        self.state.pending_triggers.extend(self._continuation_engine.apply_decisions(self.state, [decision]))
+                    if not planner_dispatched:
+                        final_action = dict(self.state.last_planning_result.get("final_action", {}))
+                        if final_action.get("kind"):
+                            decision = self._continuation_engine._decision_from_final_action(final_action)
+                            self.state.pending_triggers.extend(self._continuation_engine.apply_decisions(self.state, [decision]))
             await self._record_planning_transition(previous_planning_snapshot)
             self._sync_attention_from_planning()
             await self._auto_resume_waiting_input_if_timed_out(now)
@@ -471,6 +504,211 @@ class KairosRuntime:
             return result
         normalized = str(raw_value).strip()
         return [normalized] if normalized else []
+
+    @staticmethod
+    def _planning_tier_for_action(action: str) -> str:
+        if action in {"ask_user", "blocked"}:
+            return "high"
+        if action == "sleep":
+            return "low"
+        return "medium"
+
+    @staticmethod
+    def _planning_priority_for_action(action: str) -> int:
+        if action == "ask_user":
+            return 100
+        if action == "spawn_dex_task":
+            return 70
+        if action == "agent_execute":
+            return 65
+        if action == "update_document":
+            return 55
+        if action == "sleep":
+            return 10
+        return 50
+
+    def _build_document_llm_final_action(
+        self,
+        *,
+        item: DocumentReadResult,
+        selected_step: dict[str, Any],
+        action_payload: KairosActionPayload,
+    ) -> dict[str, Any]:
+        action = str(action_payload.action_kind or selected_step.get("action_kind") or "agent_execute").strip()
+        step_id = str(selected_step.get("step_id") or item.current_step or "document_work").strip() or "document_work"
+        reason = str(selected_step.get("reason") or action_payload.rationale or "llm_document_plan").strip() or "llm_document_plan"
+
+        if action == "update_document":
+            return {
+                "kind": "update_work_document",
+                "reason": reason,
+                "payload": {
+                    "work_id": item.work_id,
+                    "step_id": step_id,
+                    "target_doc": action_payload.target_doc,
+                    "section_updates": list(action_payload.section_updates or []),
+                },
+            }
+        if action == "spawn_dex_task":
+            return {
+                "kind": "run_dex_task",
+                "reason": reason,
+                "payload": {
+                    "work_id": item.work_id,
+                    "step_id": step_id,
+                    "description": action_payload.description,
+                    "command_template_id": action_payload.command_template_id,
+                    "args": dict(action_payload.args or {}),
+                    "expected_artifacts": list(action_payload.expected_artifacts or []),
+                },
+            }
+        if action == "agent_execute":
+            args = dict(action_payload.args or {})
+            return {
+                "kind": "agent_execute",
+                "reason": reason,
+                "payload": {
+                    "work_id": item.work_id,
+                    "step_id": step_id,
+                    "required_skills": self._coerce_skill_list(args.get("required_skills")),
+                    "execution_prompt": str(args.get("execution_prompt") or "").strip(),
+                },
+            }
+        if action == "ask_user":
+            message = str(action_payload.question or action_payload.why_blocked or reason).strip() or reason
+            return {
+                "kind": "ask_user",
+                "reason": reason,
+                "payload": {
+                    "work_id": item.work_id,
+                    "step_id": step_id,
+                    "message": message,
+                    "timeout_hint": action_payload.timeout_hint,
+                },
+            }
+        if action == "sleep":
+            return {
+                "kind": "sleep_until_signal",
+                "reason": reason,
+                "payload": {
+                    "work_id": item.work_id,
+                    "step_id": step_id,
+                },
+            }
+        if action == "summarize_progress":
+            return {
+                "kind": "emit_brief_only",
+                "reason": reason,
+                "payload": {
+                    "work_id": item.work_id,
+                    "step_id": step_id,
+                    "brief": action_payload.brief,
+                },
+            }
+        return {
+            "kind": "emit_brief_only",
+            "reason": reason,
+            "payload": {
+                "work_id": item.work_id,
+                "step_id": step_id,
+                "brief": str(action_payload.brief or action_payload.rationale or reason),
+            },
+        }
+
+    def _set_document_llm_planning_result(
+        self,
+        *,
+        item: DocumentReadResult,
+        plan: KairosExecutionPlan,
+        selected_step: dict[str, Any],
+        action_payload: KairosActionPayload,
+        candidate_actions: list[str],
+    ) -> None:
+        selected_action = str(action_payload.action_kind or selected_step.get("action_kind") or "agent_execute").strip() or "agent_execute"
+        step_id = str(selected_step.get("step_id") or item.current_step or "document_work").strip() or "document_work"
+        selected_candidate_id = f"{item.work_id}:{step_id}:{selected_action}"
+        selected_reason = str(selected_step.get("reason") or action_payload.rationale or "llm_document_plan").strip() or "llm_document_plan"
+
+        candidates_considered: list[dict[str, Any]] = []
+        for action in candidate_actions:
+            normalized_action = str(action or "").strip()
+            if not normalized_action:
+                continue
+            candidate_id = f"{item.work_id}:{step_id}:{normalized_action}"
+            blocked = False
+            rejected_reason = None
+            if normalized_action == selected_action:
+                selected = True
+            else:
+                selected = False
+                rejected_reason = "not selected by llm execution plan"
+            candidate_payload: dict[str, Any] = {
+                "work_id": item.work_id,
+                "step_id": step_id,
+                "goal": item.goal,
+            }
+            if normalized_action == "agent_execute":
+                args = dict(action_payload.args or {})
+                candidate_payload.update(
+                    {
+                        "required_skills": self._coerce_skill_list(args.get("required_skills")),
+                        "execution_prompt": str(args.get("execution_prompt") or "").strip(),
+                    }
+                )
+            candidates_considered.append(
+                {
+                    "candidate_id": candidate_id,
+                    "action": normalized_action,
+                    "tier": self._planning_tier_for_action(normalized_action),
+                    "priority": self._planning_priority_for_action(normalized_action),
+                    "blocked": blocked,
+                    "selected": selected,
+                    "reason": selected_reason if selected else "candidate available",
+                    "payload": candidate_payload,
+                    **({"rejected_reason": rejected_reason} if rejected_reason else {}),
+                }
+            )
+
+        selected_candidate = next(
+            (candidate for candidate in candidates_considered if candidate.get("action") == selected_action),
+            None,
+        )
+        if selected_candidate is None:
+            selected_candidate = {
+                "candidate_id": selected_candidate_id,
+                "action": selected_action,
+                "tier": self._planning_tier_for_action(selected_action),
+                "priority": self._planning_priority_for_action(selected_action),
+                "blocked": False,
+                "selected": True,
+                "reason": selected_reason,
+                "payload": {"work_id": item.work_id, "step_id": step_id, "goal": item.goal},
+            }
+            candidates_considered.append(dict(selected_candidate))
+
+        rejected_candidates = [
+            {k: v for k, v in candidate.items() if k != "selected"}
+            for candidate in candidates_considered
+            if candidate.get("candidate_id") != selected_candidate.get("candidate_id")
+        ]
+        final_action = self._build_document_llm_final_action(
+            item=item,
+            selected_step=selected_step,
+            action_payload=action_payload,
+        )
+        self.state.last_planning_result = {
+            "ts": datetime.now(UTC).isoformat(),
+            "goal": item.goal,
+            "workflow_id": None,
+            "stage_id": step_id,
+            "plan_id": plan.plan_id,
+            "summary": plan.summary,
+            "candidates_considered": candidates_considered,
+            "selected_candidate": selected_candidate,
+            "rejected_candidates": rejected_candidates,
+            "final_action": final_action,
+            "policy_note": "llm document planner winner",
+        }
 
     @staticmethod
     def _normalize_skill_hint(value: str) -> str:
