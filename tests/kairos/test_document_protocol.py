@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from src.adk_agent.kairos.document_protocol import append_spawned_work_update, write_work_document
+from src.adk_agent.kairos.document_protocol import (
+    append_spawned_work_update,
+    append_user_guidance_update,
+    write_work_document,
+)
 from src.adk_agent.kairos.models import DocumentReadResult
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -67,3 +71,26 @@ def test_append_spawned_work_update_writes_replan_and_spawned_sections(tmp_path)
     assert "## Spawned Work" in updated
     assert "work:test:todo:codegen: generate todo app code" in updated
     assert "source_doc=" in updated
+
+
+def test_append_user_guidance_update_writes_response_into_replan_notes(tmp_path):
+    item = DocumentReadResult(
+        work_id="work:test:cli",
+        goal="build python cli",
+        status="blocked",
+        current_step="requirements",
+        next_actions=["draft requirements doc"],
+        expected_artifacts=["requirements/session-1/work.md"],
+        source_docs=["/kairos/work/register:session-1"],
+    )
+    doc_path = write_work_document(tmp_path, item)
+
+    updated = append_user_guidance_update(
+        doc_path,
+        attention_id="attention-123",
+        response="Keep CLI output in JSON and plain table modes.",
+    )
+
+    assert "## Replan Notes" in updated
+    assert "User guidance [attention-123]" in updated
+    assert "JSON and plain table modes" in updated

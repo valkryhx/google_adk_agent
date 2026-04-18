@@ -178,9 +178,7 @@ class ContinuationEngine:
         self,
         document_work_items: list[DocumentReadResult],
     ) -> dict[str, Any] | None:
-        for item in document_work_items:
-            if item.status in {"completed", "done", "cancelled"}:
-                continue
+        def _as_work_item(item: DocumentReadResult) -> dict[str, Any]:
             return {
                 "work_id": item.work_id,
                 "kind": "document_work_item",
@@ -197,6 +195,17 @@ class ContinuationEngine:
                 "expected_artifacts": list(item.expected_artifacts),
                 "source_docs": list(item.source_docs),
             }
+
+        blocked_items: list[DocumentReadResult] = []
+        for item in document_work_items:
+            if item.status in {"completed", "done", "cancelled"}:
+                continue
+            if item.status == "blocked" or item.human_input_required:
+                blocked_items.append(item)
+                continue
+            return _as_work_item(item)
+        if blocked_items:
+            return _as_work_item(blocked_items[0])
         return None
 
     def _build_document_proactive_candidates(self, work_item: dict[str, Any]) -> list[dict[str, Any]]:

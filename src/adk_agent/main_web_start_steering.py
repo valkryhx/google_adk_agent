@@ -65,7 +65,7 @@ from src.adk_agent.auto_compact_agent import AutoCompactAgent
 from src.adk_agent.kairos.activity_log import KairosActivityLog
 from src.adk_agent.kairos.api import register_kairos_routes
 from src.adk_agent.kairos.dex_bridge import KairosDexBridge
-from src.adk_agent.kairos.document_protocol import append_spawned_work_update, build_requirement_work_item, write_work_document
+from src.adk_agent.kairos.document_protocol import append_spawned_work_update
 from src.adk_agent.kairos.llm_planner import KairosPlanner
 from src.adk_agent.kairos.llm_verifier import KairosVerifier
 from src.adk_agent.kairos.models import (
@@ -82,26 +82,6 @@ from skills.dex.tools import _normalize_command_args
 SessionKey = Tuple[str, str, str]
 
 # 中断异常定义（仍然被 SteeringSession 使用）
-class RequirementDraft:
-    def __init__(self, work_item, doc_path: Path):
-        self.work_item = work_item
-        self.doc_path = doc_path
-
-    def to_chunks(self) -> list[dict[str, Any]]:
-        brief = f"已创建需求工作文档: {self.doc_path.as_posix()}"
-        if self.work_item.open_questions:
-            question_lines = "\n".join(f"- {question}" for question in self.work_item.open_questions)
-            brief += f"\n\n需要你补充的信息:\n{question_lines}"
-        return [{"type": "text", "content": brief}]
-
-
-def _looks_like_supported_requirement(message: str) -> bool:
-    text = message.strip().lower()
-    if not text:
-        return False
-    return any(keyword in text for keyword in ("build", "create", "todo", "app", "requirements"))
-
-
 class UserInterruption(Exception):
     """用户手动触发的中断异常"""
     pass
@@ -484,48 +464,6 @@ class SteeringSession:
         )
 
 
-    async def draft_user_requirement_work_item(self, requirement: str):
-        runtime = self.get_or_create_kairos_runtime()
-        work_item = build_requirement_work_item(requirement, session_id=self.session_id)
-        doc_path = write_work_document(Path(_PROJECT_ROOT), work_item)
-        runtime.state.document_work_items = [
-            item for item in runtime.state.document_work_items if item.work_id != work_item.work_id
-        ]
-        runtime.state.document_work_items.insert(0, work_item)
-        planner = getattr(runtime, "_llm_planner", None)
-        if planner is not None:
-            try:
-                understanding = await planner.draft_requirement_understanding(work_item)
-                runtime.state.current_understanding = understanding
-                execution_plan = await planner.build_execution_plan(
-                    work_item,
-                    understanding,
-                    candidate_actions=["update_document", "spawn_dex_task", "ask_user", "sleep"],
-                )
-                runtime.state.current_execution_plan = execution_plan
-                if execution_plan.steps:
-                    first_step = execution_plan.steps[0]
-                    if first_step.get("action_kind") == "update_document":
-                        runtime.state.current_action_payload = await planner.build_document_patch_payload(
-                            work_item=work_item,
-                            step=first_step,
-                        )
-                    elif first_step.get("action_kind") == "spawn_dex_task":
-                        runtime.state.current_action_payload = await planner.build_design_codegen_payload(
-                            work_item=work_item,
-                            step=first_step,
-                        )
-                    else:
-                        runtime.state.current_action_payload = await planner.build_action_payload(
-                            work_item=work_item,
-                            step=first_step,
-                        )
-            except Exception as exc:
-                await runtime._record("brief", f"llm planning fallback active: {type(exc).__name__}: {exc}")
-        runtime._continuation_engine.refresh_unfinished_work(runtime.state)
-        await self._save_kairos_state(runtime.state)
-        return work_item, doc_path
-
     async def create_kairos_follow_up_task(self, description: str, trigger_reason: str, payload: dict | None = None):
         runtime = self.get_or_create_kairos_runtime()
         dex = KairosDexBridge(base_dir=_PROJECT_ROOT, user_id=self.user_id).manager
@@ -744,6 +682,7 @@ class SteeringSession:
                 max_retries=planner_config.max_retries,
             )
             self.kairos_runtime._llm_verifier = KairosVerifier(self.kairos_runtime._llm_planner)
+            self.kairos_runtime.state.policy.llm_only_decision_enabled = True
         self.kairos_runtime._path_exists = lambda path: Path(_PROJECT_ROOT, path).exists()
         self.kairos_runtime._continuation_engine._path_exists = self.kairos_runtime._path_exists
         return self.kairos_runtime

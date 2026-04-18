@@ -221,6 +221,52 @@ class KairosPlanner:
         raw = await self._complete_json(system_prompt, user_prompt)
         return KairosReplanResult(**raw)
 
+    async def plan_follow_up_action(
+        self,
+        *,
+        workflow_id: str,
+        workflow_status: str,
+        current_stage: str | None,
+        blocked_reason: str | None,
+        completed_task_ids: list[str],
+        required_artifacts: list[dict[str, Any]],
+        verification_result: dict[str, Any],
+        tracked_tasks: list[dict[str, Any]],
+        default_follow_up_description: str,
+    ) -> dict[str, Any]:
+        system_prompt = (
+            "你是 Kairos 的后台自治 follow-up 决策器。"
+            "你必须只在三个动作中选择一个：create_follow_up, ask_user, sleep。"
+            "输出 JSON 字段仅允许：action,reason,description,message。"
+            "当 action=create_follow_up 时，description 必须是简短可执行的任务描述。"
+            "当 action=ask_user 时，message 必须说明阻塞原因。"
+            "禁止输出 shell 命令。"
+        )
+        user_prompt = json.dumps(
+            {
+                "workflow_id": workflow_id,
+                "workflow_status": workflow_status,
+                "current_stage": current_stage,
+                "blocked_reason": blocked_reason,
+                "completed_task_ids": completed_task_ids,
+                "required_artifacts": required_artifacts,
+                "verification_result": verification_result,
+                "tracked_tasks": tracked_tasks,
+                "default_follow_up_description": default_follow_up_description,
+            },
+            ensure_ascii=False,
+        )
+        raw = await self._complete_json(system_prompt, user_prompt)
+        action = str(raw.get("action") or "sleep").strip().lower()
+        if action not in {"create_follow_up", "ask_user", "sleep"}:
+            action = "sleep"
+        return {
+            "action": action,
+            "reason": raw.get("reason"),
+            "description": raw.get("description"),
+            "message": raw.get("message"),
+        }
+
     async def _complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         try:
             response = await litellm.acompletion(

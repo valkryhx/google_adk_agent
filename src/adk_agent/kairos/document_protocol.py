@@ -134,6 +134,19 @@ def append_spawned_work_update(
     return text
 
 
+def append_user_guidance_update(
+    doc_path: Path,
+    *,
+    attention_id: str,
+    response: str,
+) -> str:
+    text = doc_path.read_text(encoding="utf-8")
+    guidance_entry = f"- User guidance [{attention_id}]: {response}"
+    text = _append_section_entry(text, "Replan Notes", guidance_entry, placeholder="- no replans yet")
+    doc_path.write_text(text, encoding="utf-8")
+    return text
+
+
 def _append_section_entry(text: str, section_name: str, entry: str, *, placeholder: str) -> str:
     header = f"## {section_name}"
     next_header = "\n## "

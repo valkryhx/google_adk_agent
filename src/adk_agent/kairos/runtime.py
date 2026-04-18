@@ -7,9 +7,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .document_protocol import append_spawned_work_update
-from .continuation import ContinuationEngine
+from .document_protocol import append_spawned_work_update, append_user_guidance_update
+from .continuation import ContinuationDecision, ContinuationEngine
 from .models import (
+    KairosAttentionItem,
     KairosEvent,
     KairosMode,
     KairosPlannedAction,
@@ -181,7 +182,8 @@ class KairosRuntime:
             self._continuation_engine._path_exists = self._path_exists
             previous_planning_snapshot = dict(self.state.last_planning_result)
             await self._poll_dex()
-            self._continuation_engine.refresh_unfinished_work(self.state)
+            if not (self.state.policy.llm_only_decision_enabled and self.state.active_workflow is not None):
+                self._continuation_engine.refresh_unfinished_work(self.state)
             if self.state.active_workflow is None and self.state.document_work_items:
                 planner = getattr(self, "_llm_planner", None)
                 if planner is not None and not self.state.current_execution_plan.steps:
@@ -218,6 +220,7 @@ class KairosRuntime:
                 )
                 self.state.pending_triggers.extend(self._continuation_engine.apply_decisions(self.state, [decision]))
             await self._record_planning_transition(previous_planning_snapshot)
+            self._sync_attention_from_planning()
 
             if not self.state.running:
                 return
@@ -336,7 +339,22 @@ class KairosRuntime:
         if not payload.action_kind:
             return
         if payload.action_kind == "ask_user":
-            self.state.blocked_reason = payload.why_blocked or payload.question or "waiting for user input"
+            message = payload.why_blocked or payload.question or "waiting for user input"
+            self.state.blocked_reason = message
+            work_id = payload.args.get("work_id") if isinstance(payload.args, dict) else None
+            stage_id = (
+                (payload.args.get("stage_id") if isinstance(payload.args, dict) else None)
+                or (self.state.document_work_items[0].current_step if self.state.document_work_items else None)
+            )
+            workflow_id = self.state.active_workflow.workflow_id if self.state.active_workflow else None
+            self._upsert_attention_item(
+                scope_kind="document_work" if work_id else "workflow_stage",
+                workflow_id=workflow_id,
+                work_id=work_id,
+                stage_id=stage_id,
+                question=message,
+                blocked_reason=message,
+            )
             self.state.mode = KairosMode.WAITING_INPUT
             return
         if payload.action_kind == "sleep":
@@ -458,6 +476,154 @@ class KairosRuntime:
                     root_cause_hypothesis=str(exc),
                 )
 
+    def _upsert_attention_item(
+        self,
+        *,
+        scope_kind: str,
+        workflow_id: str | None,
+        work_id: str | None,
+        stage_id: str | None,
+        question: str | None,
+        blocked_reason: str | None,
+    ) -> KairosAttentionItem:
+        now = datetime.now(UTC).isoformat()
+        for item in self.state.attention_items:
+            if item.status != "pending":
+                continue
+            if (
+                item.scope_kind == scope_kind
+                and item.workflow_id == workflow_id
+                and item.work_id == work_id
+                and item.stage_id == stage_id
+            ):
+                item.question = question or item.question
+                item.blocked_reason = blocked_reason or item.blocked_reason
+                item.updated_at = now
+                return item
+
+        created = KairosAttentionItem(
+            attention_id=f"attention-{int(datetime.now(UTC).timestamp() * 1000)}",
+            scope_kind=scope_kind,
+            workflow_id=workflow_id,
+            work_id=work_id,
+            stage_id=stage_id,
+            question=question,
+            blocked_reason=blocked_reason,
+            status="pending",
+            created_at=now,
+            updated_at=now,
+        )
+        self.state.attention_items.append(created)
+        return created
+
+    def _sync_attention_from_planning(self) -> None:
+        planning = dict(self.state.last_planning_result or {})
+        final_action = dict(planning.get("final_action", {}))
+        kind = final_action.get("kind")
+        if kind not in {"ask_user", "record_blocked"}:
+            return
+        payload = dict(final_action.get("payload", {}))
+        message = payload.get("message") or self.state.blocked_reason or final_action.get("reason")
+        workflow_id = (
+            payload.get("workflow_id")
+            or planning.get("workflow_id")
+            or (self.state.active_workflow.workflow_id if self.state.active_workflow else None)
+        )
+        stage_id = (
+            payload.get("step_id")
+            or payload.get("stage_id")
+            or planning.get("stage_id")
+            or (self.state.active_workflow.current_stage if self.state.active_workflow else None)
+        )
+        work_id = payload.get("work_id")
+        item = self._upsert_attention_item(
+            scope_kind="document_work" if work_id else "workflow_stage",
+            workflow_id=workflow_id,
+            work_id=work_id,
+            stage_id=stage_id,
+            question=message if kind == "ask_user" else None,
+            blocked_reason=message,
+        )
+        if work_id:
+            for document_item in self.state.document_work_items:
+                if document_item.work_id != work_id:
+                    continue
+                document_item.human_input_required = True
+                if document_item.status not in {"completed", "done", "cancelled"}:
+                    document_item.status = "blocked"
+                if message and message not in document_item.open_questions:
+                    document_item.open_questions.insert(0, message)
+                break
+        elif self.state.active_workflow is not None and self.state.active_workflow.workflow_id == workflow_id:
+            self.state.active_workflow.status = "waiting_input"
+        self.state.blocked_reason = item.blocked_reason or self.state.blocked_reason
+
+    async def respond_attention(self, attention_id: str, response: str) -> dict[str, Any]:
+        target = next((item for item in self.state.attention_items if item.attention_id == attention_id), None)
+        if target is None:
+            raise ValueError(f"attention item not found: {attention_id}")
+        if target.status == "resolved":
+            return asdict(target)
+
+        now = datetime.now(UTC).isoformat()
+        target.status = "resolved"
+        target.response = response
+        target.resolved_at = now
+        target.updated_at = now
+
+        if target.scope_kind == "document_work" and target.work_id:
+            for item in self.state.document_work_items:
+                if item.work_id != target.work_id:
+                    continue
+                item.human_input_required = False
+                if item.status == "blocked":
+                    item.status = "in_progress"
+                item.open_questions = []
+                if item.expected_artifacts:
+                    doc_path = Path.cwd() / item.expected_artifacts[0]
+                    if doc_path.exists():
+                        append_user_guidance_update(
+                            doc_path,
+                            attention_id=attention_id,
+                            response=response,
+                        )
+                break
+        elif (
+            target.scope_kind == "workflow_stage"
+            and self.state.active_workflow is not None
+            and self.state.active_workflow.workflow_id == target.workflow_id
+            and self.state.active_workflow.status == "waiting_input"
+        ):
+            self.state.active_workflow.status = "active"
+
+        has_pending_for_scope = any(
+            item.status == "pending"
+            and item.scope_kind == target.scope_kind
+            and item.workflow_id == target.workflow_id
+            and item.work_id == target.work_id
+            and item.stage_id == target.stage_id
+            for item in self.state.attention_items
+        )
+        if not has_pending_for_scope and self.state.blocked_reason == target.blocked_reason:
+            self.state.blocked_reason = None
+            if self.state.mode == KairosMode.WAITING_INPUT:
+                self.state.mode = KairosMode.IDLE
+
+        await self._record(
+            "brief",
+            f"ask_user response recorded: {attention_id} response={response}",
+        )
+        await self.enqueue_trigger(
+            KairosTrigger(
+                trigger_id=f"attention-{int(datetime.now(UTC).timestamp())}",
+                kind=TriggerKind.MANUAL,
+                reason=f"attention_response:{attention_id}",
+                created_at=datetime.now(UTC).isoformat(),
+                metadata={"attention_id": attention_id, "response": response},
+            )
+        )
+        return asdict(target)
+
     def get_status(self) -> dict:
         payload = asdict(self.state)
         payload["mode"] = self.state.mode.value
@@ -526,7 +692,7 @@ class KairosRuntime:
             self.state.last_planning_result["replan"] = {"changed": False}
             return
 
-        special_actions = {"ask_user", "record_blocked", "sleep_until_signal"}
+        special_actions = {"ask_user", "record_blocked", "sleep_until_signal", "create_follow_up"}
         changed = bool(previous_candidate_id and current_candidate_id and previous_candidate_id != current_candidate_id)
         if changed:
             self.state.last_planning_result["replan"] = {
@@ -734,11 +900,17 @@ class KairosRuntime:
 
         self.state.tracked_dex_task_ids = next_remaining
         if completed_tasks and self.state.active_workflow is not None:
-            decisions = self._continuation_engine.evaluate_after_dex_poll(
-                self.state,
-                completed_tasks=completed_tasks,
-                tracked_tasks=tracked_tasks,
-            )
+            if self.state.policy.llm_only_decision_enabled:
+                decisions = await self._evaluate_after_dex_poll_with_llm_only(
+                    completed_tasks=completed_tasks,
+                    tracked_tasks=tracked_tasks,
+                )
+            else:
+                decisions = self._continuation_engine.evaluate_after_dex_poll(
+                    self.state,
+                    completed_tasks=completed_tasks,
+                    tracked_tasks=tracked_tasks,
+                )
             self.state.pending_triggers.extend(self._continuation_engine.apply_decisions(self.state, decisions))
 
         if next_remaining and self.state.running and not self.state.busy:
@@ -746,6 +918,180 @@ class KairosRuntime:
         elif not next_remaining and self.state.running and not self.state.busy and self.state.mode == KairosMode.HANDOFF:
             self.state.mode = KairosMode.IDLE
         await self._persist()
+
+    async def _evaluate_after_dex_poll_with_llm_only(
+        self,
+        *,
+        completed_tasks: list[object],
+        tracked_tasks: list[object],
+    ) -> list[ContinuationDecision]:
+        workflow = self.state.active_workflow
+        if workflow is None:
+            return []
+        planner = getattr(self, "_llm_planner", None)
+        if planner is None:
+            self.state.blocked_reason = "llm planner unavailable in llm-only mode"
+            self.state.last_planning_result = {
+                "ts": datetime.now(UTC).isoformat(),
+                "goal": workflow.goal,
+                "workflow_id": workflow.workflow_id,
+                "stage_id": workflow.current_stage,
+                "candidates_considered": [],
+                "selected_candidate": {
+                    "candidate_id": f"{workflow.workflow_id}:{workflow.current_stage or 'unknown'}:blocked",
+                    "action": "blocked",
+                    "tier": "high",
+                    "priority": 100,
+                    "selected": True,
+                    "reason": self.state.blocked_reason,
+                },
+                "rejected_candidates": [],
+                "final_action": {
+                    "kind": "record_blocked",
+                    "reason": "llm_unavailable",
+                    "payload": {
+                        "workflow_id": workflow.workflow_id,
+                        "stage_id": workflow.current_stage,
+                        "message": self.state.blocked_reason,
+                    },
+                },
+                "policy_note": "llm-only mode blocks progress when planner is unavailable",
+            }
+            return []
+
+        default_description = "generate final report" if workflow.workflow_id == "demo_report_pipeline" else "generate todo delivery report"
+        required_artifacts: list[dict[str, Any]] = []
+        for stage in workflow.stages:
+            if workflow.workflow_id == "todo_delivery_pipeline" and stage.stage_id == "delivery_report":
+                break
+            if workflow.workflow_id == "demo_report_pipeline" and stage.stage_id == "phase2":
+                break
+            for artifact in stage.artifacts:
+                required_artifacts.append(
+                    {
+                        "artifact": artifact,
+                        "exists": self._path_exists(artifact),
+                    }
+                )
+        tracked_payload = [
+            {
+                "task_id": task.task_id,
+                "status": task.status,
+                "description": task.description,
+                "result_summary": getattr(task, "result_summary", None),
+            }
+            for task in tracked_tasks
+        ]
+        completed_ids = set(workflow.metadata.get("completed_task_ids", []))
+        for task in completed_tasks:
+            if getattr(task, "status", None) == "completed":
+                completed_ids.add(task.task_id)
+                description = getattr(task, "description", None)
+                if description:
+                    completed_ids.add(description)
+        workflow.metadata["completed_task_ids"] = sorted(completed_ids)
+        verification_result = dict(workflow.metadata.get("verification_result") or {})
+        decision = await planner.plan_follow_up_action(
+            workflow_id=workflow.workflow_id,
+            workflow_status=workflow.status,
+            current_stage=workflow.current_stage,
+            blocked_reason=self.state.blocked_reason,
+            completed_task_ids=sorted(completed_ids),
+            required_artifacts=required_artifacts,
+            verification_result=verification_result,
+            tracked_tasks=tracked_payload,
+            default_follow_up_description=default_description,
+        )
+
+        action = decision.get("action")
+        reason = decision.get("reason") or "llm_follow_up_decision"
+        message = decision.get("message")
+        description = (decision.get("description") or default_description).strip()
+        if action == "create_follow_up":
+            payload = {"workflow_id": workflow.workflow_id, "description": description}
+            if any(action.kind == "create_dex_task" and action.payload == payload for action in self.state.planned_actions):
+                return []
+            self.state.blocked_reason = None
+            self.state.last_planning_result = {
+                "ts": datetime.now(UTC).isoformat(),
+                "goal": workflow.goal,
+                "workflow_id": workflow.workflow_id,
+                "stage_id": workflow.current_stage,
+                "candidates_considered": [],
+                "selected_candidate": {
+                    "candidate_id": f"{workflow.workflow_id}:{workflow.current_stage or 'unknown'}:create_follow_up",
+                    "action": "create_follow_up",
+                    "tier": "medium",
+                    "priority": 60,
+                    "selected": True,
+                    "reason": reason,
+                    "payload": payload,
+                },
+                "rejected_candidates": [],
+                "final_action": {
+                    "kind": "create_dex_task",
+                    "reason": reason,
+                    "payload": payload,
+                },
+                "policy_note": "llm-only winner",
+            }
+            return [ContinuationDecision(kind="create_dex_task", reason=reason, payload=payload)]
+        if action == "ask_user":
+            self.state.blocked_reason = message or reason
+            workflow.status = "waiting_input"
+            self.state.last_planning_result = {
+                "ts": datetime.now(UTC).isoformat(),
+                "goal": workflow.goal,
+                "workflow_id": workflow.workflow_id,
+                "stage_id": workflow.current_stage,
+                "candidates_considered": [],
+                "selected_candidate": {
+                    "candidate_id": f"{workflow.workflow_id}:{workflow.current_stage or 'unknown'}:ask_user",
+                    "action": "ask_user",
+                    "tier": "high",
+                    "priority": 100,
+                    "selected": True,
+                    "reason": self.state.blocked_reason,
+                },
+                "rejected_candidates": [],
+                "final_action": {
+                    "kind": "ask_user",
+                    "reason": reason,
+                    "payload": {
+                        "workflow_id": workflow.workflow_id,
+                        "stage_id": workflow.current_stage,
+                        "message": self.state.blocked_reason,
+                    },
+                },
+                "policy_note": "llm-only winner",
+            }
+            return []
+        self.state.last_planning_result = {
+            "ts": datetime.now(UTC).isoformat(),
+            "goal": workflow.goal,
+            "workflow_id": workflow.workflow_id,
+            "stage_id": workflow.current_stage,
+            "candidates_considered": [],
+            "selected_candidate": {
+                "candidate_id": f"{workflow.workflow_id}:{workflow.current_stage or 'unknown'}:sleep",
+                "action": "sleep",
+                "tier": "low",
+                "priority": 10,
+                "selected": True,
+                "reason": reason,
+            },
+            "rejected_candidates": [],
+            "final_action": {
+                "kind": "sleep_until_signal",
+                "reason": reason,
+                "payload": {
+                    "workflow_id": workflow.workflow_id,
+                    "stage_id": workflow.current_stage,
+                },
+            },
+            "policy_note": "llm-only winner",
+        }
+        return []
 
     async def _record(self, kind: str, message: str) -> None:
         event = KairosEvent(kind=kind, message=message, ts=datetime.now(UTC).isoformat())

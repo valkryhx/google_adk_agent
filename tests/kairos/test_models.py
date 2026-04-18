@@ -1,4 +1,5 @@
 from src.adk_agent.kairos.models import (
+    KairosAttentionItem,
     DocumentReadResult,
     KairosContinuationPolicy,
     KairosEvent,
@@ -25,6 +26,7 @@ def test_load_empty_state_uses_defaults():
     assert state.enabled is False
     assert state.mode is KairosMode.STOPPED
     assert state.tracked_dex_task_ids == []
+    assert state.attention_items == []
     assert state.recent_events == []
 
 
@@ -167,6 +169,7 @@ def test_state_round_trip_preserves_proactive_and_policy_fields():
             dedupe_enabled=True,
             proactive_scan_enabled=True,
             cooldown_seconds=60,
+            llm_only_decision_enabled=True,
         ),
     )
 
@@ -188,6 +191,7 @@ def test_state_round_trip_preserves_proactive_and_policy_fields():
     assert restored.last_planning_result["policy_note"] == "winner retained under tiered-action policy"
     assert restored.policy.proactive_scan_enabled is True
     assert restored.policy.cooldown_seconds == 60
+    assert restored.policy.llm_only_decision_enabled is True
 
 
 def test_policy_defaults_are_stable():
@@ -199,6 +203,7 @@ def test_policy_defaults_are_stable():
     assert policy.dedupe_enabled is True
     assert policy.proactive_scan_enabled is True
     assert policy.cooldown_seconds == 60
+    assert policy.llm_only_decision_enabled is False
 
 
 def test_new_kairos_modes_exist():
@@ -230,6 +235,35 @@ def test_load_legacy_state_fills_phase3_defaults():
     assert state.last_planning_result["rejected_candidates"] == []
     assert state.last_planning_result["final_action"] == {}
     assert state.last_planning_result["policy_note"] is None
+    assert state.attention_items == []
+
+
+def test_state_round_trip_preserves_attention_items():
+    state = KairosState(
+        attention_items=[
+            KairosAttentionItem(
+                attention_id="attention-1",
+                scope_kind="document_work",
+                workflow_id=None,
+                work_id="work:python-cli",
+                stage_id="requirements",
+                question="Please confirm CLI output format.",
+                blocked_reason="waiting user confirmation",
+                status="pending",
+                created_at="2026-04-18T09:00:00+00:00",
+                updated_at="2026-04-18T09:00:00+00:00",
+            )
+        ]
+    )
+
+    restored = load_kairos_state(dump_kairos_state(state))
+
+    assert len(restored.attention_items) == 1
+    item = restored.attention_items[0]
+    assert item.attention_id == "attention-1"
+    assert item.scope_kind == "document_work"
+    assert item.work_id == "work:python-cli"
+    assert item.status == "pending"
 
 
 def test_dump_round_trip_preserves_schedule_and_trigger():

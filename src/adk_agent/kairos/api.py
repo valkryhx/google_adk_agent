@@ -32,6 +32,13 @@ class KairosDexRegisterRequest(BaseModel):
     description: str
 
 
+class KairosAttentionRespondRequest(BaseModel):
+    app_name: str
+    user_id: str
+    attention_id: str
+    response: str
+
+
 def _get_session_manager(session_manager):
     return session_manager() if callable(session_manager) else session_manager
 
@@ -83,6 +90,7 @@ def register_kairos_routes(app, session_manager):
             "document_work_items": status.get("document_work_items", []),
             "document_progress": status.get("document_progress", {}),
             "pending_requirements": status.get("pending_requirements", []),
+            "attention_items": status.get("attention_items", []),
             "unfinished_work_items": status.get("unfinished_work_items", []),
             "proactive_candidates": status.get("proactive_candidates", []),
             "last_proactive_scan": status.get("last_proactive_scan", {}),
@@ -151,6 +159,19 @@ def register_kairos_routes(app, session_manager):
         runtime = session.get_or_create_kairos_runtime()
         await runtime.register_dex_task(req.task_id, req.description)
         return {"status": "ok", "session_id": session_id, "kairos": runtime.get_status()}
+
+    @router.post("/api/sessions/{session_id}/kairos/attention/respond")
+    async def respond_attention(session_id: str, req: KairosAttentionRespondRequest):
+        manager = _get_session_manager(session_manager)
+        session = manager.get_or_create(req.app_name, req.user_id, session_id)
+        runtime = session.get_or_create_kairos_runtime()
+        resolved = await runtime.respond_attention(req.attention_id, req.response)
+        return {
+            "status": "ok",
+            "session_id": session_id,
+            "resolved_attention": resolved,
+            "kairos": runtime.get_status(),
+        }
 
     # --- Phase 2: Attach/List routes ---
 

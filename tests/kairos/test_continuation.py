@@ -323,6 +323,40 @@ def test_refresh_unfinished_work_uses_document_backed_items_without_workflow_tem
     assert state.last_planning_result["final_action"]["payload"]["description"] == "write cli outline"
 
 
+def test_refresh_unfinished_work_skips_blocked_document_item_when_other_item_is_actionable():
+    state = KairosState(
+        document_work_items=[
+            DocumentReadResult(
+                work_id="work:blocked-cli",
+                goal="blocked cli work",
+                status="blocked",
+                current_step="requirements",
+                next_actions=["wait for user"],
+                blockers=["waiting user input"],
+                open_questions=["Should CLI support table output?"],
+                human_input_required=True,
+                source_docs=["requirements/session-1/work.md"],
+            ),
+            DocumentReadResult(
+                work_id="work:active-web",
+                goal="active web work",
+                status="in_progress",
+                current_step="design",
+                next_actions=["draft ui wireframe"],
+                blockers=[],
+                source_docs=["requirements/session-2/work.md"],
+            ),
+        ]
+    )
+    engine = ContinuationEngine(path_exists=lambda _: True)
+
+    engine.refresh_unfinished_work(state)
+
+    assert state.unfinished_work_items[0]["work_id"] == "work:active-web"
+    assert state.proactive_candidates[0]["action"] == "continue_workflow"
+    assert state.last_planning_result["selected_candidate"]["action"] == "continue_workflow"
+
+
 def test_refresh_unfinished_work_routes_blocked_document_to_high_tier_candidate():
     state = KairosState(
         document_work_items=[

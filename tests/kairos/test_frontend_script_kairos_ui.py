@@ -56,6 +56,20 @@ def test_kairos_modal_includes_proactive_sections():
     assert 'id="kairosPlanningReplan"' in html
 
 
+def test_kairos_modal_includes_attention_panel_and_reply_controls():
+    html = INDEX.read_text(encoding="utf-8")
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert 'id="kairosAttentionItems"' in html
+    assert 'id="kairosAttentionId"' in html
+    assert 'id="kairosAttentionResponse"' in html
+    assert 'id="kairosAttentionRespondBtn"' in html
+    assert "function formatKairosAttentionItems(items)" in text
+    assert "async function respondKairosAttention()" in text
+    assert "document.getElementById('kairosAttentionItems')" in text
+    assert "kairosAttentionRespondBtn.addEventListener('click', respondKairosAttention)" in text
+
+
 def test_planning_card_styles_exist_for_console_shell():
     css = STYLE.read_text(encoding="utf-8")
     mobile = MOBILE.read_text(encoding="utf-8")

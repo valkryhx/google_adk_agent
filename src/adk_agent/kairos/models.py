@@ -86,6 +86,7 @@ class KairosContinuationPolicy:
     dedupe_enabled: bool = True
     proactive_scan_enabled: bool = True
     cooldown_seconds: int = 60
+    llm_only_decision_enabled: bool = False
 
 
 def _default_planning_result() -> dict[str, Any]:
@@ -212,6 +213,22 @@ class KairosActionPayload:
 
 
 @dataclass
+class KairosAttentionItem:
+    attention_id: str
+    scope_kind: str
+    workflow_id: str | None = None
+    work_id: str | None = None
+    stage_id: str | None = None
+    question: str | None = None
+    blocked_reason: str | None = None
+    status: str = "pending"
+    created_at: str | None = None
+    updated_at: str | None = None
+    response: str | None = None
+    resolved_at: str | None = None
+
+
+@dataclass
 class KairosState:
     enabled: bool = False
     running: bool = False
@@ -249,6 +266,7 @@ class KairosState:
     current_action_payload: KairosActionPayload = field(default_factory=KairosActionPayload)
     last_verification_result: KairosVerificationResult = field(default_factory=KairosVerificationResult)
     last_replan_result: KairosReplanResult = field(default_factory=KairosReplanResult)
+    attention_items: list[KairosAttentionItem] = field(default_factory=list)
     recent_events: list[KairosEvent] = field(default_factory=list)
 
     def push_event(self, event: KairosEvent, limit: int = 20) -> None:
@@ -296,6 +314,7 @@ def load_kairos_state(raw: dict[str, Any] | None) -> KairosState:
         current_action_payload=KairosActionPayload(**raw.get("current_action_payload", {})),
         last_verification_result=KairosVerificationResult(**raw.get("last_verification_result", {})),
         last_replan_result=KairosReplanResult(**raw.get("last_replan_result", {})),
+        attention_items=[KairosAttentionItem(**item) for item in raw.get("attention_items", [])],
         recent_events=[KairosEvent(**item) for item in raw.get("recent_events", [])],
     )
 
@@ -357,6 +376,7 @@ def _load_policy(raw: dict[str, Any] | None) -> KairosContinuationPolicy:
         dedupe_enabled=raw.get("dedupe_enabled", True),
         proactive_scan_enabled=raw.get("proactive_scan_enabled", True),
         cooldown_seconds=raw.get("cooldown_seconds", 60),
+        llm_only_decision_enabled=raw.get("llm_only_decision_enabled", False),
     )
 
 

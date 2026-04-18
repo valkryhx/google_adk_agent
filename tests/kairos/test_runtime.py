@@ -6,6 +6,7 @@ import pytest
 
 from src.adk_agent.kairos.models import (
     DocumentReadResult,
+    KairosAttentionItem,
     KairosMode,
     KairosPlannedAction,
     KairosSchedule,
@@ -544,6 +545,40 @@ async def test_runtime_records_special_planning_state_when_sleep_selected():
 
 
 @pytest.mark.asyncio
+async def test_runtime_records_selected_winner_when_create_follow_up_selected():
+    _, emitted, logged, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return None
+
+    state = _todo_runtime_state(current_stage="verification")
+    state.active_workflow.metadata["completed_task_ids"] = [
+        "todo_requirements",
+        "todo_design",
+        "todo_codegen",
+        "todo_tests",
+    ]
+    state.active_workflow.metadata["verification_result"] = {"ready": True, "failures": []}
+
+    runtime = KairosRuntime(
+        state=state,
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+
+    await runtime.tick_once()
+
+    assert runtime.state.last_planning_result["selected_candidate"]["action"] == "create_follow_up"
+    assert runtime.state.last_planning_result.get("replan", {}).get("changed") is False
+    assert any("Selected winner: create_follow_up" in message for _, message in emitted)
+    assert any("Selected winner: create_follow_up" in message for message in logged)
+
+
+@pytest.mark.asyncio
 async def test_tick_once_builds_design_codegen_payload_for_spawn_step():
     _, _, _, save_state, emit_event, append_log = _make_callbacks()
 
@@ -667,6 +702,91 @@ async def test_dispatch_action_payload_updates_document_when_patch_present(tmp_p
         os.chdir(old_cwd)
 
     assert "Follow-up planned via llm generated requirement patch" in doc_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_respond_attention_appends_user_guidance_to_document(tmp_path):
+    _, emitted, logged, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return None
+
+    doc_dir = tmp_path / "requirements" / "session-1"
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    doc_path = doc_dir / "work.md"
+    doc_path.write_text(
+        "# Work Item: build python cli\n\n"
+        "## Goal\nbuild python cli\n\n"
+        "## Current Status\nblocked\n\n"
+        "## Current Step\nrequirements\n\n"
+        "## Steps\n- draft requirements document\n\n"
+        "## Expected Artifacts\n- requirements/session-1/work.md\n\n"
+        "## Blockers\n- waiting user confirmation\n\n"
+        "## Verification\n- confirm scope\n\n"
+        "## Replan Notes\n- Open question: Should CLI support table output?\n\n"
+        "## Spawned Work\n- none yet\n",
+        encoding="utf-8",
+    )
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.WAITING_INPUT,
+            blocked_reason="waiting user confirmation",
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:python-cli",
+                    goal="build python cli",
+                    status="blocked",
+                    current_step="requirements",
+                    next_actions=["draft requirements document"],
+                    expected_artifacts=["requirements/session-1/work.md"],
+                    open_questions=["Should CLI support table output?"],
+                    human_input_required=True,
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ],
+            attention_items=[
+                KairosAttentionItem(
+                    attention_id="attention-1",
+                    scope_kind="document_work",
+                    work_id="work:python-cli",
+                    stage_id="requirements",
+                    question="Should CLI support table output?",
+                    blocked_reason="waiting user confirmation",
+                    status="pending",
+                    created_at="2026-04-18T09:00:00+00:00",
+                    updated_at="2026-04-18T09:00:00+00:00",
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+
+    old_cwd = Path.cwd()
+    try:
+        import os
+        os.chdir(tmp_path)
+        resolved = await runtime.respond_attention("attention-1", "Use JSON and table outputs.")
+    finally:
+        os.chdir(old_cwd)
+
+    updated = doc_path.read_text(encoding="utf-8")
+    assert resolved["status"] == "resolved"
+    assert runtime.state.document_work_items[0].human_input_required is False
+    assert runtime.state.document_work_items[0].status == "in_progress"
+    assert runtime.state.document_work_items[0].open_questions == []
+    assert "User guidance [attention-1]: Use JSON and table outputs." in updated
+    assert runtime.state.pending_triggers
+    assert runtime.state.pending_triggers[-1].reason.startswith("attention_response:")
+    assert any("ask_user response recorded" in message for _, message in emitted)
+    assert any("ask_user response recorded" in message for message in logged)
 
 
 @pytest.mark.asyncio
@@ -2138,3 +2258,158 @@ async def test_completed_inputs_block_when_runtime_path_check_reports_missing_ar
     assert runtime.state.blocked_reason == "missing required artifacts for phase1 follow-up"
     assert runtime.state.active_workflow.status == "waiting_input"
     assert any("quality ready" in msg for _, msg in emitted)
+
+
+@pytest.mark.asyncio
+async def test_llm_only_decision_can_create_follow_up_after_completed_inputs():
+    from src.adk_agent.kairos.models import KairosContinuationPolicy, KairosWorkflow, KairosWorkflowStage
+
+    class Snap:
+        def __init__(self, task_id, status, description, result_summary=None):
+            self.task_id = task_id
+            self.status = status
+            self.description = description
+            self.result = ""
+            self.result_summary = result_summary
+            self.error_summary = None
+            self.created_at = None
+            self.completed_at = "2026-04-05T01:00:00+00:00"
+            self.log_path = f".dex/logs/alice/{task_id}.log"
+
+    bridge = FakeDexBridge()
+    bridge.tasks = {
+        "sales": Snap("sales", "completed", "prepare sales", result_summary="sales ready"),
+        "traffic": Snap("traffic", "completed", "prepare traffic", result_summary="traffic ready"),
+        "quality": Snap("quality", "completed", "prepare quality", result_summary="quality ready"),
+    }
+
+    _, emitted, _, save_state, emit_event, append_log = _make_callbacks()
+    calls = []
+
+    async def run_turn(_):
+        return "ok"
+
+    async def create_follow_up_task(reason, payload):
+        calls.append((reason, payload))
+        return {"id": "report-task"}
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.HANDOFF,
+            tracked_dex_task_ids=["sales", "traffic", "quality"],
+            active_workflow=KairosWorkflow(
+                workflow_id="demo_report_pipeline",
+                goal="auto progress report stage",
+                status="active",
+                current_stage="phase1",
+                stages=[
+                    KairosWorkflowStage(
+                        stage_id="phase1",
+                        label="prepare inputs",
+                        status="running",
+                        task_ids=["sales", "traffic", "quality"],
+                        artifacts=[
+                            "demo_outputs/sales.json",
+                            "demo_outputs/traffic.json",
+                            "demo_outputs/quality.json",
+                        ],
+                    )
+                ],
+                metadata={"completed_task_ids": []},
+            ),
+            policy=KairosContinuationPolicy(llm_only_decision_enabled=True),
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=bridge,
+        create_follow_up_task=create_follow_up_task,
+    )
+    runtime._path_exists = lambda _: True
+
+    class FakePlanner:
+        async def plan_follow_up_action(self, **_kwargs):
+            return {
+                "action": "create_follow_up",
+                "reason": "llm_follow_up_decision",
+                "description": "generate final report",
+                "message": None,
+            }
+
+    runtime._llm_planner = FakePlanner()
+
+    await runtime.tick_once()
+
+    assert calls
+    assert calls[0][0] == "llm_follow_up_decision"
+    assert calls[0][1]["description"] == "generate final report"
+    assert runtime.state.last_planning_result["selected_candidate"]["action"] == "create_follow_up"
+    assert any("Selected winner: create_follow_up" in msg for _, msg in emitted)
+
+
+@pytest.mark.asyncio
+async def test_llm_only_decision_blocks_when_planner_unavailable():
+    from src.adk_agent.kairos.models import KairosContinuationPolicy, KairosWorkflow, KairosWorkflowStage
+
+    class Snap:
+        def __init__(self, task_id, status, description, result_summary=None):
+            self.task_id = task_id
+            self.status = status
+            self.description = description
+            self.result = ""
+            self.result_summary = result_summary
+            self.error_summary = None
+            self.created_at = None
+            self.completed_at = "2026-04-05T01:00:00+00:00"
+            self.log_path = f".dex/logs/alice/{task_id}.log"
+
+    bridge = FakeDexBridge()
+    bridge.tasks = {
+        "sales": Snap("sales", "completed", "prepare sales", result_summary="sales ready"),
+    }
+
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.HANDOFF,
+            tracked_dex_task_ids=["sales"],
+            active_workflow=KairosWorkflow(
+                workflow_id="demo_report_pipeline",
+                goal="auto progress report stage",
+                status="active",
+                current_stage="phase1",
+                stages=[
+                    KairosWorkflowStage(
+                        stage_id="phase1",
+                        label="prepare inputs",
+                        status="running",
+                        task_ids=["sales"],
+                        artifacts=["demo_outputs/sales.json"],
+                    )
+                ],
+                metadata={"completed_task_ids": []},
+            ),
+            policy=KairosContinuationPolicy(llm_only_decision_enabled=True),
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=bridge,
+    )
+    runtime._path_exists = lambda _: True
+
+    await runtime.tick_once()
+
+    assert runtime.state.planned_actions == []
+    assert runtime.state.blocked_reason == "llm planner unavailable in llm-only mode"
+    assert runtime.state.last_planning_result["final_action"]["kind"] == "record_blocked"

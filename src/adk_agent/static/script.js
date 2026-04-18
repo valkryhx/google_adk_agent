@@ -2010,6 +2010,20 @@ document.addEventListener('DOMContentLoaded', () => {
         ].join('\n')).join('\n\n');
     }
 
+    function formatKairosAttentionItems(items) {
+        const pending = (items || []).filter(item => item.status !== 'resolved');
+        if (!pending.length) return '无';
+        return pending.map(item => [
+            `- ${item.attention_id || '-'}`,
+            `  scope: ${item.scope_kind || '-'}`,
+            `  work_id: ${item.work_id || '-'}`,
+            `  stage: ${item.stage_id || '-'}`,
+            `  question: ${item.question || '-'}`,
+            `  blocked: ${item.blocked_reason || '-'}`,
+            `  created: ${item.created_at || '-'}`,
+        ].join('\n')).join('\n\n');
+    }
+
     function formatKairosConditionTree(tree) {
         if (!tree) return '无';
         const satisfied = (tree.satisfied || []).map(item => `  - ${item.kind || '-'}: ${item.target || '-'}${item.reason ? ` (${item.reason})` : ''}`).join('\n') || '  - 无';
@@ -2203,6 +2217,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const kairosAddSchedBtn = document.getElementById('kairosAddSchedBtn');
         const kairosDelSchedBtn = document.getElementById('kairosDelSchedBtn');
         const kairosDexRegBtn = document.getElementById('kairosDexRegBtn');
+        const kairosAttentionRespondBtn = document.getElementById('kairosAttentionRespondBtn');
 
         if (!kairosBtn) return;
 
@@ -2219,6 +2234,7 @@ document.addEventListener('DOMContentLoaded', () => {
         kairosAddSchedBtn.addEventListener('click', addKairosSchedule);
         kairosDelSchedBtn.addEventListener('click', deleteKairosSchedule);
         kairosDexRegBtn.addEventListener('click', registerDexHandoff);
+        kairosAttentionRespondBtn.addEventListener('click', respondKairosAttention);
     }
 
     async function openKairosModal() {
@@ -2250,6 +2266,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const workflowEl = document.getElementById('kairosWorkflow');
         const plannedActionsEl = document.getElementById('kairosPlannedActions');
         const blockedReasonEl = document.getElementById('kairosBlockedReason');
+        const attentionItemsEl = document.getElementById('kairosAttentionItems');
         const resultSummaryEl = document.getElementById('kairosResultSummary');
         const unfinishedWorkEl = document.getElementById('kairosUnfinishedWork');
         const proactiveCandidatesEl = document.getElementById('kairosProactiveCandidates');
@@ -2286,6 +2303,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (workflowEl) workflowEl.textContent = formatKairosWorkflow(kairos.active_workflow || data.active_workflow || null);
             if (plannedActionsEl) plannedActionsEl.textContent = formatKairosPlannedActions(kairos.planned_actions || data.planned_actions || []);
             if (blockedReasonEl) blockedReasonEl.textContent = formatKairosConditionTree(kairos.condition_tree || data.condition_tree) || kairos.blocked_reason || data.blocked_reason || '无';
+            if (attentionItemsEl) attentionItemsEl.textContent = formatKairosAttentionItems(kairos.attention_items || data.attention_items || []);
             if (resultSummaryEl) resultSummaryEl.textContent = formatKairosResultSummaries(kairos.task_summaries || data.task_summaries || []);
             if (unfinishedWorkEl) unfinishedWorkEl.textContent = formatKairosSimpleJson(kairos.unfinished_work_items || data.unfinished_work_items || []);
             if (proactiveCandidatesEl) proactiveCandidatesEl.textContent = formatKairosSimpleJson(kairos.proactive_candidates || data.proactive_candidates || []);
@@ -2302,6 +2320,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (workflowEl) workflowEl.textContent = '无';
             if (plannedActionsEl) plannedActionsEl.textContent = '无';
             if (blockedReasonEl) blockedReasonEl.textContent = '无';
+            if (attentionItemsEl) attentionItemsEl.textContent = '无';
             if (resultSummaryEl) resultSummaryEl.textContent = '无';
             if (unfinishedWorkEl) unfinishedWorkEl.textContent = '无';
             if (proactiveCandidatesEl) proactiveCandidatesEl.textContent = '无';
@@ -2469,6 +2488,37 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {
             console.error('[KAIROS] 注册 dex handoff 失败:', e);
             alert('注册失败: ' + e.message);
+        }
+    }
+
+    async function respondKairosAttention() {
+        const sessionId = getCurrentSessionId();
+        if (!sessionId) return;
+
+        const attention_id = document.getElementById('kairosAttentionId').value;
+        const response = document.getElementById('kairosAttentionResponse').value;
+
+        if (!attention_id || !response) {
+            alert('请填写 attention_id 和回复内容');
+            return;
+        }
+
+        try {
+            const data = await kairosRequest('/kairos/attention/respond', 'POST', {
+                app_name: APP_NAME,
+                user_id: getUserId(),
+                attention_id,
+                response,
+            });
+            if (data.status === 'ok') {
+                alert('回复已提交，Kairos 将继续推进');
+                await refreshKairosStatus();
+            } else {
+                alert('提交失败: ' + (data.error || '未知错误'));
+            }
+        } catch (e) {
+            console.error('[KAIROS] 提交 attention 回复失败:', e);
+            alert('提交失败: ' + e.message);
         }
     }
 

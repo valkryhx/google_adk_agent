@@ -58,6 +58,7 @@ class FakeRuntime:
             "document_work_items": [],
             "document_progress": {},
             "pending_requirements": [],
+            "attention_items": [],
         }
 
     async def start(self):
@@ -88,6 +89,24 @@ class FakeRuntime:
     async def register_dex_task(self, task_id, description):
         self.state["tracked_dex_task_ids"].append(task_id)
         self.state["mode"] = "handoff"
+
+    async def respond_attention(self, attention_id, response):
+        for item in self.state["attention_items"]:
+            if item["attention_id"] != attention_id:
+                continue
+            item["status"] = "resolved"
+            item["response"] = response
+            break
+        else:
+            self.state["attention_items"].append(
+                {
+                    "attention_id": attention_id,
+                    "scope_kind": "document_work",
+                    "status": "resolved",
+                    "response": response,
+                }
+            )
+        return next(item for item in self.state["attention_items"] if item["attention_id"] == attention_id)
 
     def get_status(self):
         return self.state
@@ -300,6 +319,37 @@ def test_register_dex_route_works():
     assert resp.status_code == 200
     assert "abc12345" in resp.json()["kairos"]["tracked_dex_task_ids"]
     assert resp.json()["kairos"]["mode"] == "handoff"
+
+
+def test_respond_attention_route_marks_item_resolved():
+    app = FastAPI()
+    manager = FakeManager()
+    session = manager.get_or_create("demo", "alice", "session_1")
+    session.runtime.state["attention_items"] = [
+        {
+            "attention_id": "attention-1",
+            "scope_kind": "document_work",
+            "status": "pending",
+        }
+    ]
+    register_kairos_routes(app, manager)
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/sessions/session_1/kairos/attention/respond",
+        json={
+            "app_name": "demo",
+            "user_id": "alice",
+            "attention_id": "attention-1",
+            "response": "Proceed with sqlite only.",
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["resolved_attention"]["status"] == "resolved"
+    assert payload["resolved_attention"]["response"] == "Proceed with sqlite only."
+    assert payload["kairos"]["attention_items"][0]["status"] == "resolved"
 
 
 def test_status_route_exposes_tracked_dex_task_details():
