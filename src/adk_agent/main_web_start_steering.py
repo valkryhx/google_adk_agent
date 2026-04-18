@@ -2939,21 +2939,6 @@ class SessionListResponse(BaseModel):
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest, response: Response):
-    if _looks_like_supported_requirement(request.message):
-        session = session_manager.get_or_create(request.app_name, request.user_id, request.session_id)
-        draft = RequirementDraft(*await session.draft_user_requirement_work_item(request.message))
-        runtime = session.get_or_create_kairos_runtime()
-        if runtime.state.running and not runtime.state.busy:
-            await runtime.tick_once()
-        elif runtime.state.running and runtime.state.busy:
-            await runtime.wake("document_requirement_ready")
-
-        async def generate_requirement_chunks():
-            for chunk in draft.to_chunks():
-                yield json.dumps({"chunk": chunk}, ensure_ascii=False) + "\n"
-
-        return StreamingResponse(generate_requirement_chunks(), media_type="application/x-ndjson")
-
     # 1. 检查是否忙碌
     if WORKER_LOCK.locked():
         # === 核心逻辑：智能忙碌响应 ===
