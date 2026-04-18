@@ -128,7 +128,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 06-IMPLEMENTATION: LLM-first autonomous task intelligence（markdown-first skill bridge + replan loop，wave-1: attention/respond + llm-only follow-up 已落地，见 `06-01-SUMMARY.md`）
+- [ ] 06-IMPLEMENTATION: LLM-first autonomous task intelligence（中途已完成思路切换：从“document continuation + dex follow-up”转向“handoff-style、LLM planner 持续驱动 + runtime 直执行 agent_execute”，wave-1/2/3 已落地并完成 stepwise live E2E，见 `06-01-SUMMARY.md`、`06-02-SUMMARY.md`、`06-03-SUMMARY.md`）
 
 **Execution Order:**
 Phases execute in numeric order: 1 → 2 → 3 → 4A → 4B → 5 → 6
@@ -141,7 +141,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4A → 4B → 5 → 6
 | 4A. Explainability, History & Operator UX | 1/1 | Complete | 2026-04-10 |
 | 4B. Goal-Driven Planning Intelligence | 3/3 | Complete | 2026-04-11 |
 | 5. Document-Driven Continuation | 4/4 | Complete | 2026-04-12 |
-| 6. Markdown-First Skill-Using Autonomy | 0/1 | In Progress (wave-1 delivered) | — |
+| 6. Markdown-First Skill-Using Autonomy | 0/1 | In Progress (pivot landed, wave-1/2/3 delivered, stepwise live E2E passed) | — |
 
 ---
-*Last updated: 2026-04-18 after formalizing Phase 6 as active phase*
+*Last updated: 2026-04-19 after Phase-6 pivot and live E2E validation refresh*
