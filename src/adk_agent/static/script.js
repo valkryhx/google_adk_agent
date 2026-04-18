@@ -907,6 +907,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 let contentDisplay = block.content;
                 if (block.tool_name && block.tool_args) {
                     contentDisplay = `${block.tool_name}(${JSON.stringify(block.tool_args, null, 2)})`;
+                    const toolName = String(block.tool_name || '').trim();
+                    if (toolName === 'bash' || toolName === 'file_editor') {
+                        // 仅保留换行优化：把转义换行显示成真实换行
+                        contentDisplay = contentDisplay
+                            .replace(/\\r\\n/g, '\n')
+                            .replace(/\\n/g, '\n')
+                            .replace(/\\r/g, '\n');
+                    }
                 }
 
                 html += `<div class="tool-call">
