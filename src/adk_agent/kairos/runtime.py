@@ -802,6 +802,21 @@ class KairosRuntime:
             if not execution_prompt:
                 await self._block_agent_execute("agent_execute missing execution_prompt")
                 return
+            doc_source: str | None = None
+            if self.state.document_work_items:
+                current_work_item = self.state.document_work_items[0]
+                if current_work_item.expected_artifacts:
+                    doc_source = str(current_work_item.expected_artifacts[0]).strip() or None
+                if not doc_source and current_work_item.source_docs:
+                    doc_source = str(current_work_item.source_docs[0]).strip() or None
+            if doc_source:
+                execution_prompt = (
+                    "[KAIROS_DOC_FIRST]\n"
+                    f"在执行任何动作前，必须先使用 file_editor 读取 `{doc_source}`，并以文档事实作为唯一推进依据。\n"
+                    "先提取并确认：当前步骤、阻塞项、核验要求；再给出执行与更新。\n"
+                    "如果文档不存在或不可读，先明确记录问题并提出修复计划。\n\n"
+                    f"{execution_prompt}"
+                )
             for skill_id in skill_hints:
                 result_entry: dict[str, Any] = {"skill_id": skill_id}
                 resolved_skill_id, resolution_info = self._resolve_skill_hint(
@@ -1003,6 +1018,7 @@ class KairosRuntime:
                         "ask_user",
                         "sleep",
                     ],
+                    understanding=self.state.current_understanding,
                 )
             else:
                 self.state.last_replan_result = KairosReplanResult()

@@ -1040,6 +1040,74 @@ async def test_respond_attention_appends_user_guidance_to_document(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_refresh_verification_state_passes_understanding_to_replan():
+    from src.adk_agent.kairos.models import KairosReplanResult, KairosUnderstandingResult, KairosVerificationResult
+
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return None
+
+    class FakeVerifier:
+        def __init__(self):
+            self.replan_kwargs = None
+
+        async def verify_attempt(self, **_kwargs):
+            return KairosVerificationResult(
+                attempt_id="task-1",
+                verdict="partial",
+                should_replan=True,
+                remaining_gaps=["missing artifact evidence"],
+            )
+
+        async def replan_from_failure(self, **kwargs):
+            self.replan_kwargs = kwargs
+            return KairosReplanResult(replan_reason="verification_gap")
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.IDLE,
+            current_understanding=KairosUnderstandingResult(goal="build python cli"),
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:python-cli",
+                    goal="build python cli",
+                    status="in_progress",
+                    current_step="verification",
+                    next_actions=["verify artifacts"],
+                    expected_artifacts=["requirements/session-1/work.md"],
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+    fake_verifier = FakeVerifier()
+    runtime._llm_verifier = fake_verifier
+
+    await runtime._refresh_verification_state(
+        task_id="task-1",
+        task_description="run verification",
+        task_status="completed",
+        summary="partial verification",
+        artifacts=[{"artifact": "demo_delivery/todo_app/smoke_check.json", "exists": True, "usable": True}],
+    )
+
+    assert fake_verifier.replan_kwargs is not None
+    assert fake_verifier.replan_kwargs["verification_result"]["verdict"] == "partial"
+    assert "agent_execute" in fake_verifier.replan_kwargs["available_actions"]
+    assert fake_verifier.replan_kwargs["understanding"].goal == "build python cli"
+    assert runtime.state.last_replan_result.replan_reason == "verification_gap"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_action_payload_records_spawn_dex_task_as_planned_action():
     _, _, _, save_state, emit_event, append_log = _make_callbacks()
 
@@ -1133,6 +1201,55 @@ async def test_dispatch_agent_execute_loads_skills_and_runs_turn():
 
     assert turn_reasons
     assert turn_reasons[0].startswith("agent_execute::")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_agent_execute_injects_doc_first_file_editor_instruction():
+    _, _, _, save_state, emit_event, append_log = _make_callbacks()
+
+    async def run_turn(_):
+        return "ok"
+
+    runtime = KairosRuntime(
+        state=KairosState(
+            enabled=True,
+            running=True,
+            mode=KairosMode.IDLE,
+            document_work_items=[
+                DocumentReadResult(
+                    work_id="work:python-cli",
+                    goal="build python cli",
+                    status="in_progress",
+                    current_step="requirements",
+                    next_actions=["draft requirements"],
+                    expected_artifacts=["requirements/session-1/work.md"],
+                    source_docs=["requirements/session-1/work.md"],
+                )
+            ],
+        ),
+        save_state=save_state,
+        emit_event=emit_event,
+        append_log=append_log,
+        run_turn=run_turn,
+        dex_bridge=FakeDexBridge(),
+        path_exists=lambda _: True,
+    )
+    from src.adk_agent.kairos.models import KairosActionPayload
+    runtime.state.current_action_payload = KairosActionPayload(
+        action_kind="agent_execute",
+        args={
+            "execution_prompt": "继续推进当前任务并更新结果",
+        },
+    )
+
+    await runtime._dispatch_action_payload()
+
+    assert runtime.state.pending_triggers
+    reason = runtime.state.pending_triggers[0].reason
+    assert reason.startswith("agent_execute::")
+    assert "[KAIROS_DOC_FIRST]" in reason
+    assert "file_editor" in reason
+    assert "requirements/session-1/work.md" in reason
 
 
 @pytest.mark.asyncio

@@ -43,6 +43,44 @@ async def test_complete_json_falls_back_to_plain_text_json_extraction(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_complete_json_falls_back_to_phase_markdown_sections(monkeypatch):
+    planner = KairosPlanner(model="test-model", api_key="k", api_base="http://example.com")
+    calls = []
+
+    class Message:
+        def __init__(self, content):
+            self.content = content
+
+    class Choice:
+        def __init__(self, content):
+            self.message = Message(content)
+
+    class Response:
+        def __init__(self, content):
+            self.choices = [Choice(content)]
+
+    async def fake_acompletion(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise TimeoutError("json mode timeout")
+        return Response(
+            "任务目标: 完成需求梳理\n"
+            "本阶段: 执行情况: 已读取文档\\n核验结果: 仍缺证据\\n计划: 继续补齐\n"
+            "下阶段: 执行目标: 补齐证据\\n核验: evidence>=1\\n计划: agent_execute\n"
+            "任务是否中止: false\n"
+        )
+
+    monkeypatch.setattr("src.adk_agent.kairos.llm_planner.litellm.acompletion", fake_acompletion)
+
+    result = await planner._complete_json("system", "user")
+
+    assert result["goal"] == "完成需求梳理"
+    assert "执行情况" in result["current_phase"]
+    assert "执行目标" in result["next_phase"]
+    assert result["should_stop"] is False
+
+
+@pytest.mark.asyncio
 async def test_complete_json_reads_reasoning_content_when_content_is_none(monkeypatch):
     planner = KairosPlanner(model="test-model", api_key="k", api_base="http://example.com")
 
@@ -286,3 +324,56 @@ def test_sanitize_action_payload_keeps_agent_execute_args():
     assert payload.action_kind == "agent_execute"
     assert payload.args["required_skills"] == ["bash", "file_editor"]
     assert payload.args["execution_prompt"] == "生成并更新任务文档"
+
+
+@pytest.mark.asyncio
+async def test_replan_from_failure_accepts_runtime_style_kwargs(monkeypatch):
+    planner = KairosPlanner(model="test-model", api_key="k", api_base="http://example.com")
+    seen = {}
+
+    async def fake_complete_json(system_prompt, user_prompt):
+        seen["system_prompt"] = system_prompt
+        seen["user_prompt"] = json.loads(user_prompt)
+        return {
+            "replan_reason": "verification evidence insufficient",
+            "root_cause_hypothesis": "artifact proof missing",
+            "revised_steps": [
+                {
+                    "step_id": "verification",
+                    "action_kind": "agent_execute",
+                    "reason": "collect artifact evidence",
+                    "exit_condition": "evidence updated in doc",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(planner, "_complete_json", fake_complete_json)
+
+    item = DocumentReadResult(
+        work_id="work:test:replan",
+        goal="stabilize kairos verification loop",
+        status="in_progress",
+        current_step="verification",
+        next_actions=["collect evidence"],
+        expected_artifacts=["requirements/session/work.md"],
+        source_docs=["requirements/session/work.md"],
+    )
+    understanding = KairosUnderstandingResult(goal=item.goal, assumptions=["artifact-first"])
+
+    result = await planner.replan_from_failure(
+        work_item=item,
+        verification_result={
+            "attempt_id": "task-1",
+            "verdict": "partial",
+            "remaining_gaps": ["missing artifact proof"],
+            "should_replan": True,
+        },
+        available_actions=["agent_execute", "ask_user", "sleep"],
+        understanding=understanding,
+    )
+
+    assert result.replan_reason == "verification evidence insufficient"
+    assert result.revised_steps[0]["action_kind"] == "agent_execute"
+    assert seen["user_prompt"]["verification"]["verdict"] == "partial"
+    assert seen["user_prompt"]["available_actions"] == ["agent_execute", "ask_user", "sleep"]
+    assert seen["user_prompt"]["understanding"]["goal"] == item.goal

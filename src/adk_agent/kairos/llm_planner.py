@@ -151,6 +151,204 @@ class KairosPlanner:
             "skill_selection_hints": hints,
         }
 
+    @staticmethod
+    def _coerce_bool(value: Any) -> bool | None:
+        if isinstance(value, bool):
+            return value
+        text = str(value or "").strip().lower()
+        if not text:
+            return None
+        truthy = {"true", "1", "yes", "y", "stop", "halt", "terminate", "终止", "中止", "停止", "结束"}
+        falsy = {"false", "0", "no", "n", "continue", "继续", "否", "不中止"}
+        if text in truthy:
+            return True
+        if text in falsy:
+            return False
+        return None
+
+    @staticmethod
+    def _split_nonempty_lines(text: str) -> list[str]:
+        return [line.strip("-* \t") for line in str(text or "").splitlines() if line.strip()]
+
+    @staticmethod
+    def _first_line(text: str, default: str = "") -> str:
+        for line in str(text or "").splitlines():
+            cleaned = line.strip()
+            if cleaned:
+                return cleaned
+        return default
+
+    @staticmethod
+    def _normalize_phase_payload(raw: dict[str, Any]) -> dict[str, Any]:
+        data = dict(raw or {})
+        goal = (
+            data.get("任务目标")
+            or data.get("goal")
+            or data.get("task_goal")
+            or data.get("objective")
+            or ""
+        )
+        current_phase = (
+            data.get("本阶段")
+            or data.get("current_phase")
+            or data.get("current")
+            or ""
+        )
+        next_phase = (
+            data.get("下阶段")
+            or data.get("next_phase")
+            or data.get("next")
+            or ""
+        )
+        should_stop = (
+            data.get("任务是否中止")
+            if "任务是否中止" in data
+            else data.get("should_stop")
+        )
+        return {
+            "goal": str(goal or "").strip(),
+            "current_phase": str(current_phase or "").strip(),
+            "next_phase": str(next_phase or "").strip(),
+            "should_stop": KairosPlanner._coerce_bool(should_stop),
+        }
+
+    def _infer_action_kind(self, text: str, *, fallback: str = "agent_execute") -> str:
+        lowered = str(text or "").lower()
+        if not lowered:
+            return fallback
+        if any(token in lowered for token in ("ask_user", "ask user", "需要用户", "用户确认", "人工确认", "提问")):
+            return "ask_user"
+        if any(token in lowered for token in ("sleep", "等待", "稍后", "挂起", "暂缓")):
+            return "sleep"
+        if any(token in lowered for token in ("spawn_dex_task", "dex", "创建任务", "派发任务", "follow-up", "follow up")):
+            return "spawn_dex_task"
+        if any(token in lowered for token in ("update_document", "更新文档", "回写文档", "patch")):
+            return "update_document"
+        if any(token in lowered for token in ("summarize_progress", "总结进度", "阶段总结", "summary")):
+            return "summarize_progress"
+        return fallback
+
+    def _infer_required_skills(self, text: str, skill_context: dict[str, Any]) -> list[str]:
+        content = str(text or "")
+        lowered = content.lower()
+        available_ids = [str(item).strip() for item in skill_context.get("available_skill_ids", []) if str(item).strip()]
+        if not available_ids:
+            return []
+
+        selected: list[str] = []
+        for skill_id in available_ids:
+            if skill_id.lower() in lowered and skill_id not in selected:
+                selected.append(skill_id)
+
+        keyword_to_skill = [
+            (("代码", "仓库", "ripgrep", "grep", "search code"), "codebase_search"),
+            (("命令", "shell", "终端", "bash", "powershell"), "bash"),
+            (("文档", "文件", "markdown", "read file", "edit file"), "file_editor"),
+            (("网络", "联网", "网页", "web", "search"), "web-search"),
+        ]
+        for keywords, candidate_skill in keyword_to_skill:
+            if candidate_skill not in available_ids:
+                continue
+            if candidate_skill in selected:
+                continue
+            if any(keyword in lowered for keyword in keywords):
+                selected.append(candidate_skill)
+
+        return selected[:4]
+
+    @staticmethod
+    def _text_requests_user(text: str) -> bool:
+        lowered = str(text or "").lower()
+        if not lowered:
+            return False
+        return any(token in lowered for token in ("ask_user", "ask user", "需要用户", "用户确认", "人工确认"))
+
+    def _compose_step_from_phase(
+        self,
+        *,
+        phase_payload: dict[str, Any],
+        default_step_id: str,
+        candidate_actions: list[str] | None,
+        skill_context: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        current_phase = str(phase_payload.get("current_phase") or "")
+        next_phase = str(phase_payload.get("next_phase") or "")
+        phase_text = "\n".join(part for part in (current_phase, next_phase) if part).strip()
+        if not phase_text:
+            return None
+
+        action_kind = self._infer_action_kind(phase_text, fallback="agent_execute")
+        candidate_set = set(candidate_actions or [])
+        if candidate_set and action_kind not in candidate_set:
+            action_kind = "agent_execute" if "agent_execute" in candidate_set else next(iter(candidate_set))
+
+        step: dict[str, Any] = {
+            "step_id": default_step_id or "step-1",
+            "action_kind": action_kind,
+            "reason": self._first_line(current_phase, default="phase-planned-action"),
+            "exit_condition": self._first_line(next_phase, default="完成本阶段核验"),
+        }
+        if action_kind == "agent_execute":
+            execution_prompt = next_phase or current_phase or "继续推进任务并更新文档"
+            step["execution_prompt"] = execution_prompt
+            inferred_skills = self._infer_required_skills(execution_prompt, skill_context)
+            if inferred_skills:
+                step["required_skills"] = inferred_skills
+        return step
+
+    @staticmethod
+    def _extract_phase_payload_from_text(text: str) -> dict[str, Any]:
+        section_pattern = re.compile(
+            r"^(?:#{1,6}\s*)?(任务目标|本阶段|下阶段|任务是否中止|goal|current_phase|next_phase|should_stop)\s*[:：]?\s*(.*)$",
+            re.IGNORECASE,
+        )
+        label_to_key = {
+            "任务目标": "goal",
+            "goal": "goal",
+            "本阶段": "current_phase",
+            "current_phase": "current_phase",
+            "下阶段": "next_phase",
+            "next_phase": "next_phase",
+            "任务是否中止": "should_stop",
+            "should_stop": "should_stop",
+        }
+        sections: dict[str, list[str]] = {
+            "goal": [],
+            "current_phase": [],
+            "next_phase": [],
+            "should_stop": [],
+        }
+        current_key: str | None = None
+        for raw_line in str(text or "").splitlines():
+            line = raw_line.rstrip()
+            match = section_pattern.match(line.strip())
+            if match:
+                label = str(match.group(1)).lower()
+                key = label_to_key.get(label, label_to_key.get(str(match.group(1)), ""))
+                if key:
+                    current_key = key
+                    inline_content = str(match.group(2) or "").strip()
+                    if inline_content:
+                        sections[key].append(inline_content)
+                    continue
+            if current_key is not None:
+                sections[current_key].append(line)
+
+        payload: dict[str, Any] = {}
+        for key, lines in sections.items():
+            value = "\n".join(item for item in lines if str(item).strip()).strip()
+            if value:
+                if key == "should_stop":
+                    payload[key] = KairosPlanner._coerce_bool(value)
+                else:
+                    payload[key] = value
+        if payload:
+            return payload
+        text_fallback = str(text or "").strip()
+        if not text_fallback:
+            return {}
+        return {"current_phase": text_fallback}
+
     async def draft_requirement_understanding(self, item: DocumentReadResult) -> KairosUnderstandingResult:
         system_prompt = self._prompt_config.requirement_understanding_system
         user_prompt = json.dumps(
@@ -167,9 +365,50 @@ class KairosPlanner:
             ensure_ascii=False,
         )
         raw = await self._complete_json(system_prompt, user_prompt)
-        if not str(raw.get("goal") or "").strip():
-            raw["goal"] = item.goal
-        return KairosUnderstandingResult(**raw)
+        phase_payload = self._normalize_phase_payload(raw)
+
+        goal = str(raw.get("goal") or phase_payload.get("goal") or item.goal).strip()
+        constraints = list(raw.get("constraints", []))
+        assumptions = list(raw.get("assumptions", []))
+        missing_info = list(raw.get("missing_info", []))
+        success_criteria = list(raw.get("success_criteria", []))
+        current_artifacts = list(raw.get("current_artifacts", []))
+        risk_flags = list(raw.get("risk_flags", []))
+        recommended_mode = raw.get("recommended_mode")
+
+        current_phase_lines = self._split_nonempty_lines(phase_payload.get("current_phase", ""))
+        next_phase_lines = self._split_nonempty_lines(phase_payload.get("next_phase", ""))
+
+        if not constraints and current_phase_lines:
+            constraints = current_phase_lines[:8]
+        if not assumptions:
+            assumptions = [line for line in current_phase_lines if any(token in line for token in ("默认", "假设", "assume"))][:5]
+        if not missing_info:
+            missing_info = [line for line in current_phase_lines if any(token in line for token in ("缺", "阻塞", "待确认", "missing"))][:5]
+        if not success_criteria and next_phase_lines:
+            success_criteria = next_phase_lines[:8]
+        if not current_artifacts:
+            current_artifacts = list(item.expected_artifacts or [])
+        if not risk_flags:
+            risk_flags = [line for line in current_phase_lines if any(token in line.lower() for token in ("风险", "risk", "失败", "error"))][:5]
+        if not recommended_mode:
+            if phase_payload.get("should_stop") is True:
+                recommended_mode = "waiting_artifact"
+            elif self._text_requests_user(phase_payload.get("current_phase", "")):
+                recommended_mode = "ask_user"
+            else:
+                recommended_mode = "active_execution"
+
+        return KairosUnderstandingResult(
+            goal=goal,
+            constraints=constraints,
+            assumptions=assumptions,
+            missing_info=missing_info,
+            success_criteria=success_criteria,
+            current_artifacts=current_artifacts,
+            risk_flags=risk_flags,
+            recommended_mode=str(recommended_mode or "active_execution"),
+        )
 
     async def build_execution_plan(
         self,
@@ -197,6 +436,21 @@ class KairosPlanner:
         raw.setdefault("plan_id", f"plan-{uuid.uuid4().hex[:8]}")
         raw.setdefault("work_id", item.work_id)
         self._sanitize_plan(raw)
+        phase_payload = self._normalize_phase_payload(raw)
+        if not raw["steps"]:
+            phase_step = self._compose_step_from_phase(
+                phase_payload=phase_payload,
+                default_step_id=item.current_step or "step-1",
+                candidate_actions=candidate_actions,
+                skill_context=skill_context,
+            )
+            if phase_step is not None:
+                raw["steps"] = [phase_step]
+                raw["summary"] = raw.get("summary") or phase_payload.get("current_phase") or phase_payload.get("goal")
+                if phase_payload.get("should_stop") is True:
+                    raw["stop_conditions"] = list(raw.get("stop_conditions", [])) + ["任务可中止"]
+                    raw["completion_definition"] = list(raw.get("completion_definition", [])) + ["目标已完成并通过核验"]
+                self._sanitize_plan(raw)
         if not raw["steps"]:
             retry_system_prompt = self._prompt_config.render_execution_plan_retry_system(ALLOWED_ACTION_KINDS)
             retry_user_prompt = json.dumps(
@@ -217,6 +471,21 @@ class KairosPlanner:
             raw.setdefault("plan_id", f"plan-{uuid.uuid4().hex[:8]}")
             raw.setdefault("work_id", item.work_id)
             self._sanitize_plan(raw)
+            phase_payload = self._normalize_phase_payload(raw)
+            if not raw["steps"]:
+                phase_step = self._compose_step_from_phase(
+                    phase_payload=phase_payload,
+                    default_step_id=item.current_step or "step-1",
+                    candidate_actions=candidate_actions,
+                    skill_context=skill_context,
+                )
+                if phase_step is not None:
+                    raw["steps"] = [phase_step]
+                    raw["summary"] = raw.get("summary") or phase_payload.get("current_phase") or phase_payload.get("goal")
+                    if phase_payload.get("should_stop") is True:
+                        raw["stop_conditions"] = list(raw.get("stop_conditions", [])) + ["任务可中止"]
+                        raw["completion_definition"] = list(raw.get("completion_definition", [])) + ["目标已完成并通过核验"]
+                    self._sanitize_plan(raw)
         if not raw["steps"]:
             raise ValueError(
                 f"llm execution plan contains no steps; raw_keys={sorted(last_raw.keys())}"
@@ -245,6 +514,23 @@ class KairosPlanner:
         )
         raw = await self._complete_json(system_prompt, user_prompt)
         raw["action_kind"] = step.get("action_kind")
+        phase_payload = self._normalize_phase_payload(raw)
+        raw.setdefault("rationale", phase_payload.get("current_phase") or phase_payload.get("goal"))
+        if raw["action_kind"] == "agent_execute":
+            args = dict(raw.get("args", {}))
+            execution_prompt = str(args.get("execution_prompt") or phase_payload.get("next_phase") or phase_payload.get("current_phase") or "").strip()
+            if execution_prompt:
+                args["execution_prompt"] = execution_prompt
+            if not args.get("required_skills"):
+                inferred_skills = self._infer_required_skills(execution_prompt, skill_context)
+                if inferred_skills:
+                    args["required_skills"] = inferred_skills
+            raw["args"] = args
+        elif raw["action_kind"] == "ask_user":
+            raw.setdefault("question", self._first_line(phase_payload.get("next_phase", ""), default="请补充安全关键阻塞信息"))
+            raw.setdefault("why_blocked", phase_payload.get("current_phase") or raw.get("question"))
+        elif raw["action_kind"] == "summarize_progress":
+            raw.setdefault("brief", phase_payload.get("current_phase") or phase_payload.get("next_phase"))
         return self._sanitize_action_payload(raw)
 
     async def build_document_patch_payload(
@@ -263,6 +549,15 @@ class KairosPlanner:
         )
         raw = await self._complete_json(system_prompt, user_prompt)
         raw["action_kind"] = "update_document"
+        phase_payload = self._normalize_phase_payload(raw)
+        if not raw.get("section_updates"):
+            update_text = phase_payload.get("current_phase") or phase_payload.get("next_phase") or step.get("reason") or "update progress"
+            raw["section_updates"] = [
+                {
+                    "section": "Replan Notes",
+                    "text": str(update_text).strip(),
+                }
+            ]
         return self._sanitize_action_payload(raw)
 
     async def build_design_codegen_payload(
@@ -282,6 +577,18 @@ class KairosPlanner:
         )
         raw = await self._complete_json(system_prompt, user_prompt)
         raw["action_kind"] = "spawn_dex_task"
+        phase_payload = self._normalize_phase_payload(raw)
+        raw.setdefault("description", self._first_line(phase_payload.get("next_phase", ""), default=str(step.get("reason") or "llm generated dex task")))
+        raw.setdefault("brief", phase_payload.get("current_phase") or phase_payload.get("next_phase") or raw.get("description"))
+        if not raw.get("command_template_id"):
+            lower_step = str(step.get("step_id") or work_item.current_step or "").lower()
+            if "verify" in lower_step or "test" in lower_step:
+                raw["command_template_id"] = "run_smoke_check"
+            elif "delivery" in lower_step or "report" in lower_step:
+                raw["command_template_id"] = "summarize_delivery"
+            else:
+                raw["command_template_id"] = "draft_requirements_doc"
+        raw.setdefault("expected_artifacts", list(work_item.expected_artifacts))
         return self._sanitize_action_payload(raw)
 
     async def verify_attempt(
@@ -303,28 +610,143 @@ class KairosPlanner:
             ensure_ascii=False,
         )
         raw = await self._complete_json(system_prompt, user_prompt)
-        raw.setdefault("attempt_id", attempt_id)
-        return KairosVerificationResult(**raw)
+        phase_payload = self._normalize_phase_payload(raw)
+        verdict = str(raw.get("verdict") or "").strip().lower()
+        phase_text = f"{phase_payload.get('current_phase', '')}\n{phase_payload.get('next_phase', '')}".lower()
+        if verdict not in {"pass", "partial", "fail", "unknown"}:
+            if any(token in phase_text for token in ("通过", "pass", "ready", "完成", "ok")):
+                verdict = "pass"
+            elif any(token in phase_text for token in ("失败", "fail", "error", "未通过")):
+                verdict = "fail"
+            elif any(token in phase_text for token in ("部分", "partial", "待补充", "未完成")):
+                verdict = "partial"
+            else:
+                verdict = "unknown"
+
+        evidence = list(raw.get("evidence", []))
+        if not evidence and phase_payload.get("current_phase"):
+            evidence = [{"source": "phase_current", "note": phase_payload.get("current_phase", "")}]
+
+        artifact_check = list(raw.get("artifact_check", []))
+        if not artifact_check:
+            artifact_check = [
+                {
+                    "artifact": item.get("artifact"),
+                    "exists": item.get("exists"),
+                    "usable": item.get("usable", item.get("exists")),
+                    "note": item.get("note"),
+                }
+                for item in artifacts
+            ]
+
+        goal_progress = raw.get("goal_progress")
+        if not isinstance(goal_progress, int):
+            goal_progress = {
+                "pass": 100,
+                "partial": 60,
+                "fail": 25,
+                "unknown": 40,
+            }.get(verdict, 40)
+        goal_progress = max(0, min(100, int(goal_progress)))
+
+        remaining_gaps = list(raw.get("remaining_gaps", []))
+        if not remaining_gaps and phase_payload.get("next_phase"):
+            remaining_gaps = self._split_nonempty_lines(phase_payload.get("next_phase", ""))[:6]
+
+        next_best_action = str(raw.get("next_best_action") or "").strip()
+        if not next_best_action:
+            next_best_action = self._first_line(phase_payload.get("next_phase", ""), default=str(attempt_summary.get("description") or "continue"))
+
+        should_replan = bool(raw.get("should_replan"))
+        if not should_replan:
+            should_replan = verdict in {"partial", "fail", "unknown"}
+
+        should_ask_user = bool(raw.get("should_ask_user"))
+        if not should_ask_user:
+            should_ask_user = self._text_requests_user(phase_payload.get("current_phase", "")) and any(
+                token in phase_payload.get("current_phase", "") for token in ("安全", "关键", "外部依赖")
+            )
+
+        # Strict anti-water gate: no evidence => cannot pass.
+        if verdict == "pass":
+            has_usable_artifact = any(
+                bool(item.get("usable") or item.get("exists"))
+                for item in artifact_check
+                if isinstance(item, dict)
+            )
+            has_nonempty_evidence = any(
+                str(item.get("note") if isinstance(item, dict) else item).strip()
+                for item in evidence
+            )
+            if not (has_usable_artifact or has_nonempty_evidence):
+                verdict = "partial"
+                should_replan = True
+                remaining_gaps = ["缺少可核验证据，禁止直接判定通过"] + remaining_gaps
+
+        return KairosVerificationResult(
+            attempt_id=attempt_id,
+            verdict=verdict,
+            evidence=evidence,
+            artifact_check=artifact_check,
+            goal_progress=goal_progress,
+            remaining_gaps=remaining_gaps,
+            next_best_action=next_best_action,
+            should_replan=should_replan,
+            should_ask_user=should_ask_user,
+        )
 
     async def replan_from_failure(
         self,
         *,
         work_item: DocumentReadResult,
-        verification: KairosVerificationResult,
-        understanding: KairosUnderstandingResult,
+        verification_result: dict[str, Any] | KairosVerificationResult,
+        available_actions: list[str] | None = None,
+        understanding: KairosUnderstandingResult | None = None,
     ) -> KairosReplanResult:
         system_prompt = self._prompt_config.replan_system
         skill_context = self._build_skill_context()
+        if isinstance(verification_result, KairosVerificationResult):
+            verification_payload: dict[str, Any] = verification_result.__dict__
+        else:
+            verification_payload = dict(verification_result or {})
+        understanding_payload = (
+            understanding.__dict__
+            if isinstance(understanding, KairosUnderstandingResult)
+            else {}
+        )
         user_prompt = json.dumps(
             {
                 "work_item": work_item.__dict__,
-                "understanding": understanding.__dict__,
-                "verification": verification.__dict__,
+                "understanding": understanding_payload,
+                "verification": verification_payload,
+                "available_actions": list(available_actions or sorted(ALLOWED_ACTION_KINDS)),
                 **skill_context,
             },
             ensure_ascii=False,
         )
         raw = await self._complete_json(system_prompt, user_prompt)
+        phase_payload = self._normalize_phase_payload(raw)
+        if not raw.get("replan_reason"):
+            raw["replan_reason"] = self._first_line(phase_payload.get("current_phase", ""), default="verification_failed")
+        if not raw.get("root_cause_hypothesis"):
+            raw["root_cause_hypothesis"] = phase_payload.get("current_phase") or "insufficient evidence or failed verification"
+        if not raw.get("revised_steps"):
+            phase_step = self._compose_step_from_phase(
+                phase_payload=phase_payload,
+                default_step_id=work_item.current_step or "replan-step-1",
+                candidate_actions=available_actions,
+                skill_context=skill_context,
+            )
+            if phase_step is not None:
+                raw["revised_steps"] = [phase_step]
+        raw.setdefault("retryable", phase_payload.get("should_stop") is not True)
+        raw.setdefault("retry_budget_cost", 1)
+        escalate_to_user = self._text_requests_user(phase_payload.get("current_phase", "") + "\n" + phase_payload.get("next_phase", ""))
+        raw.setdefault("escalate_to_user", escalate_to_user)
+        raw.setdefault(
+            "user_question",
+            self._first_line(phase_payload.get("next_phase", ""), default=None) if raw.get("escalate_to_user") else None,
+        )
         return KairosReplanResult(**raw)
 
     async def plan_follow_up_action(
@@ -358,12 +780,30 @@ class KairosPlanner:
         raw = await self._complete_json(system_prompt, user_prompt)
         action = str(raw.get("action") or "sleep").strip().lower()
         if action not in {"create_follow_up", "ask_user", "sleep"}:
+            phase_payload = self._normalize_phase_payload(raw)
+            phase_text = f"{phase_payload.get('current_phase', '')}\n{phase_payload.get('next_phase', '')}".lower()
+            if phase_payload.get("should_stop") is True:
+                action = "sleep"
+            elif self._text_requests_user(phase_text):
+                action = "ask_user"
+            else:
+                action = "create_follow_up"
+        if action not in {"create_follow_up", "ask_user", "sleep"}:
             action = "sleep"
+        phase_payload = self._normalize_phase_payload(raw)
+        reason = raw.get("reason") or self._first_line(phase_payload.get("current_phase", ""), default="llm_follow_up")
+        description = raw.get("description") or self._first_line(
+            phase_payload.get("next_phase", ""),
+            default=default_follow_up_description,
+        )
+        message = raw.get("message")
+        if action == "ask_user" and not str(message or "").strip():
+            message = self._first_line(phase_payload.get("next_phase", ""), default="缺少安全关键输入，请补充")
         return {
             "action": action,
-            "reason": raw.get("reason"),
-            "description": raw.get("description"),
-            "message": raw.get("message"),
+            "reason": reason,
+            "description": description,
+            "message": message,
         }
 
     async def _complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
@@ -405,7 +845,10 @@ class KairosPlanner:
                 ],
             )
             text = self._extract_completion_text(response) or "{}"
-            return self._extract_json_object(text)
+            try:
+                return self._extract_json_object(text)
+            except Exception:
+                return self._extract_phase_payload_from_text(text)
 
     def _extract_completion_text(self, response: Any) -> str:
         try:
