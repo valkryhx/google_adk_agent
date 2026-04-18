@@ -9,6 +9,7 @@ import subprocess
 import asyncio
 import platform
 import os
+import re
 import psutil
 from typing import Optional, List
 
@@ -35,6 +36,8 @@ def validate_command(command: str) -> tuple[bool, str]:
         'format c:', 'format d:',                    # 格式化
         'diskpart',                                  # 磁盘分区工具
         'shutdown', 'restart-computer',              # 关机/重启
+        'taskkill /F /IM python.exe', 'taskkill /im python', 'taskkill /f /im python', # 防误杀同服组件
+        'pkill -f python', 'killall python',         # 防跨平台误杀
         'reg delete',                                # 注册表删除
         'net user', 'net localgroup',                # 用户/组修改
         'takeown', 'icacls /grant',                  # 权限修改
@@ -42,10 +45,81 @@ def validate_command(command: str) -> tuple[bool, str]:
     ]
     
     for pattern in dangerous_patterns:
-        if pattern in command:
+        if pattern.lower() in command.lower():
             return False, f"Command contains dangerous pattern: {pattern}"
+
+    command_lower = command.lower()
+
+    dangerous_regex_patterns = [
+        (
+            r'proc\.send_signal\s*\(\s*signal\.ctrl_c_event\s*\)',
+            "Command contains dangerous pattern: proc.send_signal(signal.CTRL_C_EVENT)"
+        ),
+        (
+            r'stop-process\s+-name\s+python(?:\.exe)?\b',
+            "Command contains dangerous pattern: Stop-Process -Name python"
+        ),
+        (
+            r'get-process\s+python(?:\.exe)?\b.*stop-process',
+            "Command contains dangerous pattern: Get-Process python ... Stop-Process"
+        ),
+        (
+            r'taskkill\s+/f\s+/im\s+python(?:\.exe)?\b',
+            "Command contains dangerous pattern: taskkill /F /IM python.exe"
+        ),
+        (
+            r'pkill\s+-f\s+python(?:\b|[\'\"])',
+            "Command contains dangerous pattern: pkill -f python"
+        ),
+    ]
+
+    for pattern, reason in dangerous_regex_patterns:
+        if re.search(pattern, command_lower, re.IGNORECASE | re.DOTALL):
+            return False, reason
+            
+    if '$!' in command and platform.system() == 'Windows':
+        return False, "Windows cmd/powershell do not support $! for getting background PID. Write a short Python script with subprocess.Popen to properly start/terminate unblocking test servers."
             
     return True, ""
+
+
+async def _terminate_process(process: asyncio.subprocess.Process, *, grace_seconds: float = 2.0) -> None:
+    """尽量优雅地终止子进程，失败时强制 kill。"""
+    if process.returncode is not None:
+        return
+
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        return
+    except Exception:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            return
+        return
+
+    try:
+        await asyncio.wait_for(process.wait(), timeout=grace_seconds)
+    except asyncio.TimeoutError:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            return
+        await process.wait()
+    except ProcessLookupError:
+        return
+
+
+def _cleanup_temp_file(tmp_file) -> None:
+    if tmp_file is None:
+        return
+    try:
+        os.unlink(tmp_file.name)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
 
 
 async def bash(
@@ -81,17 +155,18 @@ async def bash(
     if not is_safe:
         return f"[ERROR] Security Alert: {reason}"
 
+    process = None
+    _tmp_file = None
+
     try:
         # 🔑 使用异步 subprocess
         if platform.system() == 'Windows':
             # Windows cmd.exe 把字面换行当命令分隔符，含换行的命令需写入临时脚本执行
             import tempfile
-            _tmp_file = None
             if '\n' in command:
                 # 判断是 Python 脚本还是通用 bat
                 if command.strip().startswith('python'):
                     # 提取 python -c "..." 中的脚本内容，改为临时 .py 文件执行
-                    import re
                     m = re.match(r'^(python\S*)\s+-c\s+["\']([\s\S]*)["\']\s*$', command.strip())
                     if m:
                         py_bin, script = m.group(1), m.group(2)
@@ -152,23 +227,14 @@ async def bash(
                 try:
                     signal = interruption_queue.get_nowait()
                     if signal == "CANCEL":
-                        # 终止进程
-                        process.terminate()
-                        try:
-                            await asyncio.wait_for(process.wait(), timeout=2.0)
-                        except asyncio.TimeoutError:
-                            process.kill()
+                        await _terminate_process(process)
                         return "[INTERRUPTED] 命令执行被用户中断"
                 except:
                     pass
             
             # 检查超时
             if asyncio.get_event_loop().time() - start_time > timeout:
-                process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=2.0)
-                except asyncio.TimeoutError:
-                    process.kill()
+                await _terminate_process(process)
                 return f"[ERROR] 命令执行超时(超过 {timeout} 秒)"
             
             # 非阻塞读取
@@ -225,19 +291,17 @@ async def bash(
         else:
             result = "\n".join(output_parts)
 
-        # 清理临时脚本文件（仅 Windows 多行命令）
-        if platform.system() == 'Windows' and '_tmp_file' in dir() and _tmp_file is not None:
-            try:
-                os.unlink(_tmp_file.name)
-            except Exception:
-                pass
-
         return result
-        
+    except asyncio.CancelledError:
+        if process is not None:
+            await _terminate_process(process)
+        raise
     except FileNotFoundError:
         return f"[ERROR] 命令未找到: {command.split()[0]}"
     except Exception as e:
         return f"[ERROR] 执行失败: {type(e).__name__}: {str(e)}"
+    finally:
+        _cleanup_temp_file(_tmp_file)
 
 
 def get_system_info() -> str:
