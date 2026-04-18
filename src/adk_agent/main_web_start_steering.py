@@ -41,6 +41,10 @@ from src.adk_agent.core.executor import execute_python_code
 from src.adk_agent.core.logger import AgentLogger, logger
 from src.adk_agent.core.simple_file_logger import default_logger as file_logger
 from src.adk_agent.config import AgentConfig, build_system_prompt, yaml_config
+from src.adk_agent.stream_dedup import (
+    dedupe_textual_event_chunks,
+    strip_leaked_think_from_text,
+)
 import litellm
 from litellm import ContextWindowExceededError
 from google.genai import types
@@ -1688,7 +1692,7 @@ class SteeringSession:
                 pending_cancel_get = asyncio.create_task(self.queue.get()) if self.queue else None
                 
                 # [Deduplication State]
-                processed_part_history = []
+                accumulated_text_by_type = {"text": "", "thought": ""}
                 
                 while True:
                     # 等待任意一个队列有消息
@@ -1743,43 +1747,10 @@ class SteeringSession:
                             events_snapshot.append(result)
                             # ==========================================
                             
-                            # [Deduplication Logic]
-                            # Identify new parts by comparing with processed history
-                            evt_parts = []
-                            if hasattr(result, 'content') and result.content and hasattr(result.content, 'parts'):
-                                evt_parts = result.content.parts
-                                
-                            # Check for prefix match
-                            match_count = 0
-                            if processed_part_history and evt_parts:
-                                # Optimization: Only check if first part matches (Full Event scenario)
-                                if evt_parts[0] == processed_part_history[0]:
-                                    # Full event accumulation detected
-                                    for i in range(min(len(evt_parts), len(processed_part_history))):
-                                        if evt_parts[i] == processed_part_history[i]:
-                                            match_count += 1
-                                        else:
-                                            break
-                            
-                            # Filter new parts
-                            new_parts = evt_parts[match_count:]
-                            
-                            if new_parts:
-                                processed_part_history.extend(new_parts)
-                                chunks = _process_event_stream(result, parts_override=new_parts)
-                                if yield_chunks:
-                                    for chunk in chunks:
-                                        yield chunk
-                            elif not evt_parts:
-                                # If event has NO parts (e.g. pure tool call or metadata update), pass it through
-                                # But _process_event_stream checks for parts.
-                                # If it's a non-part event (like just tool_calls in some frameworks?), 
-                                # Google ADK events mainly communicate via parts.
-                                # If `result` has no content parts but is a valid event, _process_event_stream handles it via robust checks.
-                                chunks = _process_event_stream(result)
-                                if yield_chunks:
-                                    for chunk in chunks:
-                                        yield chunk
+                            chunks = list(_process_event_stream(result))
+                            if yield_chunks:
+                                for chunk in dedupe_textual_event_chunks(chunks, accumulated_text_by_type):
+                                    yield chunk
 
                     # 2. 处理 Side-Channel 消息 (Swarm Log, Progress 等)
                     if pending_stream_get in done:
@@ -3377,8 +3348,11 @@ async def get_session_history(
                         if getattr(part, 'thought', False):
                             blocks.append({"type": "thought", "content": part.text})
                         else:
-                            blocks.append({"type": "text", "content": part.text})
-                            text_content += part.text
+                            cleaned_text, had_think_leak = strip_leaked_think_from_text(part.text)
+                            if had_think_leak and not cleaned_text:
+                                continue
+                            blocks.append({"type": "text", "content": cleaned_text})
+                            text_content += cleaned_text
 
                     # [多模态] 检查 inline_data（图片）
                     if hasattr(part, 'inline_data') and part.inline_data:
