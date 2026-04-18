@@ -90,6 +90,33 @@ class FakeRuntime:
         self.state["tracked_dex_task_ids"].append(task_id)
         self.state["mode"] = "handoff"
 
+    async def register_work_item(self, *, requirement, session_id, source_label):
+        work_item = {
+            "work_id": f"work:{session_id}:registered",
+            "goal": requirement,
+            "status": "pending_requirements",
+            "current_step": "requirements",
+            "next_actions": ["draft requirements document", "review scope and constraints"],
+            "blockers": [],
+            "expected_artifacts": [f"requirements/{session_id}/work.md"],
+            "open_questions": [],
+            "human_input_required": False,
+            "source_docs": [f"{source_label}:{session_id}"],
+        }
+        self.state["document_work_items"] = [work_item] + self.state["document_work_items"]
+        self.state["pending_requirements"] = [
+            {
+                "work_id": work_item["work_id"],
+                "goal": work_item["goal"],
+                "status": work_item["status"],
+                "ask_user": work_item["human_input_required"],
+                "open_questions": list(work_item["open_questions"]),
+                "source_doc": work_item["expected_artifacts"][0],
+            }
+        ]
+        self.state["mode"] = "idle"
+        return work_item
+
     async def respond_attention(self, attention_id, response):
         for item in self.state["attention_items"]:
             if item["attention_id"] != attention_id:
@@ -319,6 +346,29 @@ def test_register_dex_route_works():
     assert resp.status_code == 200
     assert "abc12345" in resp.json()["kairos"]["tracked_dex_task_ids"]
     assert resp.json()["kairos"]["mode"] == "handoff"
+
+
+def test_register_work_route_creates_document_work_item():
+    app = FastAPI()
+    register_kairos_routes(app, FakeManager())
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/sessions/session_1/kairos/work/register",
+        json={
+            "app_name": "demo",
+            "user_id": "alice",
+            "requirement": "Build a todo app with sqlite storage",
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["registered_work"]["goal"] == "Build a todo app with sqlite storage"
+    assert payload["registered_work"]["work_id"] == "work:session_1:registered"
+    assert payload["registered_work"]["source_docs"][0].startswith("/api/sessions/session_1/kairos/work/register:")
+    assert payload["kairos"]["document_work_items"][0]["work_id"] == "work:session_1:registered"
+    assert payload["kairos"]["pending_requirements"][0]["work_id"] == "work:session_1:registered"
 
 
 def test_respond_attention_route_marks_item_resolved():

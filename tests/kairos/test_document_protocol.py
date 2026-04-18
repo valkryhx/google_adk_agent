@@ -3,6 +3,7 @@ from pathlib import Path
 from src.adk_agent.kairos.document_protocol import (
     append_spawned_work_update,
     append_user_guidance_update,
+    build_requirement_work_item,
     write_work_document,
 )
 from src.adk_agent.kairos.models import DocumentReadResult
@@ -94,3 +95,29 @@ def test_append_user_guidance_update_writes_response_into_replan_notes(tmp_path)
     assert "## Replan Notes" in updated
     assert "User guidance [attention-123]" in updated
     assert "JSON and plain table modes" in updated
+
+
+def test_build_requirement_work_item_defaults_to_autonomous_when_no_explicit_question():
+    item = build_requirement_work_item(
+        "请直接输出执行日志并持续推进，不需要额外确认",
+        session_id="session-1",
+        source_label="/kairos/work/register",
+    )
+
+    assert item.status == "pending_requirements"
+    assert item.human_input_required is False
+    assert item.blockers == []
+    assert item.open_questions == []
+
+
+def test_build_requirement_work_item_extracts_explicit_question_sentences():
+    item = build_requirement_work_item(
+        "请继续推进。你建议把日志输出到哪个目录？",
+        session_id="session-1",
+        source_label="/kairos/work/register",
+    )
+
+    assert item.human_input_required is True
+    assert item.status == "blocked"
+    assert item.open_questions
+    assert item.open_questions[0].endswith("?")

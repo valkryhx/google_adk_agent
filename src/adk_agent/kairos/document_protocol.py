@@ -179,10 +179,12 @@ def _slugify(text: str) -> str:
 
 
 def _extract_open_questions(text: str) -> list[str]:
-    lower = text.lower()
-    questions: list[str] = []
-    if "todo" in lower and not any(token in lower for token in ("html", "react", "vue", "web", "app")):
-        questions.append("Should this todo app be web-based, desktop, or another format?")
-    if not any(token in lower for token in ("persist", "storage", "sqlite", "localstorage", "database")):
-        questions.append("What persistence or storage requirement matters most?")
-    return questions
+    # Keep ask_user lightweight: only escalate explicit question sentences
+    # from user input, avoid speculative blockers for autonomous flow.
+    matches = re.findall(r"([^?？\n]{3,160}[?？])", text)
+    result: list[str] = []
+    for sentence in matches:
+        normalized = sentence.strip().rstrip("？?").strip()
+        if normalized and normalized not in result:
+            result.append(normalized + "?")
+    return result

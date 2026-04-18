@@ -2216,6 +2216,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const kairosRefreshBtn = document.getElementById('kairosRefreshBtn');
         const kairosAddSchedBtn = document.getElementById('kairosAddSchedBtn');
         const kairosDelSchedBtn = document.getElementById('kairosDelSchedBtn');
+        const kairosWorkRegBtn = document.getElementById('kairosWorkRegBtn');
         const kairosDexRegBtn = document.getElementById('kairosDexRegBtn');
         const kairosAttentionRespondBtn = document.getElementById('kairosAttentionRespondBtn');
 
@@ -2233,6 +2234,7 @@ document.addEventListener('DOMContentLoaded', () => {
         kairosRefreshBtn.addEventListener('click', refreshKairosStatus);
         kairosAddSchedBtn.addEventListener('click', addKairosSchedule);
         kairosDelSchedBtn.addEventListener('click', deleteKairosSchedule);
+        kairosWorkRegBtn.addEventListener('click', registerKairosWork);
         kairosDexRegBtn.addEventListener('click', registerDexHandoff);
         kairosAttentionRespondBtn.addEventListener('click', respondKairosAttention);
     }
@@ -2457,6 +2459,35 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {
             console.error('[KAIROS] 删除 schedule 失败:', e);
             alert('删除失败: ' + e.message);
+        }
+    }
+
+    async function registerKairosWork() {
+        const sessionId = getCurrentSessionId();
+        if (!sessionId) return;
+
+        const requirement = document.getElementById('kairosWorkRequirement').value;
+        if (!requirement || !requirement.trim()) {
+            alert('请填写 requirement 内容');
+            return;
+        }
+
+        try {
+            const data = await kairosRequest('/kairos/work/register', 'POST', {
+                app_name: APP_NAME,
+                user_id: getUserId(),
+                requirement: requirement.trim(),
+            });
+            if (data.status === 'ok') {
+                alert('Kairos work 注册成功');
+                document.getElementById('kairosWorkRequirement').value = '';
+                await refreshKairosStatus();
+            } else {
+                alert('注册失败: ' + (data.error || '未知错误'));
+            }
+        } catch (e) {
+            console.error('[KAIROS] 注册 work 失败:', e);
+            alert('注册失败: ' + e.message);
         }
     }
 

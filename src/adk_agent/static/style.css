@@ -692,6 +692,71 @@ details[open] .tool-header {
     background-color: #e6f2ff;
 }
 
+/* file_editor / bash 专用卡片（长输出默认直接展示，不折叠） */
+.tool-rich-card {
+    width: 100%;
+    margin: 8px 0;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    background: #f8f9fa;
+    overflow: hidden;
+}
+
+.tool-rich-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #e9ecef;
+    color: #5f6368;
+    font-size: 13px;
+    font-weight: 500;
+    background: #f3f4f6;
+}
+
+.tool-rich-header .material-symbols-outlined {
+    font-size: 19px;
+}
+
+.tool-rich-title {
+    font-weight: 600;
+    color: #37474f;
+}
+
+.tool-rich-meta {
+    margin-left: auto;
+    font-size: 12px;
+    color: #6b7280;
+}
+
+.tool-rich-section {
+    padding: 10px 12px 12px;
+}
+
+.tool-rich-label {
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: #6b7280;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+}
+
+.tool-rich-args,
+.tool-rich-output {
+    margin: 0;
+    padding: 10px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #1f2937;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12.5px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
 /* Agent Avatar Text Style */
 .agent-avatar {
     width: auto;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -37,6 +38,12 @@ class KairosAttentionRespondRequest(BaseModel):
     user_id: str
     attention_id: str
     response: str
+
+
+class KairosWorkRegisterRequest(BaseModel):
+    app_name: str
+    user_id: str
+    requirement: str
 
 
 def _get_session_manager(session_manager):
@@ -159,6 +166,24 @@ def register_kairos_routes(app, session_manager):
         runtime = session.get_or_create_kairos_runtime()
         await runtime.register_dex_task(req.task_id, req.description)
         return {"status": "ok", "session_id": session_id, "kairos": runtime.get_status()}
+
+    @router.post("/api/sessions/{session_id}/kairos/work/register")
+    async def register_work_item(session_id: str, req: KairosWorkRegisterRequest):
+        manager = _get_session_manager(session_manager)
+        session = manager.get_or_create(req.app_name, req.user_id, session_id)
+        runtime = session.get_or_create_kairos_runtime()
+        source_label = f"/api/sessions/{session_id}/kairos/work/register"
+        registered = await runtime.register_work_item(
+            requirement=req.requirement,
+            session_id=session_id,
+            source_label=source_label,
+        )
+        return {
+            "status": "ok",
+            "session_id": session_id,
+            "registered_work": asdict(registered) if hasattr(registered, "__dataclass_fields__") else registered,
+            "kairos": runtime.get_status(),
+        }
 
     @router.post("/api/sessions/{session_id}/kairos/attention/respond")
     async def respond_attention(session_id: str, req: KairosAttentionRespondRequest):

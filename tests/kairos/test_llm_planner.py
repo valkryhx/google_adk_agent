@@ -182,7 +182,7 @@ def test_max_retries_normalization_prefers_config_value_and_defaults_to_three():
 
 
 @pytest.mark.asyncio
-async def test_build_execution_plan_raises_when_steps_still_empty_after_retry(monkeypatch):
+async def test_build_execution_plan_fallbacks_when_model_returns_empty_payload(monkeypatch):
     planner = KairosPlanner(model="test-model", api_key="k", api_base="http://example.com")
     calls = {"count": 0}
 
@@ -203,14 +203,90 @@ async def test_build_execution_plan_raises_when_steps_still_empty_after_retry(mo
     )
     understanding = KairosUnderstandingResult(goal="build todo app")
 
-    with pytest.raises(ValueError, match="no steps"):
-        await planner.build_execution_plan(
-            item,
-            understanding,
-            candidate_actions=["update_document", "spawn_dex_task", "ask_user", "sleep"],
-        )
+    result = await planner.build_execution_plan(
+        item,
+        understanding,
+        candidate_actions=["update_document", "spawn_dex_task", "ask_user", "sleep"],
+    )
 
-    assert calls["count"] == 2
+    assert calls["count"] == 1
+    assert result.steps
+    assert result.steps[0]["action_kind"] == "update_document"
+    assert "build todo app" in (result.summary or "")
+
+
+@pytest.mark.asyncio
+async def test_build_execution_plan_fallbacks_to_default_step_when_goal_present_but_steps_empty(monkeypatch):
+    planner = KairosPlanner(model="test-model", api_key="k", api_base="http://example.com")
+
+    async def fake_complete_json(_system_prompt, _user_prompt):
+        return {
+            "task_goal": "continue autonomous progress",
+            "steps": [],
+        }
+
+    monkeypatch.setattr(planner, "_complete_json", fake_complete_json)
+
+    item = DocumentReadResult(
+        work_id="work:test:fallback",
+        goal="continue autonomous progress",
+        status="pending_requirements",
+        current_step="requirements",
+        next_actions=["draft requirements document"],
+        expected_artifacts=["requirements/session/work.md"],
+        source_docs=["requirements/session/work.md"],
+    )
+    understanding = KairosUnderstandingResult(goal=item.goal)
+
+    result = await planner.build_execution_plan(
+        item,
+        understanding,
+        candidate_actions=["agent_execute", "ask_user", "sleep"],
+    )
+
+    assert result.steps
+    assert result.steps[0]["action_kind"] == "agent_execute"
+    assert "execution_prompt" in result.steps[0]
+
+
+@pytest.mark.asyncio
+async def test_build_execution_plan_fallbacks_when_model_only_returns_meta_keys(monkeypatch):
+    planner = KairosPlanner(model="test-model", api_key="k", api_base="http://example.com")
+
+    async def fake_complete_json(_system_prompt, _user_prompt):
+        return {
+            "plan_id": "plan-meta",
+            "task_id": "task-123",
+            "thought": "thinking",
+            "next_thought": "next",
+            "steps": [],
+            "stop_conditions": [],
+            "ask_user_if": [],
+            "completion_definition": [],
+        }
+
+    monkeypatch.setattr(planner, "_complete_json", fake_complete_json)
+
+    item = DocumentReadResult(
+        work_id="work:test:meta-only",
+        goal="deliver markdown-backed todo cli",
+        status="pending_requirements",
+        current_step="requirements",
+        next_actions=["draft requirements document"],
+        expected_artifacts=["requirements/session/work.md"],
+        source_docs=["requirements/session/work.md"],
+    )
+    understanding = KairosUnderstandingResult(goal=item.goal)
+
+    result = await planner.build_execution_plan(
+        item,
+        understanding,
+        candidate_actions=["update_document", "spawn_dex_task", "agent_execute", "ask_user", "sleep"],
+    )
+
+    assert result.steps
+    assert result.steps[0]["action_kind"] == "agent_execute"
+    assert "execution_prompt" in result.steps[0]
 
 
 @pytest.mark.asyncio

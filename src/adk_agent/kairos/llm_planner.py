@@ -179,6 +179,33 @@ class KairosPlanner:
         return default
 
     @staticmethod
+    def _ordered_candidate_actions(candidate_actions: list[str] | None) -> list[str]:
+        ordered: list[str] = []
+        for action in candidate_actions or []:
+            text = str(action or "").strip()
+            if not text or text in ordered:
+                continue
+            if text not in ALLOWED_ACTION_KINDS:
+                continue
+            ordered.append(text)
+        return ordered
+
+    @staticmethod
+    def _phase_payload_with_goal_fallback(
+        phase_payload: dict[str, Any],
+        *,
+        item_goal: str,
+        understanding_goal: str,
+    ) -> dict[str, Any]:
+        merged = dict(phase_payload or {})
+        if str(merged.get("goal") or "").strip():
+            return merged
+        fallback_goal = str(item_goal or "").strip() or str(understanding_goal or "").strip()
+        if fallback_goal:
+            merged["goal"] = fallback_goal
+        return merged
+
+    @staticmethod
     def _normalize_phase_payload(raw: dict[str, Any]) -> dict[str, Any]:
         data = dict(raw or {})
         goal = (
@@ -278,9 +305,14 @@ class KairosPlanner:
             return None
 
         action_kind = self._infer_action_kind(phase_text, fallback="agent_execute")
-        candidate_set = set(candidate_actions or [])
+        ordered_candidates = self._ordered_candidate_actions(candidate_actions)
+        candidate_set = set(ordered_candidates)
         if candidate_set and action_kind not in candidate_set:
-            action_kind = "agent_execute" if "agent_execute" in candidate_set else next(iter(candidate_set))
+            action_kind = (
+                "agent_execute"
+                if "agent_execute" in candidate_set
+                else ordered_candidates[0]
+            )
 
         step: dict[str, Any] = {
             "step_id": default_step_id or "step-1",
@@ -290,6 +322,42 @@ class KairosPlanner:
         }
         if action_kind == "agent_execute":
             execution_prompt = next_phase or current_phase or "继续推进任务并更新文档"
+            step["execution_prompt"] = execution_prompt
+            inferred_skills = self._infer_required_skills(execution_prompt, skill_context)
+            if inferred_skills:
+                step["required_skills"] = inferred_skills
+        return step
+
+    def _compose_default_autonomous_step(
+        self,
+        *,
+        phase_payload: dict[str, Any],
+        default_step_id: str,
+        candidate_actions: list[str] | None,
+        skill_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        ordered_candidates = self._ordered_candidate_actions(candidate_actions)
+        candidate_set = set(ordered_candidates)
+        if "agent_execute" in candidate_set:
+            action_kind = "agent_execute"
+        elif ordered_candidates:
+            action_kind = ordered_candidates[0]
+        else:
+            action_kind = "agent_execute"
+
+        goal = phase_payload.get("goal") or "推进当前任务"
+        step: dict[str, Any] = {
+            "step_id": default_step_id or "step-1",
+            "action_kind": action_kind,
+            "reason": f"empty plan fallback: keep autonomous progress for goal: {goal}",
+            "exit_condition": "产出可核验证据并更新工作文档",
+        }
+        if action_kind == "agent_execute":
+            execution_prompt = (
+                phase_payload.get("next_phase")
+                or phase_payload.get("current_phase")
+                or f"围绕目标“{goal}”继续推进。先读取 work.md 的事实，再执行并回写结果。"
+            )
             step["execution_prompt"] = execution_prompt
             inferred_skills = self._infer_required_skills(execution_prompt, skill_context)
             if inferred_skills:
@@ -436,7 +504,11 @@ class KairosPlanner:
         raw.setdefault("plan_id", f"plan-{uuid.uuid4().hex[:8]}")
         raw.setdefault("work_id", item.work_id)
         self._sanitize_plan(raw)
-        phase_payload = self._normalize_phase_payload(raw)
+        phase_payload = self._phase_payload_with_goal_fallback(
+            self._normalize_phase_payload(raw),
+            item_goal=item.goal,
+            understanding_goal=understanding.goal,
+        )
         if not raw["steps"]:
             phase_step = self._compose_step_from_phase(
                 phase_payload=phase_payload,
@@ -450,6 +522,17 @@ class KairosPlanner:
                 if phase_payload.get("should_stop") is True:
                     raw["stop_conditions"] = list(raw.get("stop_conditions", [])) + ["任务可中止"]
                     raw["completion_definition"] = list(raw.get("completion_definition", [])) + ["目标已完成并通过核验"]
+                self._sanitize_plan(raw)
+            else:
+                raw["steps"] = [
+                    self._compose_default_autonomous_step(
+                        phase_payload=phase_payload,
+                        default_step_id=item.current_step or "step-1",
+                        candidate_actions=candidate_actions,
+                        skill_context=skill_context,
+                    )
+                ]
+                raw["summary"] = raw.get("summary") or phase_payload.get("goal")
                 self._sanitize_plan(raw)
         if not raw["steps"]:
             retry_system_prompt = self._prompt_config.render_execution_plan_retry_system(ALLOWED_ACTION_KINDS)
@@ -471,7 +554,11 @@ class KairosPlanner:
             raw.setdefault("plan_id", f"plan-{uuid.uuid4().hex[:8]}")
             raw.setdefault("work_id", item.work_id)
             self._sanitize_plan(raw)
-            phase_payload = self._normalize_phase_payload(raw)
+            phase_payload = self._phase_payload_with_goal_fallback(
+                self._normalize_phase_payload(raw),
+                item_goal=item.goal,
+                understanding_goal=understanding.goal,
+            )
             if not raw["steps"]:
                 phase_step = self._compose_step_from_phase(
                     phase_payload=phase_payload,
@@ -486,11 +573,22 @@ class KairosPlanner:
                         raw["stop_conditions"] = list(raw.get("stop_conditions", [])) + ["任务可中止"]
                         raw["completion_definition"] = list(raw.get("completion_definition", [])) + ["目标已完成并通过核验"]
                     self._sanitize_plan(raw)
+                else:
+                    raw["steps"] = [
+                        self._compose_default_autonomous_step(
+                            phase_payload=phase_payload,
+                            default_step_id=item.current_step or "step-1",
+                            candidate_actions=candidate_actions,
+                            skill_context=skill_context,
+                        )
+                    ]
+                    raw["summary"] = raw.get("summary") or phase_payload.get("goal")
+                    self._sanitize_plan(raw)
         if not raw["steps"]:
             raise ValueError(
                 f"llm execution plan contains no steps; raw_keys={sorted(last_raw.keys())}"
             )
-        return KairosExecutionPlan(**raw)
+        return KairosExecutionPlan(**self._to_execution_plan_payload(raw))
 
     async def build_action_payload(
         self,
@@ -944,3 +1042,17 @@ class KairosPlanner:
         raw["stop_conditions"] = list(raw.get("stop_conditions", []))
         raw["ask_user_if"] = list(raw.get("ask_user_if", []))
         raw["completion_definition"] = list(raw.get("completion_definition", []))
+
+    @staticmethod
+    def _to_execution_plan_payload(raw: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "plan_id": raw.get("plan_id"),
+            "work_id": raw.get("work_id"),
+            "summary": raw.get("summary"),
+            "stage_id": raw.get("stage_id"),
+            "steps": list(raw.get("steps", [])),
+            "stop_conditions": list(raw.get("stop_conditions", [])),
+            "ask_user_if": list(raw.get("ask_user_if", [])),
+            "completion_definition": list(raw.get("completion_definition", [])),
+            "priority_reason": raw.get("priority_reason"),
+        }

@@ -435,7 +435,15 @@ class SteeringSession:
                 session_id=self.session_id,
             )
         session.state = dict(state or {})
-        await self.session_service.save_session(session)
+        if isinstance(self.session_service, FullyCustomDbService):
+            await self.session_service.save_session_state(
+                app_name=self.app_name,
+                user_id=self.user_id,
+                session_id=self.session_id,
+                state=session.state,
+            )
+        else:
+            await self.session_service.save_session(session)
         return session
 
     async def _save_kairos_state(self, kairos_state):
@@ -1489,14 +1497,16 @@ class SteeringSession:
                     session_id=self.session_id,
                 )
                 sandbox_state = dict(real_session.state or {}) if real_session and getattr(real_session, 'state', None) else {}
-                await active_session_service.create_session(
+                # 正确调用：create_session 只接受 (app_name, user_id, session_id)，返回 session 对象
+                sandbox_session = await active_session_service.create_session(
                     app_name=self.app_name,
                     user_id=self.user_id,
                     session_id=self.session_id,
-                    state=sandbox_state,
                 )
+                # 通过属性赋值 state 和 events
+                sandbox_session.state = sandbox_state
                 if real_session and hasattr(real_session, 'events') and real_session.events:
-                    active_session_service.sessions[self.app_name][self.user_id][self.session_id].events = list(real_session.events)
+                    sandbox_session.events = list(real_session.events)
                 print(f"[Sandbox] 🛡️ 已开启内存沙盒，避免后台思考事件污染真实数据库！")
 
             runner = Runner(agent=self.agent, app_name=self.app_name, session_service=active_session_service)
@@ -1970,9 +1980,10 @@ class SteeringSession:
                                 )
                                 print(f"[Steering] Merged state-only session {self.session_id} (Events: {len(latest_session.events)})")
                             else:
-                                # 3. 保存合并后的 Session
-                                await self.session_service.save_session(latest_session)
-                                print(f"[Steering] Merged tags and saved session {self.session_id} (Events: {len(latest_session.events)})")
+                                # 非 FullyCustomDbService 场景（如 InMemory），直接跳过
+                                # 避免全量保存污染历史
+                                pass
+                                # await self.session_service.save_session(latest_session)
                         else:
                             # Fallback: 如果读不到，就只能存旧的了 (极少见)
                             if isinstance(self.session_service, FullyCustomDbService):
@@ -3611,7 +3622,8 @@ async def update_session_metadata(
                 state=session.state,
             )
         else:
-            await session_service.save_session(session)
+            # 非 FullyCustomDbService 场景，无需额外保存
+            pass
         
         print(f"[Swarm Metadata] ✅ Session {session_id} 元数据已更新: {metadata}")
         return {"status": "success", "message": "Metadata updated"}
