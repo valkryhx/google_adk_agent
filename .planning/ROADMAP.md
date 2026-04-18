@@ -4,7 +4,7 @@
 
 这个 milestone 聚焦 KAIROS 从“观察 Dex 后台任务状态”向“主动发现下一步并自动续推 workflow”的跃迁。路线分为三个 phase：先做 Autonomous Continuation MVP，证明系统能在 staged workflow 中自动创建 report follow-up；再做 artifact-aware proactive reporting 与前端/API 可视化；最后做 policy hardening 与分层验证，确保自治能力可解释、可测试、不失控。
 
-当前 v1.0 路线已经完成。下一步将进入 v1.1，拆成两个连续 phase：先做 `4A`（Explainability, History & Operator UX），解决 Kairos 做了很多事但前端看不清的问题；再做 `4B`（Goal-Driven Planning Intelligence），让 Kairos 在可见、可解释的基础上，显式比较候选动作、留下 planning 痕迹并做更强的目标驱动推进。Phase 4 现已完成，下一步进入 `5`（Document-Driven Continuation），让 Kairos 从硬编码 workflow 续推器升级为文档驱动的后台常驻 assistant。
+当前 v1.0 路线中的 Phase 1-5 已完成。当前推进点为 `6`（Markdown-First Skill-Using Autonomy）：在保留安全边界的前提下，把 Kairos 从 document-aware continuation 推进到 markdown-first、skill-using、LLM-core 的长期自治运行时。
 
 ## Phases
 
@@ -19,7 +19,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Policy Hardening & Verification** - 增加去重、限步、策略观测与完整回归验证，稳固自治能力
 - [x] **Phase 4A: Explainability, History & Operator UX** - 让 Kairos 的当前状态与完整推进历史在前端/API 中同时可见，并重构操作面板为高密度可用的左右布局
 - [x] **Phase 4B: Goal-Driven Planning Intelligence** - 在 4A 的可见性基础上，引入多候选 next-step selection、真实 planning result 与可解释的 re-plan 痕迹
-- [ ] **Phase 5: Document-Driven Continuation** - 让 Kairos 从硬编码 workflow 续推器升级为通过提示词协议生成、阅读、更新工作文档的后台常驻 assistant，能够从需求和工作文档中发现、规划、推进未完成任务与新任务
+- [x] **Phase 5: Document-Driven Continuation** - 让 Kairos 从硬编码 workflow 续推器升级为通过提示词协议生成、阅读、更新工作文档的后台常驻 assistant，能够从需求和工作文档中发现、规划、推进未完成任务与新任务
+- [ ] **Phase 6: Markdown-First Skill-Using Autonomy** - 把 Kairos 升级为以 markdown 工件为工作记忆、以 LLM 为核心智能、以 skills 为执行能力层的最小可用长期自治体
 
 ## Phase Details
 
@@ -53,7 +54,20 @@ Plans:
 - [x] 02-01: 增强 Dex snapshot/result/log 摘要消费与 artifact-aware proactive brief
 - [x] 02-02: 扩展 API 与前端面板，展示 workflow / planned actions / blocked reason
 
-### Phase 4: Explainability & Planning Intelligence
+### Phase 3: Policy Hardening & Verification
+**Goal**: 在自治能力初步可用后补齐策略护栏与分层验证，确保 Kairos 的自动推进可解释、可测试、不过度执行。
+**Depends on**: Phase 2
+**Requirements**: [POL-01, POL-02, POL-03, VER-04]
+**Success Criteria** (what must be TRUE):
+  1. continuation 不会重复派发同类动作造成循环推进
+  2. 有明确的限步、blocked/waiting_input 等停止条件
+  3. runtime / integration / live-http 三层验证能覆盖关键自治路径
+  4. phase-2 到 phase-3 的行为变更有稳定回归证据
+**Plans**: 2 plans
+
+Plans:
+- [x] 03-01: 策略护栏加固（去重、限步、blocked/waiting_input）
+- [x] 03-02: 分层验证收敛（runtime / integration / live-http）
 
 ### Phase 4A: Explainability, History & Operator UX
 **Goal**: 让 Kairos 的当前状态与完整推进历史在前端/API 中同时可见，并重构操作面板为高密度可用的左右布局。
@@ -97,12 +111,27 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
+- [x] 05-IMPLEMENTATION: document-backed executable progression first wave（bridge）
 - [x] 05A: 文档协议与阅读/写入底座
 - [x] 05B: 需求落盘与工作草案生成
 - [x] 05C: 自主发现新任务与持续编排
 
+### Phase 6: Markdown-First Skill-Using Autonomy
+**Goal**: 把 Kairos 从“document-aware continuation”推进到“markdown-first + LLM-core + skill-using”的长期自治执行体。
+**Depends on**: Phase 5
+**Requirements**: [A6-MD-01, A6-SKILL-01, A6-VERIFY-01]
+**Success Criteria** (what must be TRUE):
+  1. requirement/design/codegen/verification 至少两类阶段以 markdown 工件为主要输出
+  2. planner 在 live 路径不因 strict JSON 约束而整体回退
+  3. Kairos 能在受控边界内自主加载/调用现有 skills 推进任务
+  4. verification/replan 能驱动真实后续动作，而不是只写状态
+**Plans**: 1 plan
+
+Plans:
+- [ ] 06-IMPLEMENTATION: LLM-first autonomous task intelligence（markdown-first skill bridge + replan loop）
+
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4A → 4B → 5
+Phases execute in numeric order: 1 → 2 → 3 → 4A → 4B → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -111,7 +140,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4A → 4B → 5
 | 3. Policy Hardening & Verification | 2/2 | Complete | 2026-04-07 |
 | 4A. Explainability, History & Operator UX | 1/1 | Complete | 2026-04-10 |
 | 4B. Goal-Driven Planning Intelligence | 3/3 | Complete | 2026-04-11 |
-| 5. Document-Driven Continuation | 3/3 | Complete | 2026-04-12 |
+| 5. Document-Driven Continuation | 4/4 | Complete | 2026-04-12 |
+| 6. Markdown-First Skill-Using Autonomy | 0/1 | In Progress | — |
 
 ---
-*Last updated: 2026-04-12 after completing Phase 5C and closing Phase 5*
+*Last updated: 2026-04-18 after formalizing Phase 6 as active phase*
