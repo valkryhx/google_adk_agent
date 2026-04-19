@@ -70,6 +70,17 @@ def test_kairos_modal_includes_attention_panel_and_reply_controls():
     assert "kairosAttentionRespondBtn.addEventListener('click', respondKairosAttention)" in text
 
 
+def test_kairos_modal_includes_work_register_controls():
+    html = INDEX.read_text(encoding="utf-8")
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    assert 'id="kairosWorkRequirement"' in html
+    assert 'id="kairosWorkRegBtn"' in html
+    assert "async function registerKairosWork()" in text
+    assert "document.getElementById('kairosWorkRequirement')" in text
+    assert "kairosWorkRegBtn.addEventListener('click', registerKairosWork)" in text
+
+
 def test_planning_card_styles_exist_for_console_shell():
     css = STYLE.read_text(encoding="utf-8")
     mobile = MOBILE.read_text(encoding="utf-8")

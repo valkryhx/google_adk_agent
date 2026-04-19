@@ -2,7 +2,6 @@ import asyncio
 import json
 from pathlib import Path
 import sys
-from types import SimpleNamespace
 
 import pytest
 from fastapi import Response
@@ -15,8 +14,7 @@ from src.adk_agent import main_web_start_steering as steering
 
 
 class _FakeSession:
-    async def draft_user_requirement_work_item(self, requirement):
-        return SimpleNamespace(open_questions=[]), Path("requirements/session/work.md")
+    pass
 
 
 class _FakeSessionManager:
@@ -59,3 +57,8 @@ async def test_chat_endpoint_keeps_normal_todo_request_on_run_agent_path(monkeyp
 
     assert observed["run_agent_called"] is True
     assert payloads == [{"chunk": {"type": "text", "content": "run_agent:开发一个 todolist demo"}}]
+
+
+def test_chat_endpoint_has_no_kairos_requirement_shortcut_symbols():
+    assert not hasattr(steering, "_looks_like_supported_requirement")
+    assert not hasattr(steering.SteeringSession, "draft_user_requirement_work_item")
