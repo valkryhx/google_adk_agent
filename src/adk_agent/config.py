@@ -13,10 +13,10 @@ try:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
     yaml_path = os.path.join(project_root, "private_key.yaml")
-    
+
     yaml_config = {}
     if os.path.exists(yaml_path):
-        with open(yaml_path, 'r', encoding='utf-8') as f:
+        with open(yaml_path, "r", encoding="utf-8") as f:
             yaml_config = yaml.safe_load(f) or {}
 except Exception as e:
     print(f"[Config] 加载 private_key.yaml 失败: {e}")
@@ -26,12 +26,14 @@ except Exception as e:
 @dataclass
 class AgentConfig:
     """Agent 配置类"""
-    
-    name: str = "Ciri"#"Dynamic_Expert"
-    
+
+    name: str = "Ciri"  # "Dynamic_Expert"
+
     # 优先从环境变量获取 active_model，其次从 YAML 获取，默认为原有值
-    active_model: str = field(default_factory=lambda: os.environ.get("ACTIVE_MODEL", "阿里-通义-Qwen3-32B"))
-    
+    active_model: str = field(
+        default_factory=lambda: os.environ.get("ACTIVE_MODEL", "阿里-通义-Qwen3-32B")
+    )
+
     def __post_init__(self):
         # 初始化时也加载一次
         # 如果 active_model 没有被外部强行指定，则从磁盘加载
@@ -43,7 +45,7 @@ class AgentConfig:
         """实时从磁盘加载 YAML 配置"""
         try:
             if os.path.exists(yaml_path):
-                with open(yaml_path, 'r', encoding='utf-8') as f:
+                with open(yaml_path, "r", encoding="utf-8") as f:
                     return yaml.safe_load(f) or {}
         except Exception as e:
             print(f"[Config] 重新加载 private_key.yaml 失败: {e}")
@@ -55,12 +57,13 @@ class AgentConfig:
         # 1. 优先使用用户在当前会话中手动通过 Setter 设置的内存值
         if hasattr(self, "_mem_model") and self._mem_model:
             return self._mem_model
-            
+
         # 2. 从 llm_configs 中当前激活的标签下获取
         configs = self.llm_configs
         if self.active_model in configs:
             m = configs[self.active_model].get("model")
-            if m: return m
+            if m:
+                return m
         # 3. 兜底：将 active_model 视为物理模型 ID
         return self.active_model
 
@@ -70,14 +73,19 @@ class AgentConfig:
         self._mem_model = value
         # 同时为了持久化能找到位置，我们甚至可以考虑在更新时同步更新 llm_configs (内存中)
 
-    skills_path: str = os.path.join(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")), "skills")
-    
+    skills_path: str = os.path.join(
+        os.path.abspath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+        ),
+        "skills",
+    )
+
     # 获取 llm_configs
     @property
     def llm_configs(self) -> dict:
         # 为了支持热加载，直从磁盘重新读取
         return self.load_from_disk().get("llm_configs", {})
-    
+
     # API 配置改为动态属性，支持 Setter 以实现内存热更新
     _api_key: Optional[str] = field(default=None, repr=False)
     _api_base: Optional[str] = field(default=None, repr=False)
@@ -88,7 +96,7 @@ class AgentConfig:
         ak = self._api_key
         if ak and "..." not in ak and "*" not in ak:
             return ak
-            
+
         # 2. 如果内存中是掩码或为空，则从磁盘/环境变量加载真实值
         real_key = self._get_active_config("api_key")
         return real_key
@@ -100,44 +108,49 @@ class AgentConfig:
     @property
     def api_base(self) -> Optional[str]:
         # 如果内存里有非空值，优先用内存的
-        if self._api_base: return self._api_base
+        if self._api_base:
+            return self._api_base
         return self._get_active_config("api_base")
 
     @api_base.setter
     def api_base(self, value: Optional[str]):
         self._api_base = value
-    
+
     def _get_active_config(self, key: str) -> Optional[str]:
         """根据当前的 active_model 获取对应的配置项 (api_key/api_base)"""
         # 1. 检查环境变量 (LLM_API_KEY, LLM_API_BASE)
         env_val = os.environ.get(f"LLM_{key.upper()}")
-        if env_val: return env_val
-        
+        if env_val:
+            return env_val
+
         # 2. 从层级配置 llm_configs 中根据 active_model 获取
         disk_data = self.load_from_disk()
         configs = disk_data.get("llm_configs", {})
-        
+
         if self.active_model in configs:
             val = configs[self.active_model].get(key)
-            if val: 
+            if val:
                 # [DEBUG] 追踪密钥查找
                 if "key" in key:
-                    print(f"[Config] 🔑 成功从节点 [{self.active_model}] 获取 {key} (长度: {len(val)})")
+                    print(
+                        f"[Config] 🔑 成功从节点 [{self.active_model}] 获取 {key} (长度: {len(val)})"
+                    )
                 return val
-            
+
         # 3. 兜底：从顶层获取
         fallback_val = disk_data.get(key)
         if fallback_val and "key" in key:
             print(f"[Config] 🔑 成功从 YAML 顶层获取 {key} (长度: {len(fallback_val)})")
         return fallback_val
-    
+
     extra_body: dict = field(default_factory=lambda: {})
-    
+
     max_retries: int = 3
     timeout_seconds: int = 600000
     max_tool_calls_per_turn: int = 10
     verbose: bool = True
     log_tool_calls: bool = True
+
     @property
     def max_context_tokens(self) -> int:
         val = self._get_active_config("max_context_tokens")
@@ -152,7 +165,7 @@ class AgentConfig:
     def max_turns(self) -> int:
         val = self._get_active_config("max_turns")
         return int(val) if val is not None else 700
-    
+
     def validate(self) -> List[str]:
         errors = []
         if not self.api_key:
@@ -363,7 +376,7 @@ Answer: 给出最终答案
 def get_os_specific_instructions() -> str:
     """获取特定操作系统的指令提示"""
     system = platform.system()
-    
+
     if system == "Windows":
         return """- **当前环境为 Windows**。
 - **命令行工具**: 默认使用 `cmd` 或 `PowerShell`。
@@ -378,29 +391,31 @@ def get_os_specific_instructions() -> str:
     - `mv` -> `move`
 - **注意**: 避免直接使用 `sudo`, `chmod` 等 Linux 专有命令。
 - **PowerShell**: 如果需要执行复杂脚本，可以显式使用 `powershell -Command "..."`。"""
-    
+
     elif system in ["Linux", "Darwin"]:
         return """- **当前环境为 Unix-like (Linux/macOS)**。
 - **命令行工具**: 使用标准的 Bash/Sh。
 - **路径分隔符**: 使用正斜杠 `/`。
 - **权限**: 如果遇到 Permission denied，可能需要提示用户或检查权限(注意: Agent 通常没有 root 权限，慎用 sudo)。"""
-    
+
     else:
         return f"- **当前环境**: {system} (通用配置)。请根据标准系统命令操作。"
 
 
-def build_system_prompt(config: AgentConfig, skill_manifests: str, user_id: str = "unknown") -> str:
+def build_system_prompt(
+    config: AgentConfig, skill_manifests: str, user_id: str = "unknown"
+) -> str:
     """构建系统提示词"""
     import datetime
-    
+
     # 获取操作系统信息
     system = platform.system()
     release = platform.release()
     os_info = f"{system} {release}"
-    
+
     # 获取当前时间
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
-    
+
     return SYSTEM_PROMPT_TEMPLATE.format(
         agent_name=config.name,
         user_id=user_id,
@@ -408,5 +423,5 @@ def build_system_prompt(config: AgentConfig, skill_manifests: str, user_id: str 
         max_retries=config.max_retries,
         os_info=os_info,
         os_context=get_os_specific_instructions(),
-        current_time=current_time
+        current_time=current_time,
     )
