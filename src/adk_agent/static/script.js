@@ -3026,6 +3026,32 @@ document.addEventListener('DOMContentLoaded', () => {
         return result;
     }
 
+    // ==========================================
+    // 主题切换 (Gemini ↔ Claude)
+    // ==========================================
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    if (themeToggleBtn) {
+        // 恢复上次选择
+        const savedTheme = localStorage.getItem('app-theme');
+        if (savedTheme === 'claude') {
+            document.documentElement.setAttribute('data-theme', 'claude');
+            themeToggleBtn.textContent = 'Claude';
+        }
+
+        themeToggleBtn.addEventListener('click', () => {
+            const isClaude = document.documentElement.getAttribute('data-theme') === 'claude';
+            if (isClaude) {
+                document.documentElement.removeAttribute('data-theme');
+                themeToggleBtn.textContent = 'Gemini';
+                localStorage.setItem('app-theme', 'gemini');
+            } else {
+                document.documentElement.setAttribute('data-theme', 'claude');
+                themeToggleBtn.textContent = 'Claude';
+                localStorage.setItem('app-theme', 'claude');
+            }
+        });
+    }
+
     // 调用初始化
     initializePage();
 });

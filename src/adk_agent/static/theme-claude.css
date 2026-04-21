@@ -1,0 +1,385 @@
+/*
+ * theme-claude.css — Claude (Anthropic) 风格主题
+ * 激活方式: document.documentElement.setAttribute('data-theme', 'claude')
+ * 恢复 Gemini: document.documentElement.removeAttribute('data-theme')
+ *
+ * 所有规则通过 [data-theme="claude"] 选择器限定，不影响默认主题
+ */
+
+/* ==========================================
+   CSS 变量覆盖 — Gemini → Claude 色彩映射
+   ========================================== */
+[data-theme="claude"] {
+    --bg-color: #f5f4ed;          /* Parchment 羊皮纸 */
+    --sidebar-bg: #e8e6dc;        /* Warm Sand 暖沙 */
+    --text-color: #141413;        /* Anthropic Near Black */
+    --secondary-text: #5e5d59;    /* Olive Gray 橄榄灰 */
+    --input-bg: #e8e6dc;          /* Warm Sand */
+    --accent-color: #c96442;      /* Terracotta Brand 赤陶 */
+    --hover-bg: #d1cfc5;          /* Ring Warm */
+    --user-msg-bg: #e8e6dc;       /* Warm Sand */
+    --model-msg-bg: #faf9f5;      /* Ivory 象牙白 */
+    --border-cream: #f0eee6;      /* Border Cream */
+    --ring-warm: #d1cfc5;
+    --ring-deep: #c2c0b6;
+}
+
+/* ==========================================
+   基础排版 — Serif 标题 + 暖色氛围
+   ========================================== */
+[data-theme="claude"] body {
+    font-family: Georgia, 'Times New Roman', serif;
+}
+
+[data-theme="claude"] h1,
+[data-theme="claude"] h2,
+[data-theme="claude"] .sub-greeting,
+[data-theme="claude"] .greeting,
+[data-theme="claude"] .modal-header h2 {
+    font-family: Georgia, serif;
+    font-weight: 500;
+}
+
+/* UI 文字回退 sans */
+[data-theme="claude"] .nav-item,
+[data-theme="claude"] .chat-item,
+[data-theme="claude"] .new-chat-btn,
+[data-theme="claude"] .model-selector,
+[data-theme="claude"] .input-area textarea,
+[data-theme="claude"] .icon-btn,
+[data-theme="claude"] button,
+[data-theme="claude"] select,
+[data-theme="claude"] input,
+[data-theme="claude"] label,
+[data-theme="claude"] .disclaimer,
+[data-theme="claude"] .setting-group label,
+[data-theme="claude"] .model-name,
+[data-theme="claude"] .recent-title {
+    font-family: Arial, 'Helvetica Neue', sans-serif;
+}
+
+/* ==========================================
+   欢迎界面 — 渐变文字改为 Terracotta 系
+   ========================================== */
+[data-theme="claude"] .gradient-text {
+    background: linear-gradient(90deg, #c96442, #d97757, #b53333);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+[data-theme="claude"] .sub-greeting {
+    color: #87867f; /* Stone Gray */
+}
+
+/* ==========================================
+   侧边栏
+   ========================================== */
+[data-theme="claude"] .new-chat-btn {
+    background-color: #d1cfc5; /* Ring Warm */
+    color: #4d4c48;            /* Charcoal Warm */
+}
+
+[data-theme="claude"] .new-chat-btn:hover {
+    background-color: #c2c0b6; /* Ring Deep */
+    box-shadow: 0px 0px 0px 1px #c2c0b6;
+}
+
+[data-theme="claude"] .nav-item.active {
+    background-color: rgba(201, 100, 66, 0.12); /* Terracotta soft */
+    color: #c96442;
+}
+
+/* ==========================================
+   用户消息气泡
+   ========================================== */
+[data-theme="claude"] .message.user .message-content {
+    background-color: #e8e6dc;  /* Warm Sand */
+    border-bottom-right-radius: 4px;
+}
+
+/* ==========================================
+   输入框 — 圆角微调 + 暖色聚焦
+   ========================================== */
+[data-theme="claude"] .input-area {
+    background-color: #e8e6dc;
+    border-radius: 12px;
+    box-shadow: 0px 0px 0px 1px #d1cfc5;
+}
+
+[data-theme="claude"] .input-area:focus-within {
+    background-color: #d1cfc5;
+    box-shadow: 0px 0px 0px 1px #c96442;
+}
+
+[data-theme="claude"] .input-area textarea {
+    color: #141413;
+}
+
+/* ==========================================
+   Markdown 内容 — 代码块暖色化
+   ========================================== */
+[data-theme="claude"] .message-content pre {
+    background-color: #30302e;  /* Dark Surface */
+    color: #e6edf5;
+    border-radius: 12px;
+}
+
+[data-theme="claude"] .message-content pre code {
+    color: #e6edf5;
+}
+
+[data-theme="claude"] .message-content code {
+    background-color: rgba(0, 0, 0, 0.06);
+    border-radius: 4px;
+}
+
+[data-theme="claude"] .message-content blockquote {
+    border-left-color: #d1cfc5;
+    color: #5e5d59;
+}
+
+[data-theme="claude"] .message-content a {
+    color: #c96442;
+}
+
+[data-theme="claude"] .message-content th {
+    background-color: #e8e6dc;
+}
+
+[data-theme="claude"] .message-content th,
+[data-theme="claude"] .message-content td {
+    border-color: #d1cfc5;
+}
+
+/* ==========================================
+   工具卡片 — 暖色边框 + 暖色背景
+   ========================================== */
+[data-theme="claude"] .tool-call,
+[data-theme="claude"] .tool-result {
+    background-color: #faf9f5;  /* Ivory */
+    border-color: #f0eee6;      /* Border Cream */
+}
+
+[data-theme="claude"] .tool-header {
+    color: #5e5d59;
+}
+
+[data-theme="claude"] .tool-header:hover {
+    background-color: rgba(0, 0, 0, 0.03);
+}
+
+[data-theme="claude"] .tool-content {
+    color: #3d3d3a;
+    border-top-color: #f0eee6;
+}
+
+[data-theme="claude"] .tool-rich-card {
+    background: #faf9f5;
+    border-color: #f0eee6;
+}
+
+[data-theme="claude"] .tool-rich-header {
+    background: #e8e6dc;
+    border-bottom-color: #f0eee6;
+    color: #4d4c48;
+}
+
+[data-theme="claude"] .tool-rich-title {
+    color: #3d3d3a;
+}
+
+[data-theme="claude"] .tool-rich-args,
+[data-theme="claude"] .tool-rich-output {
+    background: #ffffff;
+    border-color: #f0eee6;
+    color: #141413;
+}
+
+/* Thought process — Terracotta tint */
+[data-theme="claude"] .thought-process {
+    background-color: rgba(201, 100, 66, 0.06);
+    border-color: rgba(201, 100, 66, 0.20);
+    color: #c96442;
+}
+
+[data-theme="claude"] .thought-process .tool-header {
+    color: #c96442;
+}
+
+[data-theme="claude"] .thought-process:hover .tool-header {
+    background-color: rgba(201, 100, 66, 0.08);
+}
+
+/* ==========================================
+   Agent Avatar
+   ========================================== */
+[data-theme="claude"] .agent-avatar {
+    background-color: rgba(201, 100, 66, 0.12);
+    color: #c96442;
+}
+
+/* ==========================================
+   设置弹窗
+   ========================================== */
+[data-theme="claude"] .modal-content {
+    background-color: #faf9f5;
+    border: 1px solid #f0eee6;
+}
+
+[data-theme="claude"] .modal-header {
+    border-bottom-color: #f0eee6;
+}
+
+[data-theme="claude"] .modal-header h2 {
+    color: #141413;
+}
+
+[data-theme="claude"] .close-btn {
+    color: #5e5d59;
+}
+
+[data-theme="claude"] .modal-footer {
+    border-top-color: #f0eee6;
+}
+
+[data-theme="claude"] .setting-group input,
+[data-theme="claude"] .setting-group select {
+    border-color: #d1cfc5;
+    background-color: #faf9f5;
+    color: #141413;
+}
+
+[data-theme="claude"] .setting-group input:focus {
+    border-color: #c96442;
+    background-color: #ffffff;
+}
+
+/* Primary/Secondary 按钮 */
+[data-theme="claude"] .primary-btn {
+    background-color: #c96442;
+    border-radius: 12px;
+}
+
+[data-theme="claude"] .primary-btn:hover {
+    background-color: #b85535;
+}
+
+[data-theme="claude"] .secondary-btn {
+    color: #c96442;
+    border-color: #d1cfc5;
+    border-radius: 12px;
+}
+
+[data-theme="claude"] .secondary-btn:hover {
+    background-color: #e8e6dc;
+}
+
+/* ==========================================
+   Swarm 卡片
+   ========================================== */
+[data-theme="claude"] .swarm-card {
+    background: #faf9f5;
+    border-color: #f0eee6;
+}
+
+[data-theme="claude"] .swarm-card.running {
+    border-left-color: #c96442;
+}
+
+[data-theme="claude"] .swarm-card-header {
+    background: #e8e6dc;
+    border-bottom-color: #f0eee6;
+}
+
+[data-theme="claude"] .swarm-worker-id {
+    color: #c96442;
+}
+
+[data-theme="claude"] .swarm-card.running .swarm-status-icon {
+    color: #c96442;
+}
+
+[data-theme="claude"] .swarm-terminal {
+    background: #30302e;
+    color: #b0aea5;
+    border-top-color: #4d4c48;
+}
+
+/* Round header */
+[data-theme="claude"] .swarm-round-header {
+    border-left-color: #c96442;
+    background: linear-gradient(90deg, rgba(201, 100, 66, 0.08) 0%, transparent 100%);
+}
+
+[data-theme="claude"] .round-badge {
+    background: #c96442;
+}
+
+/* ==========================================
+   Skill Dropdown
+   ========================================== */
+[data-theme="claude"] .skill-dropdown {
+    background: #faf9f5;
+    border-color: #f0eee6;
+}
+
+[data-theme="claude"] .skill-dropdown-item:hover,
+[data-theme="claude"] .skill-dropdown-item.active {
+    background-color: #e8e6dc;
+}
+
+/* ==========================================
+   Kairos 面板
+   ========================================== */
+[data-theme="claude"] .kairos-card {
+    border-color: #f0eee6;
+    background: #faf9f5;
+    box-shadow: 0px 0px 0px 1px #f0eee6, rgba(0,0,0,0.04) 0px 4px 24px;
+}
+
+[data-theme="claude"] .kairos-planning-card {
+    border-color: rgba(201, 100, 66, 0.20);
+    background: linear-gradient(180deg, rgba(201, 100, 66, 0.04), #faf9f5 55%);
+}
+
+[data-theme="claude"] .kairos-pill {
+    background: rgba(201, 100, 66, 0.10);
+    color: #c96442;
+}
+
+[data-theme="claude"] .kairos-planning-chip {
+    background: rgba(201, 100, 66, 0.10);
+    color: #c96442;
+}
+
+/* ==========================================
+   主题切换按钮
+   ========================================== */
+.theme-toggle-btn {
+    background: none;
+    border: 1px solid var(--hover-bg);
+    cursor: pointer;
+    padding: 4px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--secondary-text);
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.theme-toggle-btn:hover {
+    background-color: var(--hover-bg);
+}
+
+[data-theme="claude"] .theme-toggle-btn {
+    border-color: #d1cfc5;
+    color: #c96442;
+}
+
+[data-theme="claude"] .theme-toggle-btn:hover {
+    background-color: #e8e6dc;
+}
