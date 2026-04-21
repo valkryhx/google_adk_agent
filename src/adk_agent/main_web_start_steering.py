@@ -322,7 +322,7 @@ class SteeringSession:
         self._loaded_skills = []  # [Fix] 更改为 list 以严格保持动态技能的物理加载顺序
         self.kairos_runtime = None
 
-        # 创建会话专属的 Agent（内部会创建自己的 compactor）
+        # 创建会话专属的 Agent (Self-Improvement 会在 _create_agent 内部自动加载)
         self.agent = self._create_agent()
 
         print(f"[SteeringSession] Created session for {self.key}")
@@ -814,24 +814,54 @@ class SteeringSession:
         def handle_tool_error(tool, args, tool_context, error):
             return {"error": f"Tool failed: {str(error)}", "status": "failed"}
         
+        # 🟢 [Self-Improvement] 指令注入：确保 Agent 启动即拥有自我进化的方法论
+        si_sop = ""
+        try:
+            si_sop = self.skill_manager.load_full_sop("self_improvement")
+            if si_sop:
+                system_prompt += f"\n\n=== [Core Capability] Self-Improvement ===\n{si_sop}"
+        except Exception as e:
+            print(f"[SteeringSession] ⚠️ 加载 self_improvement SOP 失败: {e}")
+
+        # 🟢 [Self-Improvement] 构建 after 回调 (系统级常驻监控)
+        try:
+            from skills.self_improvement.tools import (
+                build_after_tool_callback,
+                build_after_model_callback,
+            )
+            _si_after_tool = build_after_tool_callback()
+            _si_after_model = build_after_model_callback()
+        except Exception as e:
+            print(f"[SteeringSession] ⚠️ 加载 self_improvement callbacks 失败: {e}")
+            _si_after_tool = None
+            _si_after_model = None
+
         # ⚠️ 关键修复：每个会话创建自己的 compactor_agent 实例
-        # 不能共享全局的 compactor_agent，因为 sub_agent 只能有一个 parent
         session_compactor = AutoCompactAgent(self.config)
         
         agent = LlmAgent(
             name=self.config.name,
             model=llm_model,
             instruction=system_prompt,
-            tools=[self.skill_load, self.skill_reload],  # 绑定实例方法
+            tools=[self.skill_load, self.skill_reload] + dynamic_toolsets,  # 基础工具
             sub_agents=[session_compactor],  # 使用会话专属的实例
             on_tool_error_callback=handle_tool_error,
-            before_model_callback=self.interruption_guard,  # 绑定实例方法
-            before_tool_callback=self.interruption_guard   # 绑定实例方法
+            before_model_callback=self.interruption_guard,
+            before_tool_callback=self.interruption_guard,
+            # 🟢 [Self-Improvement] ADK 原生 after callbacks
+            after_tool_callback=_si_after_tool,
+            after_model_callback=_si_after_model,
         )
-        
         
         self.agent = agent  # 临时设置,供 _load_skill_tools 使用
         
+        # 🟢 [Self-Improvement] 标准化自动加载 (遵循 bash/search_exp 模式)
+        try:
+            self._load_skill_tools('self_improvement')
+            print(f"[{self.key}] 🚀 Self-Improvement core integrated via standard pipeline.")
+        except Exception as e:
+            print(f"[{self.key}] ⚠️ 自动加载 self_improvement 失败: {e}")
+
         # 🟢 [Feature] 注入 Core Tool: File Editor (Anthropic Native)
         try:
             from skills.file_editor.tools import get_tools as get_file_tools
@@ -865,8 +895,6 @@ class SteeringSession:
             print(f"[SteeringSession] 正在自动迁移运行时动态工具集: {len(dynamic_toolsets)} 个")
             try:
                 agent.tools.extend(dynamic_toolsets)
-                with open(r"d:\git_codes\google_adk_helloworld_git\tmp\debug_steering.log", "a", encoding="utf-8") as f:
-                    f.write(f"[Debug] 📦 已成功迁移运行时工具集: {len(dynamic_toolsets)} 个\n")
             except Exception: pass
 
         return agent

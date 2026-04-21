@@ -298,7 +298,13 @@ async def _smart_compact(
                 # 4. search_experience: 本地经验库检索 (新增)
                 # 5. view_local_image: UI 图片查看工具
                 # 6. analyze_local_image: 多模态图片分析工具
-                CORE_TOOL_NAMES = {'skill_load', 'skill_reload', 'bash', 'file_editor', 'search_experience', 'view_local_image', 'analyze_local_image'}
+                # 7. log_learning: 学习记录工具 (Self-Improvement 核心)
+                # 8. log_error: 错误记录工具 (Self-Improvement 核心)
+                CORE_TOOL_NAMES = {
+                    'skill_load', 'skill_reload', 'bash', 'file_editor', 
+                    'search_experience', 'view_local_image', 'analyze_local_image',
+                    'log_learning', 'log_error'
+                }
                 
                 # 筛选出核心工具
                 kept_tools = []
